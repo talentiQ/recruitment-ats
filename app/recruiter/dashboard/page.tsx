@@ -28,7 +28,7 @@ export default function RecruiterDashboard() {
       // Guard for SSR
       if (typeof window === 'undefined') return
 
-      let userData = {}
+      let userData: LoggedInUser = { id: '', team_id: '', role: '' }
       try {
         userData = JSON.parse(localStorage.getItem('user') || '{}')
       } catch (parseError) {

@@ -10,7 +10,7 @@ interface Job {
   job_title: string
   clients: {
     company_name: string
-  }
+  }[]
 }
 
 interface AddCandidateFormProps {
@@ -40,7 +40,6 @@ export default function AddCandidateForm({ userRole, redirectPath }: AddCandidat
     source_portal: 'Naukri',
     notes: '',
   })
-
   useEffect(() => {
     const userData = localStorage.getItem('user')
     if (userData) {
@@ -197,7 +196,7 @@ export default function AddCandidateForm({ userRole, redirectPath }: AddCandidat
                 <option value="">Select Job</option>
                 {jobs.map((job) => (
                   <option key={job.id} value={job.id}>
-                    {job.job_title} - {job.clients?.company_name}
+                    {job.job_title} - {job.clients?.[0]?.company_name}
                   </option>
                 ))}
               </select>
