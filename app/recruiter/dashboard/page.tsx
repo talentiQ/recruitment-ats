@@ -1,11 +1,12 @@
 // app/recruiter/dashboard/page.tsx
 'use client'
-
+import { useRouter } from 'next/navigation'
 import DashboardLayout from '@/components/DashboardLayout'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 
 export default function RecruiterDashboard() {
+  const router = useRouter()
   const [stats, setStats] = useState({
     totalCandidates: 0,
     sourced: 0,
@@ -16,14 +17,18 @@ export default function RecruiterDashboard() {
   })
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    loadStats()
-  }, [])
-
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
-      const userData = JSON.parse(localStorage.getItem('user') || '{}')
-      
+      // Guard for SSR
+      if (typeof window === 'undefined') return
+
+      let userData = {}
+      try {
+        userData = JSON.parse(localStorage.getItem('user') || '{}')
+      } catch (parseError) {
+        console.error('Failed to parse user data:', parseError)
+      }
+
       // Get all candidates assigned to this recruiter
       const { data, error } = await supabase
         .from('candidates')
@@ -34,12 +39,12 @@ export default function RecruiterDashboard() {
 
       // Count by stage
       const stats = {
-        totalCandidates: data.length,
-        sourced: data.filter(c => c.current_stage === 'sourced').length,
-        screening: data.filter(c => c.current_stage === 'screening').length,
-        interview: data.filter(c => ['interview_scheduled', 'interview_completed'].includes(c.current_stage)).length,
-        offered: data.filter(c => ['offer_made', 'offer_accepted'].includes(c.current_stage)).length,
-        joined: data.filter(c => c.current_stage === 'joined').length,
+        totalCandidates: data?.length || 0,
+        sourced: data?.filter(c => c.current_stage === 'sourced').length || 0,
+        screening: data?.filter(c => c.current_stage === 'screening').length || 0,
+        interview: data?.filter(c => ['interview_scheduled', 'interview_completed'].includes(c.current_stage)).length || 0,
+        offered: data?.filter(c => ['offer_made', 'offer_accepted'].includes(c.current_stage)).length || 0,
+        joined: data?.filter(c => c.current_stage === 'joined').length || 0,
       }
 
       setStats(stats)
@@ -48,7 +53,11 @@ export default function RecruiterDashboard() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    loadStats()
+  }, [loadStats])
 
   return (
     <DashboardLayout>
@@ -100,23 +109,29 @@ export default function RecruiterDashboard() {
           />
         </div>
 
-        {/* Quick Actions */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Quick Actions
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <button className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
-              + Add New Candidate
-            </button>
-            <button className="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:border-blue-500 transition">
-              View My Pipeline
-            </button>
-            <button className="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:border-blue-500 transition">
-              Schedule Interview
-            </button>
-          </div>
-        </div>
+{/* Quick Actions */}
+<div className="bg-white rounded-lg shadow p-6">
+  <h3 className="text-lg font-semibold text-gray-900 mb-4">
+    Quick Actions
+  </h3>
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <button 
+      onClick={() => router.push('/recruiter/candidates/add')}
+      className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+    >
+      + Add New Candidate
+    </button>
+    <button 
+      onClick={() => router.push('/recruiter/candidates')}
+      className="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:border-blue-500 transition"
+    >
+      View My Pipeline
+    </button>
+    <button className="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:border-blue-500 transition">
+      Schedule Interview
+    </button>
+  </div>
+</div>
 
         {/* Coming Soon */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
@@ -129,12 +144,12 @@ export default function RecruiterDashboard() {
   )
 }
 
-function StatCard({ 
-  label, 
-  value, 
-  color, 
-  loading 
-}: { 
+function StatCard({
+  label,
+  value,
+  color,
+  loading,
+}: {
   label: string
   value: number
   color: string
