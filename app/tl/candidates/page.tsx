@@ -302,7 +302,7 @@ export default function TLCandidatesPage() {
                 className="input"
               >
                 <option value="all">All Stages</option>
-                <option value="stale">⚠️ Stale (>30 days)</option>
+                <option value="stale">⚠️ Stale (&gt;30 days)</option>
                 <option value="sourced">Sourced</option>
                 <option value="screening">Screening</option>
                 <option value="interview_scheduled">Interview Scheduled</option>
