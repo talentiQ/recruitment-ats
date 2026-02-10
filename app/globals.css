@@ -1,32 +1,195 @@
 @import "tailwindcss";
 
+/* =================================================
+   ATS PROFESSIONAL THEME – WHITE | BLUE | RED
+================================================= */
+
 :root {
+  /* Base */
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #0f172a;
+
+  /* Brand */
+  --primary-blue: #2563eb;
+  --primary-blue-soft: #eff6ff;
+  --primary-red: #dc2626;
+  --primary-red-soft: #fef2f2;
+
+  /* UI */
+  --border: #e5e7eb;
+  --muted-text: #64748b;
+  --card-bg: #ffffff;
+  --table-header: #f8fafc;
+
+  /* Effects */
+  --radius: 12px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.08);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* ================= BASE ================= */
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: Inter, Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
 }
+
+/* ================= INPUTS ================= */
+
 .input {
   width: 100%;
-  padding: 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background-color: #fff;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--primary-blue);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+/* ================= BUTTONS ================= */
+
+.btn-primary {
+  background-color: var(--primary-blue);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  font-weight: 500;
+}
+
+.btn-primary:hover {
+  background-color: #1d4ed8;
+}
+
+.btn-danger {
+  background-color: var(--primary-red);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+}
+
+/* ================= KPI CARDS ================= */
+
+.kpi-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary-blue);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.kpi-title {
+  font-size: 12px;
+  color: var(--muted-text);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.kpi-value {
+  font-size: 26px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.kpi-sub {
+  font-size: 12px;
+  color: var(--muted-text);
+  margin-top: 4px;
+}
+
+/* Status colors */
+.kpi-success { border-left-color: #16a34a; }
+.kpi-warning { border-left-color: #ca8a04; }
+.kpi-danger  { border-left-color: var(--primary-red); }
+
+/* ================= RECRUITER / CLIENT CARDS ================= */
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.card-title {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+/* ================= TABLES ================= */
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table th {
+  background-color: var(--table-header);
+  padding: 12px;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--muted-text);
+  border-bottom: 1px solid var(--border);
+}
+
+.table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.table tr:hover {
+  background-color: #f9fafb;
+}
+
+/* ================= BADGES ================= */
+
+.badge-success {
+  background: #ecfdf5;
+  color: #047857;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.badge-warning {
+  background: #fffbeb;
+  color: #b45309;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.badge-danger {
+  background: var(--primary-red-soft);
+  color: var(--primary-red);
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+/* ================= ALERTS ================= */
+
+.alert {
+  background: var(--primary-red-soft);
+  border: 1px solid #fecaca;
+  padding: 12px;
+  border-radius: var(--radius);
+  color: var(--primary-red);
+  font-weight: 500;
 }
