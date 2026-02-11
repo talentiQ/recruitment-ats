@@ -1,16 +1,16 @@
 // app/recruiter/dashboard/page.tsx
+
+'use client'
+import { useRouter } from 'next/navigation'
+import DashboardLayout from '@/components/DashboardLayout'
+import { useEffect, useState, useCallback } from 'react'
+import { supabase } from '@/lib/supabase'
 interface LoggedInUser {
   id: string
   team_id: string
   role: string
   full_name?: string
 }
-'use client'
-import { useRouter } from 'next/navigation'
-import DashboardLayout from '@/components/DashboardLayout'
-import { useEffect, useState, useCallback } from 'react'
-import { supabase } from '@/lib/supabase'
-
 export default function RecruiterDashboard() {
   const router = useRouter()
   const [stats, setStats] = useState({
