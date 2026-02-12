@@ -1,9 +1,13 @@
-// components/CandidateDetail.tsx
+// components/CandidateDetail.tsx - COMPLETE ENHANCED VERSION
 'use client'
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import ResumeUpload from '@/components/ResumeUpload'
+import CandidateTimeline from '@/components/CandidateTimeline'
+import InterviewScheduler from '@/components/InterviewScheduler'
+import SubmitToClient from '@/components/SubmitToClient'
 
 interface Candidate {
   id: string
@@ -21,6 +25,26 @@ interface Candidate {
   source_portal: string
   notes: string
   date_sourced: string
+  job_id: string
+  
+  // Resume fields
+  resume_url: string
+  resume_file_name: string
+  resume_file_size: number
+  resume_uploaded_at: string
+  resume_parsed: boolean
+  
+  // Parsed resume data
+  date_of_birth: string
+  current_location: string
+  parsed_skills: string[]
+  parsed_education: string
+  parsed_certifications: string[]
+  linkedin_url: string
+  github_url: string
+  portfolio_url: string
+  languages_known: string[]
+  
   jobs: {
     job_title: string
     location: string
@@ -48,6 +72,8 @@ export default function CandidateDetail({ candidateId, userRole }: CandidateDeta
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   const [newStage, setNewStage] = useState('')
+  const [showScheduler, setShowScheduler] = useState(false)
+  const [showClientSubmit, setShowClientSubmit] = useState(false)
 
   useEffect(() => {
     if (candidateId) {
@@ -97,7 +123,10 @@ export default function CandidateDetail({ candidateId, userRole }: CandidateDeta
 
     setUpdating(true)
     try {
-      const updates: any = { current_stage: newStage }
+      const updates: any = { 
+        current_stage: newStage,
+        last_activity_date: new Date().toISOString(),
+      }
 
       // Auto-set timestamp based on stage
       const now = new Date().toISOString()
@@ -116,18 +145,29 @@ export default function CandidateDetail({ candidateId, userRole }: CandidateDeta
 
       if (error) throw error
 
-      // Log activity
+      // Add to timeline
       const userData = JSON.parse(localStorage.getItem('user') || '{}')
-      await supabase.from('activity_log').insert([
-        {
-          user_id: userData.id,
-          action: 'updated_stage',
-          entity_type: 'candidate',
-          entity_id: candidate.id,
-          old_value: { stage: candidate.current_stage },
-          new_value: { stage: newStage },
+      await supabase.from('candidate_timeline').insert([{
+        candidate_id: candidate.id,
+        activity_type: 'stage_changed',
+        activity_title: 'Stage Updated',
+        activity_description: `Stage changed from "${candidate.current_stage}" to "${newStage}"`,
+        metadata: {
+          old_stage: candidate.current_stage,
+          new_stage: newStage,
         },
-      ])
+        performed_by: userData.id,
+      }])
+
+      // Log activity (old system)
+      await supabase.from('activity_log').insert([{
+        user_id: userData.id,
+        action: 'updated_stage',
+        entity_type: 'candidate',
+        entity_id: candidate.id,
+        old_value: { stage: candidate.current_stage },
+        new_value: { stage: newStage },
+      }])
 
       alert('Stage updated successfully! ✅')
       loadCandidate(candidate.id)
@@ -153,6 +193,12 @@ export default function CandidateDetail({ candidateId, userRole }: CandidateDeta
       month: 'short',
       year: 'numeric',
     })
+  }
+
+  const formatFileSize = (bytes: number) => {
+    if (!bytes) return 'Unknown'
+    const mb = bytes / (1024 * 1024)
+    return mb < 1 ? `${Math.round(bytes / 1024)} KB` : `${mb.toFixed(2)} MB`
   }
 
   if (loading) {
@@ -238,6 +284,54 @@ export default function CandidateDetail({ candidateId, userRole }: CandidateDeta
         </div>
       </div>
 
+      {/* Quick Actions */}
+      <div className="flex gap-3">
+        <button
+          onClick={() => setShowScheduler(!showScheduler)}
+          className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+        >
+          {showScheduler ? 'Cancel' : '📅 Schedule Interview'}
+        </button>
+        <button
+          onClick={() => setShowClientSubmit(!showClientSubmit)}
+          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+        >
+          {showClientSubmit ? 'Cancel' : '📧 Submit to Client'}
+        </button>
+      </div>
+
+      {/* Interview Scheduler */}
+      {showScheduler && (
+        <div className="card bg-purple-50">
+          <h3 className="card-title">Schedule Interview</h3>
+          <InterviewScheduler
+            candidateId={candidate.id}
+            candidateName={candidate.full_name}
+            jobId={candidate.job_id}
+            onScheduled={() => {
+              setShowScheduler(false)
+              loadCandidate(candidate.id)
+            }}
+          />
+        </div>
+      )}
+
+      {/* Client Submission */}
+      {showClientSubmit && (
+        <div className="card bg-green-50">
+          <h3 className="card-title">Submit to Client</h3>
+          <SubmitToClient
+            candidateId={candidate.id}
+            jobId={candidate.job_id}
+            candidateName={candidate.full_name}
+            onSubmitted={() => {
+              setShowClientSubmit(false)
+              loadCandidate(candidate.id)
+            }}
+          />
+        </div>
+      )}
+
       {/* Details Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Contact Information */}
@@ -260,6 +354,22 @@ export default function CandidateDetail({ candidateId, userRole }: CandidateDeta
                 {candidate.source_portal}
               </dd>
             </div>
+            {candidate.current_location && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Location</dt>
+                <dd className="mt-1 text-sm text-gray-900">
+                  📍 {candidate.current_location}
+                </dd>
+              </div>
+            )}
+            {candidate.date_of_birth && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Date of Birth</dt>
+                <dd className="mt-1 text-sm text-gray-900">
+                  {formatDate(candidate.date_of_birth)}
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
 
@@ -368,6 +478,148 @@ export default function CandidateDetail({ candidateId, userRole }: CandidateDeta
           </p>
         </div>
       )}
+
+      {/* Resume Section */}
+      <div className="card">
+        <h3 className="card-title">Resume / CV</h3>
+        
+        {candidate.resume_url ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+              <div>
+                <p className="font-medium text-gray-900">
+                  {candidate.resume_file_name || 'Resume.pdf'}
+                </p>
+                <p className="text-sm text-gray-500">
+                  {formatFileSize(candidate.resume_file_size)} • Uploaded on {formatDate(candidate.resume_uploaded_at)}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <a
+                  href={candidate.resume_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+                >
+                  View
+                </a>
+                <a
+                  href={candidate.resume_url}
+                  download
+                  className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:border-gray-400 text-sm font-medium"
+                >
+                  Download
+                </a>
+              </div>
+            </div>
+
+            {/* Upload new version */}
+            <details className="border-t border-gray-200 pt-4">
+              <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900">
+                Upload New Version
+              </summary>
+              <div className="mt-4">
+                <ResumeUpload 
+                  candidateId={candidate.id} 
+                  candidateName={candidate.full_name}
+                  currentCandidateData={candidate}
+                  onUploadComplete={() => loadCandidate(candidate.id)}
+                />
+              </div>
+            </details>
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <p className="text-gray-600 mb-4">No resume uploaded yet</p>
+            <ResumeUpload 
+              candidateId={candidate.id} 
+              candidateName={candidate.full_name}
+              currentCandidateData={candidate}
+              onUploadComplete={() => loadCandidate(candidate.id)}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Parsed Resume Information */}
+      {candidate.resume_parsed && (
+        <div className="card">
+          <h3 className="card-title">📄 Parsed Resume Information</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Skills */}
+            {candidate.parsed_skills && candidate.parsed_skills.length > 0 && (
+              <div className="col-span-2">
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Key Skills</h4>
+                <div className="flex flex-wrap gap-2">
+                  {candidate.parsed_skills.map((skill: string, i: number) => (
+                    <span key={i} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Education */}
+            {candidate.parsed_education && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Education</h4>
+                <p className="text-sm text-gray-900 whitespace-pre-wrap">{candidate.parsed_education}</p>
+              </div>
+            )}
+
+            {/* Certifications */}
+            {candidate.parsed_certifications && candidate.parsed_certifications.length > 0 && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Certifications</h4>
+                <ul className="text-sm text-gray-900 space-y-1">
+                  {candidate.parsed_certifications.map((cert: string, i: number) => (
+                    <li key={i}>• {cert}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Languages */}
+            {candidate.languages_known && candidate.languages_known.length > 0 && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Languages</h4>
+                <p className="text-sm text-gray-900">{candidate.languages_known.join(', ')}</p>
+              </div>
+            )}
+
+            {/* Social Links */}
+            {(candidate.linkedin_url || candidate.github_url || candidate.portfolio_url) && (
+              <div className="col-span-2">
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Professional Links</h4>
+                <div className="flex gap-4">
+                  {candidate.linkedin_url && (
+                    <a href={candidate.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
+                      🔗 LinkedIn
+                    </a>
+                  )}
+                  {candidate.github_url && (
+                    <a href={candidate.github_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
+                      🔗 GitHub
+                    </a>
+                  )}
+                  {candidate.portfolio_url && (
+                    <a href={candidate.portfolio_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
+                      🔗 Portfolio
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Activity Timeline */}
+      <div className="card">
+        <h3 className="card-title">📋 Activity History & Timeline</h3>
+        <CandidateTimeline candidateId={candidate.id} />
+      </div>
 
       {/* Assigned Recruiter */}
       <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">

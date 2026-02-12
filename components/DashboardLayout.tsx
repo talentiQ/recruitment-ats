@@ -54,6 +54,7 @@ export default function DashboardLayout({
       return [
         { label: 'Dashboard', path: '/recruiter/dashboard' },
         { label: 'My Pipeline', path: '/recruiter/candidates' },
+        { label: 'Jobs', path: '/tl/jobs' },
         { label: 'Add Candidate', path: '/recruiter/candidates/add' },
       ]
     }

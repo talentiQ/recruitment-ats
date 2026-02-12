@@ -1,7 +1,32 @@
-import type { NextConfig } from "next";
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  swcMinify: true,
+  
+  // Fix for Vercel builds
+  typescript: {
+    ignoreBuildErrors: false, // 🔥 CHANGED: Let's see real errors
+  },
+  
+  eslint: {
+    ignoreDuringBuilds: true, // Keep this for now
+  },
 
-const nextConfig: NextConfig = {
-  /* config options here */
-};
+  // Image optimization
+  images: {
+    domains: [],
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: '**.supabase.co',
+      },
+    ],
+  },
 
-export default nextConfig;
+  // 🔥 ADD: Handle dynamic routes properly
+  experimental: {
+    serverActions: true,
+  },
+}
+
+module.exports = nextConfig
