@@ -3,7 +3,7 @@
 export const dynamic = 'force-dynamic'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 interface Candidate {
   id: string
@@ -31,9 +31,8 @@ interface TeamMember {
   full_name: string
 }
 
-export default function TLCandidatesPage() {
+export default function TLCandidatesPage({ searchParams }: { searchParams: { [key: string]: string | string[] | undefined } }) {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [filteredCandidates, setFilteredCandidates] = useState<Candidate[]>([])
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
@@ -42,7 +41,7 @@ export default function TLCandidatesPage() {
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('')
-  const [stageFilter, setStageFilter] = useState(searchParams.get('filter') === 'stale' ? 'stale' : 'all')
+  const [stageFilter, setStageFilter] = useState( searchParams?.filter === 'stale' ? 'stale' : 'all')
   const [recruiterFilter, setRecruiterFilter] = useState('all')
 
   // Reassignment
