@@ -1,11 +1,10 @@
 // app/tl/candidates/page.tsx
-'use client'
-
+"use client";
+export const dynamic = 'force-dynamic'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-
 interface Candidate {
   id: string
   full_name: string
