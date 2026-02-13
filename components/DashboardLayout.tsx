@@ -50,14 +50,14 @@ export default function DashboardLayout({
   const getNavItems = () => {
     if (!user) return []
     
-    if (user.role === 'recruiter') {
-      return [
-        { label: 'Dashboard', path: '/recruiter/dashboard' },
-        { label: 'My Pipeline', path: '/recruiter/candidates' },
-        { label: 'Jobs', path: '/tl/jobs' },
-        { label: 'Add Candidate', path: '/recruiter/candidates/add' },
-      ]
-    }
+   if (user.role === 'recruiter') {
+  return [
+    { label: 'Dashboard', path: '/recruiter/dashboard' },
+    { label: 'My Pipeline', path: '/recruiter/candidates' },
+    { label: 'Jobs', path: '/recruiter/jobs' },  // VIEW ONLY
+    { label: 'Add Candidate', path: '/recruiter/candidates/add' },
+  ]
+}
     
     if (user.role === 'team_leader') {
       return [

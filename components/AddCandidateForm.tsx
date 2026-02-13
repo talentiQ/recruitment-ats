@@ -1,4 +1,4 @@
-// components/AddCandidateForm.tsx - AI-POWERED WITH RESUME-FIRST APPROACH
+// components/AddCandidateForm.tsx - FIXED: Jobs loading for recruiters
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -9,21 +9,22 @@ import { parseResume } from '@/lib/resumeParser'
 interface Job {
   id: string
   job_title: string
+  job_code?: string
   clients: {
     company_name: string
   }[]
 }
 
-interface AddCandidateFormProps{
+interface AddCandidateFormProps {
   userRole: 'recruiter' | 'team_leader' | string
   redirectPath?: string
-  preSelectedJobId?: string  // 🔥 ADD THIS
+  preSelectedJobId?: string
 }
 
 export default function AddCandidateForm({ 
   userRole, 
   redirectPath,
-  preSelectedJobId  // 🔥 ADD THIS
+  preSelectedJobId
 }: AddCandidateFormProps) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
@@ -78,33 +79,107 @@ export default function AddCandidateForm({
     notes: '',
   })
 
+  // FIXED: Load jobs with user data passed directly
+  const loadJobs = async (userId: string, teamId: string, role: string) => {
+    console.log('🔍 Loading jobs for:', { userId, teamId, role })
+    
+    try {
+      if (role === 'recruiter') {
+        // RECRUITERS: Get jobs from assignments table
+        console.log('📋 Fetching assignments for recruiter:', userId)
+        
+        const { data: assignments, error: assignError } = await supabase
+          .from('job_recruiter_assignments')
+          .select('job_id')
+          .eq('recruiter_id', userId)
+          .eq('is_active', true)
+
+        console.log('✅ Assignments found:', assignments)
+
+        if (assignError) {
+          console.error('❌ Assignment query error:', assignError)
+          setJobs([])
+          return
+        }
+
+        if (!assignments || assignments.length === 0) {
+          console.log('⚠️ No assignments found for recruiter')
+          setJobs([])
+          return
+        }
+
+        const jobIds = assignments.map(a => a.job_id)
+        console.log('🎯 Job IDs for recruiter:', jobIds)
+
+        const { data, error } = await supabase
+          .from('jobs')
+          .select(`
+            id, 
+            job_title, 
+            job_code,
+            clients(company_name)
+          `)
+          .in('id', jobIds)
+          .eq('status', 'open')
+          .order('created_at', { ascending: false })
+
+        console.log('📦 Jobs loaded:', data)
+
+        if (error) {
+          console.error('❌ Jobs query error:', error)
+        }
+
+        if (data) setJobs(data as unknown as Job[])
+      } else {
+        // TEAM LEADERS: See all team jobs
+        console.log('📋 Fetching all team jobs for team:', teamId)
+        
+        const { data, error } = await supabase
+          .from('jobs')
+          .select(`
+            id, 
+            job_title, 
+            job_code,
+            clients(company_name)
+          `)
+          .eq('assigned_team_id', teamId)
+          .eq('status', 'open')
+          .order('created_at', { ascending: false })
+
+        console.log('📦 TL Jobs loaded:', data)
+
+        if (error) {
+          console.error('❌ Jobs query error:', error)
+        }
+
+        if (data) setJobs(data as unknown as Job[])
+      }
+    } catch (error) {
+      console.error('💥 loadJobs error:', error)
+      setJobs([])
+    }
+  }
+
   useEffect(() => {
     const userData = localStorage.getItem('user')
     if (userData) {
       const parsedUser = JSON.parse(userData)
+      console.log('👤 User loaded:', parsedUser)
       setUser(parsedUser)
-      loadJobs(parsedUser.team_id)
+      
+      // IMPORTANT: Pass user data directly to loadJobs
+      loadJobs(parsedUser.id, parsedUser.team_id, parsedUser.role || userRole)
     }
     loadEducationOptions()
-      // 🔥 ADD THIS: Pre-select job if provided
-  if (preSelectedJobId) {
-    setFormData(prev => ({
-      ...prev,
-      job_id: preSelectedJobId
-    }))
-  }
-}, [preSelectedJobId])  // 🔥 ADD DEPENDENCY
-
-  const loadJobs = async (teamId: string) => {
-    const { data } = await supabase
-      .from('jobs')
-      .select('id, job_title, clients(company_name)')
-      .eq('assigned_team_id', teamId)
-      .eq('status', 'open')
-      .order('created_at', { ascending: false })
-
-    if (data) setJobs(data as Job[])
-  }
+    
+    // Pre-select job if provided
+    if (preSelectedJobId) {
+      setFormData(prev => ({
+        ...prev,
+        job_id: preSelectedJobId
+      }))
+    }
+  }, [preSelectedJobId, userRole])
 
   const loadEducationOptions = async () => {
     const { data } = await supabase
@@ -247,7 +322,7 @@ export default function AddCandidateForm({
           `Phone: ${existing.phone}\n` +
           `Email: ${existing.email || 'N/A'}\n` +
           `Stage: ${existing.current_stage}\n` +
-          `Job: ${existing.jobs?.[0]?.job_title || 'N/A'}`
+          `Job: ${(existing as any).jobs?.[0]?.job_title || 'N/A'}`
         )
         return true
       }
@@ -451,7 +526,6 @@ export default function AddCandidateForm({
           )}
         </div>
       </div>
-
       {/* Duplicate Warning */}
       {duplicateWarning && (
         <div className="alert mb-6">
@@ -580,15 +654,20 @@ export default function AddCandidateForm({
               onChange={handleChange}
               className="input"
               required
-               disabled={!!preSelectedJobId}  // 🔥 ADD THIS
+              disabled={!!preSelectedJobId}
             >
               <option value="">Select Job</option>
               {jobs.map((job) => (
                 <option key={job.id} value={job.id}>
-                  {job.job_title} - {job.clients?.[0]?.company_name}
+                  {job.job_code && `${job.job_code} - `}{job.job_title} - {job.clients?.[0]?.company_name}
                 </option>
               ))}
             </select>
+            {jobs.length === 0 && !loading && (
+              <p className="text-sm text-red-600 mt-2">
+                ⚠️ No jobs available. {userRole === 'recruiter' ? 'Ask your team leader to assign jobs to you.' : 'Create a job first.'}
+              </p>
+            )}
           </div>
         </div>
 
