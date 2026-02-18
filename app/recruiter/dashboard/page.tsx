@@ -414,8 +414,9 @@ export default function RecruiterDashboard() {
             <div className="kpi-title">Offers Accepted</div>
             <div className="kpi-value">{stats.offersAccepted}</div>
             <div className="text-xs text-gray-500">Close to join!</div>
+            
           </div>
-        </div>
+          </div>
 
         {/* Pipeline Stages */}
         <div className="card">

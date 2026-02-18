@@ -12,58 +12,67 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const router = useRouter()
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
+ const handleSignIn = async (e: React.FormEvent) => {
+  e.preventDefault()
+  setLoading(true)
 
-    try {
-      // Sign in with Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
+  try {
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
 
-      if (authError) throw authError
+    if (authError) throw authError
 
-      // Get user details from users table
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('*, teams(*)')
-        .eq('email', email)
-        .single()
+    // Get user from database
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', authData.user.id)
+      .single()
 
-      if (userError) throw userError
+    if (userError) throw userError
 
-      // Store user data in localStorage
-      localStorage.setItem('user', JSON.stringify(userData))
+    localStorage.setItem('user', JSON.stringify(userData))
 
-      // Redirect based on role
-      if (userData.role === 'recruiter') {
-        router.push('/recruiter/dashboard')
-      } else if (userData.role === 'team_leader') {
-        router.push('/tl/dashboard')
-      } else if (['ceo', 'ops_head', 'finance_head'].includes(userData.role)) {
-        router.push('/management/dashboard')
-      }
-    } catch (err: any) {
-      setError(err.message || 'Login failed')
-    } finally {
-      setLoading(false)
-    }
+    console.log('🎯 Redirecting user with role:', userData.role)
+
+if (userData.role === 'system_admin') {
+  console.log('➡️ Redirecting to /admin/dashboard')
+  router.push('/admin/dashboard')
+} else if (userData.role === 'sr_team_leader') {
+  console.log('➡️ Redirecting to /sr-tl/dashboard')
+  router.push('/sr-tl/dashboard')
+} else if (userData.role === 'team_leader') {
+  console.log('➡️ Redirecting to /tl/dashboard')
+  router.push('/tl/dashboard')
+} else if (userData.role === 'recruiter') {
+  console.log('➡️ Redirecting to /recruiter/dashboard')
+  router.push('/recruiter/dashboard')
+} else if (userData.role === 'ceo' || userData.role === 'ops_head') {
+  console.log('➡️ Redirecting to /management/dashboard')
+  router.push('/management/dashboard')
+} else {
+  throw new Error('Invalid user role: ' + userData.role)
+}
+
+  } catch (error: any) {
+    console.error('Sign in error:', error)
+    setError(error.message)
+  } finally {
+    setLoading(false)
   }
-
+}
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Recruitment ATS
-          </h1>
+            Talent IQ - Your Smart Hiring Platform</h1>
           <p className="text-gray-600">Sign in to your account</p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-6">
+        <form onSubmit={handleSignIn} className="space-y-6">
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
               {error}
@@ -107,18 +116,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div className="mt-6 pt-6 border-t border-gray-200">
-          <p className="text-sm text-gray-600 text-center">
-            Demo accounts (password: password123):
-            <br />
-            <span className="font-mono text-xs">kunal@talenti.biz</span>
-            {' • '}
-            <span className="font-mono text-xs">rohit@talenti.biz</span>
-            {' • '}
-            <span className="font-mono text-xs">shikha@talenti.biz</span>
-          </p>
         </div>
-      </div>
     </div>
   )
 }

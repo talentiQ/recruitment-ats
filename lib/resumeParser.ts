@@ -21,6 +21,7 @@ interface ParsedResumeData {
   expectedCTC: number | null
   
   // Education
+  education: string | null
   educationLevel: string | null
   educationDegree: string | null
   educationField: string | null
@@ -97,6 +98,7 @@ export function parseResume(resumeText: string): ParsedResumeData {
     currentCTC: extractCTC(text, 'current'),
     expectedCTC: extractCTC(text, 'expected'),
     
+    education: extractEducation(originalText),
     educationLevel: extractEducationLevel(originalText),
     educationDegree: extractEducationDegree(originalText),
     educationField: extractEducationField(originalText),

@@ -374,24 +374,24 @@ export default function TLDashboard() {
               <thead>
                 <tr>
                   <th>Recruiter</th>
-                  <th>Candidates</th>
-                  <th>Joinings</th>
-                  <th>Revenue</th>
-                  <th>Conversion</th>
+                  <th className="text-center">Candidates</th>
+                  <th className="text-center">Joinings</th>
+                  <th className="text-center">Revenue</th>
+                  <th className="text-center">Conversion</th>
                 </tr>
               </thead>
               <tbody>
                 {stats.recruiterStats.map((recruiter) => (
                   <tr key={recruiter.id}>
-                    <td className="font-medium">{recruiter.name}</td>
-                    <td>{recruiter.candidates}</td>
-                    <td>
+                    <td className="text-center">{recruiter.name}</td>
+                    <td className="text-center">{recruiter.candidates}</td>
+                    <td className="text-center">
                       <span className="badge-success">{recruiter.joinings}</span>
                     </td>
-                    <td className="font-semibold text-blue-600">
+                    <td className="text-center font-semibold text-blue-600">
                       ₹{recruiter.revenue}L
                     </td>
-                    <td>
+                    <td className="text-center">
                       {recruiter.candidates > 0
                         ? Math.round((recruiter.joinings / recruiter.candidates) * 100)
                         : 0}%
@@ -413,17 +413,17 @@ export default function TLDashboard() {
               <thead>
                 <tr>
                   <th>Client</th>
-                  <th>Candidates</th>
-                  <th>Joinings</th>
+                  <th className="text-center">Candidates</th>
+                  <th className="text-center">Joinings</th>
                   <th>Success Rate</th>
                 </tr>
               </thead>
               <tbody>
                 {stats.clientStats.slice(0, 10).map((client, idx) => (
                   <tr key={idx}>
-                    <td className="font-medium">{client.clientName}</td>
-                    <td>{client.candidates}</td>
-                    <td>
+                    <td className="text-center">{client.clientName}</td>
+                    <td className="text-center">{client.candidates}</td>
+                    <td className="text-center">
                       <span className="badge-success">{client.joinings}</span>
                     </td>
                     <td>

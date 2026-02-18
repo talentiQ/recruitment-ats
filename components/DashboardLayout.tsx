@@ -39,6 +39,7 @@ export default function DashboardLayout({
     router.push('/')
   }
 
+
   const getDashboardPath = () => {
     if (!user) return '/'
     if (user.role === 'recruiter') return '/recruiter/dashboard'
@@ -47,40 +48,70 @@ export default function DashboardLayout({
     return '/'
   }
 
+  if (!user) return null
   const getNavItems = () => {
-    if (!user) return []
-    
-   if (user.role === 'recruiter') {
-  return [
-    { label: 'Dashboard', path: '/recruiter/dashboard' },
-    { label: 'My Pipeline', path: '/recruiter/candidates' },
-    { label: 'Jobs', path: '/recruiter/jobs' },  // VIEW ONLY
-    { label: 'Add Candidate', path: '/recruiter/candidates/add' },
-  ]
-}
-    
-    if (user.role === 'team_leader') {
-      return [
-        { label: 'Dashboard', path: '/tl/dashboard' },
-        { label: 'Team Pipeline', path: '/tl/candidates' },
-        { label: 'Add Candidate', path: '/tl/candidates/add' },
-      ]
-    }
-    
-    if (['ceo', 'ops_head', 'finance_head'].includes(user.role)) {
-      return [
-        { label: 'Dashboard', path: '/management/dashboard' },
-      ]
-    }
-    
-    return []
+  // SYSTEM ADMIN
+  if (user.role === 'system_admin') {
+    return [
+      { label: 'Dashboard', path: '/admin/dashboard' },
+      { label: 'Teams', path: '/admin/teams' },
+      { label: 'Users', path: '/admin/users' },
+      { label: 'Clients', path: '/tl/clients' },
+      { label: 'All Jobs', path: '/admin/jobs' },
+      { label: 'All Candidates', path: '/admin/candidates' },
+    ]
   }
 
-  if (!user) return null
+  // CEO / OPS HEAD
+  if (user.role === 'ceo' || user.role === 'ops_head') {
+    return [
+      { label: 'Dashboard', path: '/management/dashboard' },
+      { label: 'Teams', path: '/management/teams' },
+      { label: 'Reports', path: '/management/reports' },
+    ]
+  }
+// SR. TEAM LEADER (NEW)
+  if (user.role === 'sr_team_leader') {
+    return [
+      { label: 'Dashboard', path: '/sr-tl/dashboard' },
+      { label: 'Team Leaders', path: '/sr-tl/team-leaders' },
+      { label: 'All Candidates', path: '/sr-tl/candidates' },
+      { label: 'Jobs', path: '/sr-tl/jobs' },
+      { label: 'Interviews', path: '/sr-tl/interviews' },
+      { label: 'Offers', path: '/sr-tl/offers' },
+      { label: 'Clients', path: '/sr-tl/clients' },
+    ]
+  }
 
-  const navItems = getNavItems()
+  // TEAM LEADER
+  if (user.role === 'team_leader') {
+    return [
+      { label: 'Dashboard', path: '/tl/dashboard' },
+      { label: 'Candidates', path: '/tl/candidates' },
+      { label: 'Jobs', path: '/tl/jobs' },
+      { label: 'Interviews', path: '/tl/interviews' },
+      { label: 'Offers', path: '/tl/offers' },
+      { label: 'Clients', path: '/tl/clients' },
+    ]
+  }
 
-  return (
+  // RECRUITER
+  if (user.role === 'recruiter') {
+    return [
+      { label: 'Dashboard', path: '/recruiter/dashboard' },
+      { label: 'My Pipeline', path: '/recruiter/candidates' },
+      { label: 'Jobs', path: '/recruiter/jobs' },
+      { label: 'Interviews', path: '/recruiter/interviews' },
+      { label: 'Offers', path: '/recruiter/offers' },
+      { label: 'Add Candidate', path: '/recruiter/candidates/add' },
+    ]
+  }
+
+  return []
+}
+
+   const navItems = getNavItems()
+    return (
     <div className="min-h-screen bg-gray-50">
       {/* Top Navigation */}
       <nav className="bg-white shadow-sm border-b border-gray-200">
@@ -92,7 +123,7 @@ export default function DashboardLayout({
                 onClick={() => router.push(getDashboardPath())}
                 className="text-xl font-bold text-gray-900 hover:text-blue-600 transition"
               >
-                Recruitment ATS
+                Talent IQ - The Smart Hiring Engine 
               </button>
 
               {/* Team Badge */}

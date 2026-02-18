@@ -1,4 +1,3 @@
-// app/tl/jobs/[id]/add-candidate/page.tsx - ADD CANDIDATE FOR SPECIFIC JOB
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -7,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-export default function JobAddCandidatePage() {
+export default function SrTLJobAddCandidatePage() {
   const params = useParams()
   const router = useRouter()
   const [job, setJob] = useState<any>(null)
@@ -37,7 +36,7 @@ export default function JobAddCandidatePage() {
     } catch (error) {
       console.error('Error loading job:', error)
       alert('Job not found')
-      router.push('/tl/jobs')
+      router.push('/sr-tl/jobs')
     } finally {
       setLoading(false)
     }
@@ -65,7 +64,6 @@ export default function JobAddCandidatePage() {
 
   return (
     <DashboardLayout>
-      {/* Job Context Banner */}
       <div className="mb-6 bg-blue-50 border-2 border-blue-200 rounded-lg p-4">
         <div className="flex justify-between items-start">
           <div>
@@ -80,13 +78,13 @@ export default function JobAddCandidatePage() {
             </div>
             <div className="flex items-center gap-4 text-sm text-gray-600">
               <span>📍 {job.location}</span>
-              <span>🏢 {job.clients?.[0]?.company_name}</span>
+              <span>🏢 {job.clients?.company_name}</span>
               <span>💰 ₹{job.min_ctc}-{job.max_ctc}L</span>
               <span>📅 {job.experience_min}-{job.experience_max} yrs</span>
             </div>
           </div>
           <button
-            onClick={() => router.push('/tl/jobs')}
+            onClick={() => router.push('/sr-tl/jobs')}
             className="text-sm text-blue-600 hover:text-blue-800"
           >
             ← Back to Jobs
@@ -94,10 +92,9 @@ export default function JobAddCandidatePage() {
         </div>
       </div>
 
-      {/* Add Candidate Form - Pre-filled with job */}
       <AddCandidateForm 
-        userRole="team_leader" 
-        redirectPath={`/tl/jobs/${job.id}/candidates`}
+        userRole="sr_team_leader" 
+        redirectPath={`/sr-tl/jobs/${job.id}/candidates`}
         preSelectedJobId={job.id}
       />
     </DashboardLayout>

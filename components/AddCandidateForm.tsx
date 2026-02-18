@@ -1,8 +1,8 @@
-// components/AddCandidateForm.tsx - FIXED: Jobs loading for recruiters
+// components/AddCandidateForm.tsx - COMPLETE WITH AI PARSING + EDIT MODE SUPPORT
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { parseResume } from '@/lib/resumeParser'
 
@@ -16,77 +16,124 @@ interface Job {
 }
 
 interface AddCandidateFormProps {
-  userRole: 'recruiter' | 'team_leader' | string
+  userRole: 'recruiter' | 'team_leader' | 'sr_team_leader' | string
   redirectPath?: string
   preSelectedJobId?: string
+  existingCandidate?: any
+  isEditMode?: boolean
 }
 
 export default function AddCandidateForm({ 
   userRole, 
   redirectPath,
-  preSelectedJobId
+  preSelectedJobId,
+  existingCandidate,
+  isEditMode = false
 }: AddCandidateFormProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const jobFromUrl = searchParams.get('job')
+  
   const [loading, setLoading] = useState(false)
   const [jobs, setJobs] = useState<Job[]>([])
   const [user, setUser] = useState<any>(null)
   const [duplicateWarning, setDuplicateWarning] = useState<string>('')
-  const [existingCandidate, setExistingCandidate] = useState<any>(null)
+  const [duplicateCandidate, setDuplicateCandidate] = useState<any>(null)
   
-  // Resume upload state
+  // Resume upload state (disabled in edit mode)
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [parsing, setParsing] = useState(false)
-  const [parseConfidence, setParseConfidence] = useState(0)
-  const [autoFilled, setAutoFilled] = useState(false)
+  const [parseConfidence, setParseConfidence] = useState(existingCandidate?.auto_fill_confidence || 0)
+  const [autoFilled, setAutoFilled] = useState(existingCandidate?.auto_filled || false)
 
-  // Education options
-  const [educationOptions, setEducationOptions] = useState<any[]>([])
+  // Skills state
   const [skillSuggestions, setSkillSuggestions] = useState<string[]>([])
   const [skillInput, setSkillInput] = useState('')
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(
+    existingCandidate?.key_skills || []
+  )
 
   const [formData, setFormData] = useState({
     // Basic - Auto-fillable
-    full_name: '',
-    email: '',
-    phone: '',
-    gender: '',
-    date_of_birth: '',
-    current_location: '',
+    full_name: existingCandidate?.full_name || '',
+    email: existingCandidate?.email || '',
+    phone: existingCandidate?.phone || '',
+    gender: existingCandidate?.gender || '',
+    date_of_birth: existingCandidate?.date_of_birth || '',
+    current_location: existingCandidate?.current_location || '',
     
     // Job
-    job_id: '',
+    job_id: existingCandidate?.job_id || preSelectedJobId || jobFromUrl || '',
     
     // Professional - Auto-fillable
-    current_company: '',
-    current_designation: '',
-    total_experience: '',
-    relevant_experience: '',
-    current_ctc: '',
-    expected_ctc: '',
-    notice_period: '',
+    current_company: existingCandidate?.current_company || '',
+    current_designation: existingCandidate?.current_designation || '',
+    total_experience: existingCandidate?.total_experience?.toString() || '',
+    relevant_experience: existingCandidate?.relevant_experience?.toString() || '',
+    current_ctc: existingCandidate?.current_ctc?.toString() || '',
+    expected_ctc: existingCandidate?.expected_ctc?.toString() || '',
+    notice_period: existingCandidate?.notice_period?.toString() || '',
     
     // Education - Auto-fillable
-    education_level: '',
-    education_degree: '',
-    education_field: '',
-    education_institution: '',
-    
-    // Skills - Auto-fillable
-    key_skills: [] as string[],
+    education_level: existingCandidate?.education_level || '',
+    education_degree: existingCandidate?.education_degree || '',
+    education_field: existingCandidate?.education_field || '',
+    education_institution: existingCandidate?.education_institution || '',
     
     // Additional
-    source_portal: 'Naukri',
-    notes: '',
+    source_portal: existingCandidate?.source_portal || 'Naukri',
+    notes: existingCandidate?.notes || '',
   })
-
-  // FIXED: Load jobs with user data passed directly
+useEffect(() => {
+  console.log('🔄 Form useEffect triggered')
+  console.log('🔄 existingCandidate:', existingCandidate)
+  console.log('🔄 isEditMode:', isEditMode)
+  
+  if (existingCandidate && isEditMode) {
+    console.log('📝 Loading existing candidate data into form:', existingCandidate)
+    
+    setFormData({
+      full_name: existingCandidate.full_name || '',
+      email: existingCandidate.email || '',
+      phone: existingCandidate.phone || '',
+      gender: existingCandidate.gender || '',
+      date_of_birth: existingCandidate.date_of_birth || '',
+      current_location: existingCandidate.current_location || '',
+      job_id: existingCandidate.job_id || '',
+      current_company: existingCandidate.current_company || '',
+      current_designation: existingCandidate.current_designation || '',
+      total_experience: existingCandidate.total_experience?.toString() || '',
+      relevant_experience: existingCandidate.relevant_experience?.toString() || '',
+      current_ctc: existingCandidate.current_ctc?.toString() || '',
+      expected_ctc: existingCandidate.expected_ctc?.toString() || '',
+      notice_period: existingCandidate.notice_period?.toString() || '',
+      education_level: existingCandidate.education_level || '',
+      education_degree: existingCandidate.education_degree || '',
+      education_field: existingCandidate.education_field || '',
+      education_institution: existingCandidate.education_institution || '',
+      source_portal: existingCandidate.source_portal || 'Naukri',
+      notes: existingCandidate.notes || '',
+    })
+    
+    setSelectedSkills(existingCandidate.key_skills || [])
+    setAutoFilled(existingCandidate.auto_filled || false)
+    setParseConfidence(existingCandidate.auto_fill_confidence || 0)
+    
+    console.log('✅ Form data loaded!')
+  } else {
+    console.log('⚠️ useEffect skipped:', { 
+      hasCandidate: !!existingCandidate, 
+      isEdit: isEditMode 
+    })
+  }
+}, [existingCandidate?.id, isEditMode])  // ← CHANGED: Use existingCandidate?.id instead
+  // Load jobs
   const loadJobs = async (userId: string, teamId: string, role: string) => {
     console.log('🔍 Loading jobs for:', { userId, teamId, role })
     
     try {
       if (role === 'recruiter') {
-        // RECRUITERS: Get jobs from assignments table
-        console.log('📋 Fetching assignments for recruiter:', userId)
+        console.log('📋 Loading jobs for recruiter from assignments...')
         
         const { data: assignments, error: assignError } = await supabase
           .from('job_recruiter_assignments')
@@ -94,22 +141,22 @@ export default function AddCandidateForm({
           .eq('recruiter_id', userId)
           .eq('is_active', true)
 
-        console.log('✅ Assignments found:', assignments)
-
         if (assignError) {
-          console.error('❌ Assignment query error:', assignError)
+          console.error('❌ Assignments query error:', assignError)
           setJobs([])
           return
         }
 
+        console.log('📦 Assignments found:', assignments)
+
         if (!assignments || assignments.length === 0) {
-          console.log('⚠️ No assignments found for recruiter')
+          console.log('⚠️ No job assignments found for this recruiter')
           setJobs([])
           return
         }
 
         const jobIds = assignments.map(a => a.job_id)
-        console.log('🎯 Job IDs for recruiter:', jobIds)
+        console.log('🎯 Job IDs:', jobIds)
 
         const { data, error } = await supabase
           .from('jobs')
@@ -123,16 +170,16 @@ export default function AddCandidateForm({
           .eq('status', 'open')
           .order('created_at', { ascending: false })
 
-        console.log('📦 Jobs loaded:', data)
+        console.log('📦 Recruiter Jobs loaded:', data)
 
         if (error) {
           console.error('❌ Jobs query error:', error)
         }
 
-        if (data) setJobs(data as unknown as Job[])
-      } else {
-        // TEAM LEADERS: See all team jobs
-        console.log('📋 Fetching all team jobs for team:', teamId)
+        if (data) setJobs((data as unknown) as Job[])
+
+      } else if (role === 'team_leader' || role === 'sr_team_leader') {
+        console.log('📋 Loading jobs for TL/Sr.TL from team...')
         
         const { data, error } = await supabase
           .from('jobs')
@@ -146,13 +193,35 @@ export default function AddCandidateForm({
           .eq('status', 'open')
           .order('created_at', { ascending: false })
 
-        console.log('📦 TL Jobs loaded:', data)
+        console.log('📦 TL/Sr.TL Jobs loaded:', data)
 
         if (error) {
           console.error('❌ Jobs query error:', error)
         }
 
-        if (data) setJobs(data as unknown as Job[])
+        if (data) setJobs((data as unknown) as Job[])
+
+      } else if (role === 'system_admin' || role === 'ceo' || role === 'ops_head') {
+        console.log('📋 Loading all jobs for admin/management...')
+        
+        const { data, error } = await supabase
+          .from('jobs')
+          .select(`
+            id, 
+            job_title, 
+            job_code,
+            clients(company_name)
+          `)
+          .eq('status', 'open')
+          .order('created_at', { ascending: false })
+
+        console.log('📦 Admin Jobs loaded:', data)
+
+        if (error) {
+          console.error('❌ Jobs query error:', error)
+        }
+
+        if (data) setJobs((data as unknown) as Job[])
       }
     } catch (error) {
       console.error('💥 loadJobs error:', error)
@@ -167,48 +236,11 @@ export default function AddCandidateForm({
       console.log('👤 User loaded:', parsedUser)
       setUser(parsedUser)
       
-      // IMPORTANT: Pass user data directly to loadJobs
       loadJobs(parsedUser.id, parsedUser.team_id, parsedUser.role || userRole)
-    }
-    loadEducationOptions()
-    
-    // Pre-select job if provided
-    if (preSelectedJobId) {
-      setFormData(prev => ({
-        ...prev,
-        job_id: preSelectedJobId
-      }))
     }
   }, [preSelectedJobId, userRole])
 
-  const loadEducationOptions = async () => {
-    const { data } = await supabase
-      .from('education_standards')
-      .select('*')
-      .eq('is_active', true)
-      .order('sort_order')
-
-    if (data) setEducationOptions(data)
-  }
-
-  const loadSkillSuggestions = async (partial: string) => {
-    if (partial.length < 2) {
-      setSkillSuggestions([])
-      return
-    }
-
-    const { data, error } = await supabase
-      .rpc('get_skill_suggestions', {
-        partial_skill: partial,
-        limit_count: 10
-      })
-
-    if (data) {
-      setSkillSuggestions(data.map((s: any) => s.skill_name))
-    }
-  }
-
-  // 🔥 RESUME UPLOAD AND PARSE
+  // Resume parsing (only in add mode)
   const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -229,13 +261,9 @@ export default function AddCandidateForm({
     setParsing(true)
 
     try {
-      // Read file as text
       const text = await readFileAsText(file)
-      
-      // Parse with AI
       const parsed = parseResume(text)
       
-      // Auto-fill form
       setFormData(prev => ({
         ...prev,
         full_name: parsed.fullName || prev.full_name,
@@ -255,16 +283,14 @@ export default function AddCandidateForm({
         education_degree: parsed.educationDegree || prev.education_degree,
         education_field: parsed.educationField || prev.education_field,
         education_institution: parsed.educationInstitution || prev.education_institution,
-        
-        key_skills: parsed.skills.length > 0 ? parsed.skills : prev.key_skills,
       }))
 
+      setSelectedSkills(parsed.skills.length > 0 ? parsed.skills : selectedSkills)
       setParseConfidence(parsed.confidence.overall)
       setAutoFilled(true)
       
       alert(`✅ Resume parsed successfully!\n\nConfidence: ${(parsed.confidence.overall * 100).toFixed(0)}%\n\nPlease review and complete any missing fields.`)
       
-      // Check for duplicates with parsed data
       if (parsed.phone || parsed.email) {
         checkDuplicate(parsed.phone || '', parsed.email || '')
       }
@@ -289,6 +315,7 @@ export default function AddCandidateForm({
     })
   }
 
+  // Duplicate checking (skip in edit mode for same candidate)
   const checkDuplicate = async (phone: string, email: string) => {
     if (!phone && !email) return false
 
@@ -309,26 +336,31 @@ export default function AddCandidateForm({
         query = query.eq('email', email)
       }
 
+      // Skip checking against self in edit mode
+      if (isEditMode && existingCandidate) {
+        query = query.neq('id', existingCandidate.id)
+      }
+
       const { data, error } = await query
 
       if (error) throw error
 
       if (data && data.length > 0) {
         const existing = data[0]
-        setExistingCandidate(existing)
+        setDuplicateCandidate(existing)
         setDuplicateWarning(
           `⚠️ DUPLICATE FOUND!\n\n` +
           `Name: ${existing.full_name}\n` +
           `Phone: ${existing.phone}\n` +
           `Email: ${existing.email || 'N/A'}\n` +
           `Stage: ${existing.current_stage}\n` +
-          `Job: ${(existing as any).jobs?.[0]?.job_title || 'N/A'}`
+          `Job: ${(existing.jobs as Job[])?.[0]?.job_title || 'N/A'}`
         )
         return true
       }
 
       setDuplicateWarning('')
-      setExistingCandidate(null)
+      setDuplicateCandidate(null)
       return false
     } catch (error) {
       console.error('Duplicate check error:', error)
@@ -337,123 +369,179 @@ export default function AddCandidateForm({
   }
 
   useEffect(() => {
+    if (isEditMode) return // Skip duplicate check in edit mode
+    
     const timeoutId = setTimeout(() => {
       if (formData.phone || formData.email) {
         checkDuplicate(formData.phone, formData.email)
       }
     }, 500)
     return () => clearTimeout(timeoutId)
-  }, [formData.phone, formData.email])
+  }, [formData.phone, formData.email, isEditMode])
+
+  // Skills management
+  const loadSkillSuggestions = async (partial: string) => {
+    if (partial.length < 2) {
+      setSkillSuggestions([])
+      return
+    }
+
+    const { data, error } = await supabase
+      .rpc('get_skill_suggestions', {
+        partial_skill: partial,
+        limit_count: 10
+      })
+
+    if (data) {
+      setSkillSuggestions(data.map((s: any) => s.skill_name))
+    }
+  }
 
   const handleAddSkill = (skill: string) => {
-    if (skill && !formData.key_skills.includes(skill)) {
-      setFormData({
-        ...formData,
-        key_skills: [...formData.key_skills, skill]
-      })
+    if (skill && !selectedSkills.includes(skill)) {
+      setSelectedSkills([...selectedSkills, skill])
       setSkillInput('')
       setSkillSuggestions([])
     }
   }
 
   const handleRemoveSkill = (skillToRemove: string) => {
-    setFormData({
-      ...formData,
-      key_skills: formData.key_skills.filter(s => s !== skillToRemove)
-    })
+    setSelectedSkills(selectedSkills.filter(s => s !== skillToRemove))
   }
 
+  // Form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // Validate required fields
     if (!formData.full_name || !formData.phone || !formData.job_id) {
       alert('Please fill all required fields (Name, Phone, Job)')
       return
     }
 
-    // Check duplicates
-    const isDuplicate = await checkDuplicate(formData.phone, formData.email)
-    if (isDuplicate) {
-      const confirm = window.confirm(
-        `⚠️ DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`
-      )
-      if (!confirm) return
+    // Check duplicates (only in add mode)
+    if (!isEditMode) {
+      const isDuplicate = await checkDuplicate(formData.phone, formData.email)
+      if (isDuplicate) {
+        const confirm = window.confirm(
+          `⚠️ DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`
+        )
+        if (!confirm) return
+      }
     }
 
     setLoading(true)
 
     try {
-      // Upload resume first if exists
-      let resumeUrl = null
-      if (resumeFile) {
-        const fileExt = resumeFile.name.split('.').pop()
-        const fileName = `${Date.now()}_${formData.full_name.replace(/\s+/g, '_')}.${fileExt}`
-        const filePath = `resumes/${fileName}`
-
-        const { error: uploadError } = await supabase.storage
-          .from('resumes')
-          .upload(filePath, resumeFile)
-
-        if (!uploadError) {
-          const { data: urlData } = supabase.storage
-            .from('resumes')
-            .getPublicUrl(filePath)
-          resumeUrl = urlData.publicUrl
-        }
+      const candidateData = {
+        ...formData,
+        total_experience: parseFloat(formData.total_experience) || 0,
+        relevant_experience: parseFloat(formData.relevant_experience) || 0,
+        current_ctc: parseFloat(formData.current_ctc) || 0,
+        expected_ctc: parseFloat(formData.expected_ctc) || 0,
+        notice_period: parseInt(formData.notice_period) || 0,
+        key_skills: selectedSkills,
+        last_activity_date: new Date().toISOString(),
       }
 
-      // Insert candidate
-      const { data, error } = await supabase
-        .from('candidates')
-        .insert([{
-          ...formData,
-          total_experience: parseFloat(formData.total_experience) || 0,
-          relevant_experience: parseFloat(formData.relevant_experience) || 0,
-          current_ctc: parseFloat(formData.current_ctc) || 0,
-          expected_ctc: parseFloat(formData.expected_ctc) || 0,
-          notice_period: parseInt(formData.notice_period) || 0,
-          assigned_to: user.id,
-          team_id: user.team_id,
-          current_stage: 'sourced',
-          date_sourced: new Date().toISOString(),
-          last_activity_date: new Date().toISOString(),
-          resume_url: resumeUrl,
-          resume_file_name: resumeFile?.name,
-          resume_file_size: resumeFile?.size,
-          resume_uploaded_at: resumeUrl ? new Date().toISOString() : null,
-          resume_parsed: autoFilled,
-          auto_filled: autoFilled,
-          auto_fill_confidence: parseConfidence,
+      if (isEditMode && existingCandidate) {
+        // ========================================
+        // UPDATE EXISTING CANDIDATE
+        // ========================================
+        const { error } = await supabase
+          .from('candidates')
+          .update(candidateData)
+          .eq('id', existingCandidate.id)
+
+        if (error) throw error
+
+        // Add timeline entry
+        await supabase.from('candidate_timeline').insert([{
+          candidate_id: existingCandidate.id,
+          activity_type: 'candidate_updated',
+          activity_title: 'Candidate Updated',
+          activity_description: 'Candidate information was updated',
+          performed_by: user.id,
         }])
-        .select()
 
-      if (error) throw error
+        alert('✅ Candidate updated successfully!')
+        
+        if (redirectPath) {
+          router.push(redirectPath)
+        } else {
+          router.back()
+        }
 
-      // Timeline
-      await supabase.from('candidate_timeline').insert([{
-        candidate_id: data[0].id,
-        activity_type: 'candidate_created',
-        activity_title: 'Candidate Created',
-        activity_description: autoFilled 
-          ? `Candidate added via AI-parsed resume (${(parseConfidence * 100).toFixed(0)}% confidence)`
-          : 'Candidate added manually',
-        metadata: {
-          auto_filled: autoFilled,
-          confidence: parseConfidence,
-          skills_count: formData.key_skills.length,
-        },
-        performed_by: user.id,
-      }])
-
-      alert('✅ Candidate added successfully!')
-      
-      if (redirectPath) {
-        router.push(redirectPath)
-      } else if (userRole === 'team_leader') {
-        router.push('/tl/candidates')
       } else {
-        router.push('/recruiter/dashboard')
+        // ========================================
+        // CREATE NEW CANDIDATE
+        // ========================================
+        
+        // Upload resume first if exists
+        let resumeUrl = null
+        if (resumeFile) {
+          const fileExt = resumeFile.name.split('.').pop()
+          const fileName = `${Date.now()}_${formData.full_name.replace(/\s+/g, '_')}.${fileExt}`
+          const filePath = `resumes/${fileName}`
+
+          const { error: uploadError } = await supabase.storage
+            .from('resumes')
+            .upload(filePath, resumeFile)
+
+          if (!uploadError) {
+            const { data: urlData } = supabase.storage
+              .from('resumes')
+              .getPublicUrl(filePath)
+            resumeUrl = urlData.publicUrl
+          }
+        }
+
+        const { data, error } = await supabase
+          .from('candidates')
+          .insert([{
+            ...candidateData,
+            assigned_to: user.id,
+            team_id: user.team_id,
+            current_stage: 'sourced',
+            date_sourced: new Date().toISOString(),
+            resume_url: resumeUrl,
+            resume_file_name: resumeFile?.name,
+            resume_file_size: resumeFile?.size,
+            resume_uploaded_at: resumeUrl ? new Date().toISOString() : null,
+            resume_parsed: autoFilled,
+            auto_filled: autoFilled,
+            auto_fill_confidence: parseConfidence,
+          }])
+          .select()
+
+        if (error) throw error
+
+        // Timeline
+        await supabase.from('candidate_timeline').insert([{
+          candidate_id: data[0].id,
+          activity_type: 'candidate_created',
+          activity_title: 'Candidate Created',
+          activity_description: autoFilled 
+            ? `Candidate added via AI-parsed resume (${(parseConfidence * 100).toFixed(0)}% confidence)`
+            : 'Candidate added manually',
+          metadata: {
+            auto_filled: autoFilled,
+            confidence: parseConfidence,
+            skills_count: selectedSkills.length,
+          },
+          performed_by: user.id,
+        }])
+
+        alert('✅ Candidate added successfully!')
+        
+        if (redirectPath) {
+          router.push(redirectPath)
+        } else if (userRole === 'team_leader') {
+          router.push('/tl/candidates')
+        } else if (userRole === 'sr_team_leader') {
+          router.push('/sr-tl/candidates')
+        } else {
+          router.push('/recruiter/dashboard')
+        }
       }
     } catch (error: any) {
       console.error('Submit error:', error)
@@ -473,73 +561,125 @@ export default function AddCandidateForm({
   return (
     <div className="max-w-4xl mx-auto">
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Add New Candidate</h2>
-        <p className="text-gray-600">Upload resume for AI-powered auto-fill or enter manually</p>
+        <h2 className="text-2xl font-bold text-gray-900">
+          {isEditMode ? 'Edit Candidate' : 'Add New Candidate'}
+        </h2>
+        <p className="text-gray-600">
+          {isEditMode 
+            ? 'Update candidate information' 
+            : 'Upload resume for AI-powered auto-fill or enter manually'}
+        </p>
       </div>
 
-      {/* 🔥 RESUME UPLOAD SECTION - FIRST */}
-      <div className="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200">
-        <h3 className="text-lg font-semibold text-blue-900 mb-4">
-          🤖 AI-Powered Resume Parser
-        </h3>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Upload Resume (PDF, Word, or Text) - Auto-fills form below
-            </label>
-            <input
-              type="file"
-              accept=".pdf,.doc,.docx,.txt"
-              onChange={handleResumeUpload}
-              disabled={parsing}
-              className="block w-full text-sm text-gray-500
-                file:mr-4 file:py-3 file:px-6
-                file:rounded-lg file:border-0
-                file:text-sm file:font-semibold
-                file:bg-blue-600 file:text-white
-                hover:file:bg-blue-700
-                disabled:opacity-50"
-            />
-          </div>
-
-          {parsing && (
-            <div className="flex items-center gap-3 text-blue-700">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-700"></div>
-              <span className="text-sm font-medium">Parsing resume with AI...</span>
+      {/* Resume Upload - Only in Add Mode */}
+      {!isEditMode && (
+        <div className="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200">
+          <h3 className="text-lg font-semibold text-blue-900 mb-4">
+            🤖 AI-Powered Resume Parser
+          </h3>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Upload Resume (PDF, Word, or Text) - Auto-fills form below
+              </label>
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.txt"
+                onChange={handleResumeUpload}
+                disabled={parsing}
+                className="block w-full text-sm text-gray-500
+                  file:mr-4 file:py-3 file:px-6
+                  file:rounded-lg file:border-0
+                  file:text-sm file:font-semibold
+                  file:bg-blue-600 file:text-white
+                  hover:file:bg-blue-700
+                  disabled:opacity-50"
+              />
             </div>
-          )}
 
-          {autoFilled && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <div className="flex items-center gap-2 text-green-800 mb-2">
-                <span className="text-lg">✅</span>
-                <span className="font-semibold">Resume Parsed Successfully!</span>
+            {parsing && (
+              <div className="flex items-center gap-3 text-blue-700">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-700"></div>
+                <span className="text-sm font-medium">Parsing resume with AI...</span>
               </div>
+            )}
+
+            {autoFilled && !isEditMode && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 text-green-800 mb-2">
+                  <span className="text-lg">✅</span>
+                  <span className="font-semibold">Resume Parsed Successfully!</span>
+                </div>
+                <p className="text-sm text-green-700">
+                  Confidence Score: <strong>{(parseConfidence * 100).toFixed(0)}%</strong>
+                </p>
+                <p className="text-xs text-green-600 mt-1">
+                  Please review auto-filled fields below and complete any missing information
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Edit Mode - Show Resume was AI-filled */}
+      {isEditMode && existingCandidate?.auto_filled && (
+        <div className="card mb-6 bg-green-50 border border-green-200">
+          <div className="flex items-center gap-2 text-green-800">
+            <span className="text-lg">🤖</span>
+            <div>
+              <strong>This candidate was AI-parsed from resume</strong>
               <p className="text-sm text-green-700">
-                Confidence Score: <strong>{(parseConfidence * 100).toFixed(0)}%</strong>
-              </p>
-              <p className="text-xs text-green-600 mt-1">
-                Please review auto-filled fields below and complete any missing information
+                Original confidence: {(existingCandidate.auto_fill_confidence * 100).toFixed(0)}%
               </p>
             </div>
-          )}
+          </div>
         </div>
-      </div>
+      )}
+
       {/* Duplicate Warning */}
-      {duplicateWarning && (
-        <div className="alert mb-6">
-          <strong>⚠️ DUPLICATE DETECTED!</strong>
-          <pre className="mt-2 text-sm whitespace-pre-wrap font-mono">{duplicateWarning}</pre>
-          {existingCandidate && (
+      {duplicateWarning && !isEditMode && (
+        <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 mb-6">
+          <strong className="text-red-900">⚠️ DUPLICATE DETECTED!</strong>
+          <pre className="mt-2 text-sm whitespace-pre-wrap font-mono text-red-800">{duplicateWarning}</pre>
+          {duplicateCandidate && (
             <button
               type="button"
-              onClick={() => router.push(`/${userRole === 'team_leader' ? 'tl' : 'recruiter'}/candidates/${existingCandidate.id}`)}
+              onClick={() => {
+                const basePath = userRole === 'sr_team_leader' ? '/sr-tl' : userRole === 'team_leader' ? '/tl' : '/recruiter'
+                router.push(`${basePath}/candidates/${duplicateCandidate.id}`)
+              }}
               className="mt-3 px-4 py-2 bg-white text-red-700 border border-red-300 rounded-lg text-sm font-medium hover:bg-red-50"
             >
               View Existing Candidate →
             </button>
           )}
+        </div>
+      )}
+
+      {/* Job Loading Info */}
+      {jobs.length === 0 && !loading && !isEditMode && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <h3 className="font-semibold text-yellow-900">No Jobs Available</h3>
+              <p className="text-sm text-yellow-800 mt-1">
+                {userRole === 'recruiter' 
+                  ? 'You have no assigned jobs. Please contact your Team Leader to assign you to jobs.'
+                  : 'No open jobs found. Please create a job first before adding candidates.'}
+              </p>
+              {(userRole === 'team_leader' || userRole === 'sr_team_leader') && (
+                <button
+                  onClick={() => router.push(`/${userRole === 'sr_team_leader' ? 'sr-tl' : 'tl'}/jobs`)}
+                  className="mt-3 text-sm bg-yellow-600 text-white px-4 py-2 rounded-lg hover:bg-yellow-700"
+                >
+                  Go to Jobs
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -549,7 +689,7 @@ export default function AddCandidateForm({
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Basic Information
-            {autoFilled && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
+            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -575,7 +715,7 @@ export default function AddCandidateForm({
                 name="email"
                 value={formData.email}
                 onChange={handleChange}
-                className={`input ${duplicateWarning && formData.email ? 'border-red-500 border-2' : ''}`}
+                className={`input ${duplicateWarning && formData.email && !isEditMode ? 'border-red-500 border-2' : ''}`}
               />
             </div>
 
@@ -588,7 +728,7 @@ export default function AddCandidateForm({
                 name="phone"
                 value={formData.phone}
                 onChange={handleChange}
-                className={`input ${duplicateWarning && formData.phone ? 'border-red-500 border-2' : ''}`}
+                className={`input ${duplicateWarning && formData.phone && !isEditMode ? 'border-red-500 border-2' : ''}`}
                 required
               />
             </div>
@@ -654,7 +794,7 @@ export default function AddCandidateForm({
               onChange={handleChange}
               className="input"
               required
-              disabled={!!preSelectedJobId}
+              disabled={!!preSelectedJobId || !!jobFromUrl}
             >
               <option value="">Select Job</option>
               {jobs.map((job) => (
@@ -663,11 +803,11 @@ export default function AddCandidateForm({
                 </option>
               ))}
             </select>
-            {jobs.length === 0 && !loading && (
-              <p className="text-sm text-red-600 mt-2">
-                ⚠️ No jobs available. {userRole === 'recruiter' ? 'Ask your team leader to assign jobs to you.' : 'Create a job first.'}
-              </p>
-            )}
+            <p className="text-xs text-gray-500 mt-1">
+              {jobs.length > 0 
+                ? `${jobs.length} job${jobs.length !== 1 ? 's' : ''} available`
+                : 'No jobs available'}
+            </p>
           </div>
         </div>
 
@@ -675,7 +815,7 @@ export default function AddCandidateForm({
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Professional Details
-            {autoFilled && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
+            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -779,7 +919,7 @@ export default function AddCandidateForm({
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Education
-            {autoFilled && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
+            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -845,18 +985,18 @@ export default function AddCandidateForm({
           </div>
         </div>
 
-        {/* Skills - AI-Powered */}
+        {/* Skills */}
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            🤖 Key Skills (AI-Powered Suggestions)
-            {autoFilled && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
+            🤖 Key Skills
+            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
           </h3>
           
           <div className="space-y-4">
             {/* Current Skills */}
-            {formData.key_skills.length > 0 && (
+            {selectedSkills.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                {formData.key_skills.map((skill, index) => (
+                {selectedSkills.map((skill, index) => (
                   <span
                     key={index}
                     className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium flex items-center gap-2"
@@ -865,7 +1005,7 @@ export default function AddCandidateForm({
                     <button
                       type="button"
                       onClick={() => handleRemoveSkill(skill)}
-                      className="text-blue-600 hover:text-blue-900"
+                      className="text-blue-600 hover:text-blue-900 font-bold"
                     >
                       ×
                     </button>
@@ -911,7 +1051,7 @@ export default function AddCandidateForm({
             </div>
 
             <p className="text-xs text-gray-500">
-              💡 Start typing to see AI-powered suggestions based on our database
+              💡 Type to see AI-powered suggestions or press Enter to add custom skills
             </p>
           </div>
         </div>
@@ -960,10 +1100,18 @@ export default function AddCandidateForm({
         <div className="flex gap-4 pt-4 border-t border-gray-200">
           <button
             type="submit"
-            disabled={loading}
-            className={`btn-primary ${duplicateWarning ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
+            disabled={loading || (!isEditMode && jobs.length === 0)}
+            className={`btn-primary ${duplicateWarning && !isEditMode ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
           >
-            {loading ? 'Adding...' : duplicateWarning ? '⚠️ Add Anyway' : autoFilled ? '✅ Save AI-Parsed Candidate' : 'Add Candidate'}
+            {loading 
+              ? (isEditMode ? 'Updating...' : 'Adding...') 
+              : isEditMode 
+                ? '✅ Update Candidate' 
+                : duplicateWarning 
+                  ? '⚠️ Add Anyway' 
+                  : autoFilled 
+                    ? '✅ Save AI-Parsed Candidate' 
+                    : 'Add Candidate'}
           </button>
           <button
             type="button"
