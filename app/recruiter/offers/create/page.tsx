@@ -1,63 +1,128 @@
-// app/recruiter/offers/create/page.tsx
 'use client'
 
+import { useEffect, useState, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import DashboardLayout from '@/components/DashboardLayout'
 import OfferForm from '@/components/OfferForm'
-import { useSearchParams, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-export default function CreateOfferPage() {
+type Client = {
+  id: string
+  company_name?: string
+  replacement_guarantee_days?: number
+}
+
+type Job = {
+  id: string
+  job_title?: string
+  job_code?: string
+  client_id?: string
+  clients?: Client
+}
+
+type Candidate = {
+  id: string
+  full_name?: string
+  expected_ctc?: number
+  notice_period?: number
+  job_id?: string
+  jobs?: Job
+  current_stage?: string
+}
+
+function OfferCreateContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const [candidate, setCandidate] = useState<Candidate | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const candidateId = searchParams.get('candidate')
-  const [candidate, setCandidate] = useState<any>(null)
 
   useEffect(() => {
-    if (!candidateId) {
-      alert('No candidate selected')
-      router.push('/recruiter/candidates')
-      return
+    if (candidateId) {
+      loadCandidate(candidateId)
+    } else {
+      setLoading(false)
     }
-
-    loadCandidate(candidateId)
   }, [candidateId])
 
   const loadCandidate = async (id: string) => {
     try {
       const { data, error } = await supabase
         .from('candidates')
-        .select('id, full_name, current_stage')
+        .select(`
+          *,
+          jobs (
+            id,
+            job_title,
+            job_code,
+            client_id,
+            clients (
+              id,
+              company_name,
+              replacement_guarantee_days
+            )
+          )
+        `)
         .eq('id', id)
         .single()
 
       if (error) throw error
-      setCandidate(data)
-    } catch (error) {
-      console.error('Error:', error)
-      alert('Error loading candidate')
-      router.back()
+      setCandidate(data as Candidate)
+    } catch (err: unknown) {
+      console.error('Error loading candidate:', err)
+      setError('Candidate not found')
+      // short delay then navigate back
+      setTimeout(() => router.push('/recruiter/offers'), 1200)
+    } finally {
+      setLoading(false)
     }
   }
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <div className="mb-6">
+        <button
+          onClick={() => router.back()}
+          className="text-sm text-gray-600 hover:text-gray-900 mb-2"
+        >
+          ← Back
+        </button>
+        <h2 className="text-2xl font-bold text-gray-900">Create Offer</h2>
+        <p className="text-gray-600">
+          {candidate ? `For ${candidate.full_name}` : 'Create a new offer'}
+        </p>
+        {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
+      </div>
+
+      <OfferForm 
+        candidate={candidate}
+        candidateId={candidateId ?? undefined}
+        onSuccess={() => router.push('/recruiter/offers')}
+        onCancel={() => router.back()}
+      />
+    </div>
+  )
+}
+
+export default function RecruiterOfferCreatePage() {
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto space-y-6">
-        <div className="flex items-center gap-4">
-          <button onClick={() => router.back()} className="text-gray-600 hover:text-gray-900">
-            ← Back
-          </button>
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">Create Offer</h2>
-            <p className="text-gray-600">Extend offer to {candidate?.full_name}</p>
-          </div>
+      <Suspense fallback={
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
         </div>
-
-        <OfferForm 
-          candidateId={candidateId || undefined}
-          onSuccess={() => router.push(`/recruiter/candidates/${candidateId}`)}
-        />
-      </div>
+      }>
+        <OfferCreateContent />
+      </Suspense>
     </DashboardLayout>
   )
 }

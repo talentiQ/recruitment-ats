@@ -5,8 +5,33 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
+interface Client {
+  id: string
+  company_name?: string
+  replacement_guarantee_days?: number
+}
+
+interface Job {
+  id: string
+  job_title?: string
+  job_code?: string
+  client_id?: string
+  clients?: Client
+}
+
+interface Candidate {
+  id: string
+  full_name?: string
+  expected_ctc?: number
+  notice_period?: number
+  job_id?: string
+  jobs?: Job
+  current_stage?: string
+}
+
 interface OfferFormProps {
   candidateId?: string
+  candidate?: Candidate | null
   existingOffer?: any
   isEditMode?: boolean
   onSuccess?: () => void
@@ -14,7 +39,8 @@ interface OfferFormProps {
 }
 
 export default function OfferForm({ 
-  candidateId, 
+  candidateId,
+  candidate: propCandidate = null,
   existingOffer, 
   isEditMode = false,
   onSuccess,
@@ -23,8 +49,10 @@ export default function OfferForm({
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [user, setUser] = useState<any>(null)
-  const [candidate, setCandidate] = useState<any>(null)
-  const [client, setClient] = useState<any>(null)
+  const [candidate, setCandidate] = useState<Candidate | null>(propCandidate)
+  const [client, setClient] = useState<Client | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [formSuccess, setFormSuccess] = useState<string | null>(null)
 
   const [formData, setFormData] = useState({
     // CTC Breakdown
@@ -51,8 +79,11 @@ export default function OfferForm({
     if (userData) {
       setUser(JSON.parse(userData))
     }
-    
-    if (candidateId) {
+    // if parent passed candidate, use it; otherwise load from ID
+    if (propCandidate) {
+      setCandidate(propCandidate)
+      if (propCandidate.jobs?.clients) setClient(propCandidate.jobs.clients)
+    } else if (candidateId) {
       loadCandidate(candidateId)
     }
   }, [candidateId])
@@ -79,21 +110,20 @@ export default function OfferForm({
         .single()
 
       if (error) throw error
-      setCandidate(data)
-      
-      if (data.jobs?.clients) {
-        setClient(data.jobs.clients)
-      }
+      const d = data as Candidate
+      setCandidate(d)
+      if (d.jobs?.clients) setClient(d.jobs.clients)
 
       // Pre-fill designation from job title
-      if (data.jobs?.job_title && !formData.designation) {
+      if (d.jobs?.job_title && !formData.designation) {
         setFormData(prev => ({
           ...prev,
-          designation: data.jobs.job_title
+          designation: d.jobs?.job_title || prev.designation
         }))
       }
-    } catch (error) {
-      console.error('Error loading candidate:', error)
+    } catch (err: unknown) {
+      console.error('Error loading candidate:', err)
+      setFormError('Could not load candidate')
     }
   }
 
@@ -111,8 +141,9 @@ export default function OfferForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    setFormError(null)
     if (!formData.fixed_ctc || !formData.expected_joining_date) {
-      alert('Please fill Fixed CTC and Expected Joining Date')
+      setFormError('Please fill Fixed CTC and Expected Joining Date')
       return
     }
 
@@ -148,7 +179,7 @@ export default function OfferForm({
         department: formData.department,
         reporting_to: formData.reporting_to,
         
-        status: 'extended',
+        status: candidate?.current_stage === 'offer_accepted' ? 'accepted' : 'extended',
         notes: formData.notes,
         created_by: user.id,
       }
@@ -197,17 +228,18 @@ export default function OfferForm({
         }])
       }
 
-      alert(`✅ Offer ${isEditMode ? 'updated' : 'created'} successfully!`)
-      
+      const successMsg = `Offer ${isEditMode ? 'updated' : 'created'} successfully!`
+      setFormSuccess(successMsg)
       if (onSuccess) {
         onSuccess()
       } else {
         router.back()
       }
 
-    } catch (error: any) {
-      console.error('Error:', error)
-      alert('Error: ' + error.message)
+    } catch (err: unknown) {
+      console.error('Error:', err)
+      const message = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err)
+      setFormError('Error: ' + message)
     } finally {
       setLoading(false)
     }
@@ -222,6 +254,12 @@ export default function OfferForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {formError && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded">{formError}</div>
+      )}
+      {formSuccess && (
+        <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded">{formSuccess}</div>
+      )}
       {/* Candidate Info Banner */}
       {candidate && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
