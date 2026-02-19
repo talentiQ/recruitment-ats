@@ -1,4 +1,4 @@
-// components/InterviewScheduler.tsx
+﻿// components/InterviewScheduler.tsx
 'use client'
 
 import { useState } from 'react'
@@ -35,14 +35,6 @@ export default function InterviewScheduler({
 
     try {
       const userData = JSON.parse(localStorage.getItem('user') || '{}')
-
-      console.log('📝 Scheduling interview:', {
-        candidate_id: candidateId,
-        job_id: jobId,
-        recruiter_id: userData.id,
-        ...formData
-      })
-
       // Insert interview
       const { data, error } = await supabase.from('interviews').insert([{
         candidate_id: candidateId,
@@ -58,12 +50,9 @@ export default function InterviewScheduler({
       }]).select()
 
       if (error) {
-        console.error('❌ Interview insert error:', error)
+        console.error('âŒ Interview insert error:', error)
         throw error
       }
-
-      console.log('✅ Interview created:', data)
-
       // Update candidate stage
       await supabase
         .from('candidates')
@@ -89,10 +78,10 @@ export default function InterviewScheduler({
         performed_by: userData.id,
       }])
 
-      alert('✅ Interview scheduled successfully!')
+      alert('âœ… Interview scheduled successfully!')
       onScheduled()
     } catch (error: any) {
-      console.error('💥 Full error:', error)
+      console.error('ðŸ’¥ Full error:', error)
       alert('Error scheduling interview: ' + (error.message || 'Unknown error'))
     } finally {
       setScheduling(false)
@@ -116,7 +105,7 @@ export default function InterviewScheduler({
           onClick={() => onCancel && onCancel()}
           className="text-gray-500 hover:text-gray-700 text-2xl"
         >
-          ✕
+          âœ•
         </button>
       </div>
 
@@ -178,9 +167,9 @@ export default function InterviewScheduler({
               onChange={handleChange}
               className="input"
             >
-              <option value="video">🎥 Video Call</option>
-              <option value="phone">📞 Phone</option>
-              <option value="in_person">🏢 In-Person</option>
+              <option value="video">ðŸŽ¥ Video Call</option>
+              <option value="phone">ðŸ“ž Phone</option>
+              <option value="in_person">ðŸ¢ In-Person</option>
             </select>
           </div>
 
@@ -225,7 +214,7 @@ export default function InterviewScheduler({
                 Scheduling...
               </span>
             ) : (
-              '📅 Schedule Interview'
+              'ðŸ“… Schedule Interview'
             )}
           </button>
           <button

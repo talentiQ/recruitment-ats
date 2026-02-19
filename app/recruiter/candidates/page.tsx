@@ -146,7 +146,7 @@ export default function CandidatesListPage() {
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">Team Candidates</h2>
-            <p className="text-gray-600">View and manage your team's pipeline</p>
+            <p className="text-gray-600">View and manage your team&apos;s pipeline</p>
           </div>
           <button
             onClick={() => router.push('/recruiter/candidates/add')}

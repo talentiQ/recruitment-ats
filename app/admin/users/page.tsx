@@ -1,4 +1,4 @@
-// app/admin/dashboard/page.tsx
+﻿// app/admin/dashboard/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -41,8 +41,6 @@ export default function UsersManagementPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      console.log('🔄 Loading users data...')
-
       const [usersData, teamsData] = await Promise.all([
         supabase
           .from('users')
@@ -59,9 +57,6 @@ export default function UsersManagementPage() {
           .order('name'),
       ])
 
-      console.log('✅ Users loaded:', usersData.data?.length)
-      console.log('✅ Teams loaded:', teamsData.data?.length)
-
       if (usersData.data) setUsers(usersData.data)
       if (teamsData.data) setTeams(teamsData.data)
 
@@ -72,12 +67,9 @@ export default function UsersManagementPage() {
         .in('role', ['team_leader', 'sr_team_leader'])
         .eq('is_active', true)
         .order('full_name')
-
-      console.log('✅ Managers loaded:', managersData?.length)
-
       if (managersData) setManagers(managersData)
     } catch (error) {
-      console.error('❌ Error loading data:', error)
+      console.error('âŒ Error loading data:', error)
     } finally {
       setLoading(false)
     }
@@ -98,9 +90,8 @@ export default function UsersManagementPage() {
         // ========================================
         // UPDATE EXISTING USER
         // ========================================
-        console.log('🔄 Updating user:', editingUser.id)
-        console.log('👤 User email:', editingUser.email)
-        console.log('📝 Update data:', {
+
+        console.log('ðŸ“ Update data:', {
           full_name: formData.full_name,
           role: formData.role,
           team_id: formData.team_id || null,
@@ -124,21 +115,16 @@ export default function UsersManagementPage() {
           .update(updateData)
           .eq('id', editingUser.id)
           .select()
-
-        console.log('📊 Update response:', { data, error })
-
         if (error) {
-          console.error('❌ Database error:', error)
+          console.error('âŒ Database error:', error)
           throw new Error(`Database error: ${error.message}\nCode: ${error.code}\nDetails: ${error.details}`)
         }
 
         if (!data || data.length === 0) {
-          console.error('❌ No data returned from update')
+          console.error('âŒ No data returned from update')
           throw new Error('Update failed: No data returned. User might not exist or RLS policy is blocking the update.')
         }
-
-        console.log('✅ User updated successfully:', data[0])
-        alert('✅ User updated successfully!')
+        alert('âœ… User updated successfully!')
         
         // Reset form state
         setShowAddForm(false)
@@ -154,7 +140,6 @@ export default function UsersManagementPage() {
         })
         
         // Force reload data
-        console.log('🔄 Reloading user data...')
         await loadData()
         
       } else {
@@ -168,12 +153,12 @@ export default function UsersManagementPage() {
         }
 
         alert(
-          '⚠️ MANUAL STEP REQUIRED:\n\n' +
-          '1. Go to Supabase Dashboard → Authentication → Users\n' +
+          'âš ï¸ MANUAL STEP REQUIRED:\n\n' +
+          '1. Go to Supabase Dashboard â†’ Authentication â†’ Users\n' +
           '2. Click "Add user"\n' +
           '3. Email: ' + formData.email + '\n' +
           '4. Password: ' + formData.password + '\n' +
-          '5. ✓ Check "Auto Confirm User"\n' +
+          '5. âœ“ Check "Auto Confirm User"\n' +
           '6. Create user and COPY THE UUID\n' +
           '7. Come back and paste the UUID in the next prompt'
         )
@@ -185,9 +170,6 @@ export default function UsersManagementPage() {
           setLoading(false)
           return
         }
-
-        console.log('➕ Creating new user with UUID:', authUUID)
-
         const insertData = {
           id: authUUID,
           email: formData.email,
@@ -206,16 +188,11 @@ export default function UsersManagementPage() {
           .from('users')
           .insert([insertData])
           .select()
-
-        console.log('📊 Insert response:', { data, error })
-
         if (error) {
-          console.error('❌ Database error:', error)
+          console.error('âŒ Database error:', error)
           throw new Error(`Database error: ${error.message}\nCode: ${error.code}`)
         }
-
-        console.log('✅ User created successfully:', data[0])
-        alert('✅ User created successfully!')
+        alert('âœ… User created successfully!')
         
         setShowAddForm(false)
         setFormData({
@@ -232,8 +209,8 @@ export default function UsersManagementPage() {
       }
 
     } catch (error: any) {
-      console.error('💥 Error in handleSubmit:', error)
-      alert('❌ Error: ' + (error.message || 'Unknown error occurred'))
+      console.error('ðŸ’¥ Error in handleSubmit:', error)
+      alert('âŒ Error: ' + (error.message || 'Unknown error occurred'))
     } finally {
       setLoading(false)
     }
@@ -249,7 +226,6 @@ export default function UsersManagementPage() {
   }
 
   const handleEdit = (user: any) => {
-    console.log('✏️ Editing user:', user)
     setEditingUser(user)
     setFormData({
       email: user.email,
@@ -268,8 +244,6 @@ export default function UsersManagementPage() {
     if (!confirm('Are you sure you want to deactivate this user?')) return
 
     try {
-      console.log('🚫 Deactivating user:', userId)
-
       const { data, error } = await supabase
         .from('users')
         .update({ is_active: false })
@@ -277,12 +251,10 @@ export default function UsersManagementPage() {
         .select()
 
       if (error) throw error
-
-      console.log('✅ User deactivated:', data)
-      alert('✅ User deactivated')
+      alert('âœ… User deactivated')
       await loadData()
     } catch (error: any) {
-      console.error('❌ Deactivation error:', error)
+      console.error('âŒ Deactivation error:', error)
       alert('Error: ' + error.message)
     }
   }
@@ -361,7 +333,7 @@ export default function UsersManagementPage() {
           <div className="card bg-blue-50 border-2 border-blue-200">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-900">
-                {editingUser ? '✏️ Edit User' : '➕ Create New User'}
+                {editingUser ? 'âœï¸ Edit User' : 'âž• Create New User'}
               </h3>
               {editingUser && (
                 <span className="text-sm text-gray-600">
@@ -372,9 +344,9 @@ export default function UsersManagementPage() {
             
             {!editingUser && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-800">
-                ⚠️ <strong>Important:</strong> User must be created in Supabase Authentication first!
+                âš ï¸ <strong>Important:</strong> User must be created in Supabase Authentication first!
                 <br />
-                <span className="text-xs">Go to Supabase Dashboard → Authentication → Users → Add user</span>
+                <span className="text-xs">Go to Supabase Dashboard â†’ Authentication â†’ Users â†’ Add user</span>
               </div>
             )}
 
@@ -492,10 +464,10 @@ export default function UsersManagementPage() {
                     ))}
                   </select>
                   <p className="text-xs text-gray-500 mt-1">
-                    {formData.role === 'recruiter' && '💡 Select a Team Leader'}
-                    {formData.role === 'team_leader' && '💡 Select a Sr. Team Leader (optional)'}
-                    {formData.role === 'sr_team_leader' && '💡 Typically reports to management'}
-                    {!formData.team_id && formData.role !== 'system_admin' && ' ⚠️ Select a team first'}
+                    {formData.role === 'recruiter' && 'ðŸ’¡ Select a Team Leader'}
+                    {formData.role === 'team_leader' && 'ðŸ’¡ Select a Sr. Team Leader (optional)'}
+                    {formData.role === 'sr_team_leader' && 'ðŸ’¡ Typically reports to management'}
+                    {!formData.team_id && formData.role !== 'system_admin' && ' âš ï¸ Select a team first'}
                   </p>
                 </div>
               </div>
@@ -508,7 +480,7 @@ export default function UsersManagementPage() {
                       Saving...
                     </span>
                   ) : (
-                    editingUser ? '💾 Update User' : '➕ Create User'
+                    editingUser ? 'ðŸ’¾ Update User' : 'âž• Create User'
                   )}
                 </button>
                 <button

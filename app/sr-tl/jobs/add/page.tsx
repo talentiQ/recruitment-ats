@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
@@ -52,17 +52,12 @@ export default function SrTLAddJobPage() {
 
 // Load TLs from ALL teams + Recruiters from own team
 const loadTeamMembers = async (teamId: string) => {
-  console.log('🔍 Loading for Sr.TL - TLs from all teams + own recruiters')
-  
   // Get all TLs from any team
   const { data: allTLs } = await supabase
     .from('users')
     .select('id, full_name, email, role, team_id')
     .eq('role', 'team_leader')
     .order('full_name')
-
-  console.log('👥 All TLs:', allTLs)
-
   // Get recruiters from own team
   const { data: ownRecruiters } = await supabase
     .from('users')
@@ -70,13 +65,8 @@ const loadTeamMembers = async (teamId: string) => {
     .eq('team_id', teamId)
     .eq('role', 'recruiter')
     .order('full_name')
-
-  console.log('👤 Own team recruiters:', ownRecruiters)
-
   // Combine them
   const combined = [...(allTLs || []), ...(ownRecruiters || [])]
-  console.log('✅ Combined list:', combined)
-  
   setTeamMembers(combined)
 }
   const toggleMember = (memberId: string) => {
@@ -141,7 +131,7 @@ const loadTeamMembers = async (teamId: string) => {
       if (assignError) throw assignError
 
       alert(
-        `✅ Job created successfully!\n\nJob Code: ${jobCode}\nPositions: ${formData.positions}\nAssigned to ${selectedMembers.length} team member(s)`
+        `âœ… Job created successfully!\n\nJob Code: ${jobCode}\nPositions: ${formData.positions}\nAssigned to ${selectedMembers.length} team member(s)`
       )
       
       router.push('/sr-tl/jobs')
@@ -181,7 +171,7 @@ const loadTeamMembers = async (teamId: string) => {
             onClick={() => router.back()}
             className="text-sm text-gray-600 hover:text-gray-900 mb-2"
           >
-            ← Back to Jobs
+            â† Back to Jobs
           </button>
           <h2 className="text-2xl font-bold text-gray-900">Add New Job</h2>
           <p className="text-gray-600">Create a job opening and assign team members</p>
@@ -378,7 +368,7 @@ const loadTeamMembers = async (teamId: string) => {
           {/* UPDATED: Team Member Assignment (TLs + Recruiters) */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              👥 Assign Team Members (TLs & Recruiters) *
+              ðŸ‘¥ Assign Team Members (TLs & Recruiters) *
               {selectedMembers.length > 0 && (
                 <span className="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">
                   {selectedMembers.length} selected
@@ -387,7 +377,7 @@ const loadTeamMembers = async (teamId: string) => {
             </h3>
             
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-              💡 Assign this job to Team Leaders and/or Recruiters. All assigned members can add CVs.
+              ðŸ’¡ Assign this job to Team Leaders and/or Recruiters. All assigned members can add CVs.
             </div>
             
             {teamMembers.length === 0 ? (

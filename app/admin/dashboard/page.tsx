@@ -1,3 +1,4 @@
+// app/admin/dashboard/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -35,6 +36,7 @@ export default function AdminDashboard() {
       
       loadDashboard()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadDashboard = async () => {

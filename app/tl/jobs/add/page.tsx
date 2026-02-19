@@ -1,4 +1,4 @@
-// app/tl/jobs/add/page.tsx - SIMPLIFIED: Multiple recruiters per job, no position limits
+﻿// app/tl/jobs/add/page.tsx - SIMPLIFIED: Multiple recruiters per job, no position limits
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -81,8 +81,6 @@ export default function AddJobPage() {
     setLoading(true)
 
     try {
-      console.log('Creating job with data:', formData)
-      console.log('Selected recruiters:', selectedRecruiters)
 
       // Step 1: Insert job
       const { data: jobData, error: jobError } = await supabase
@@ -112,9 +110,6 @@ export default function AddJobPage() {
         console.error('Job insert error:', jobError)
         throw jobError
       }
-
-      console.log('Job created:', jobData)
-
       const jobId = jobData[0].id
       const jobCode = jobData[0].job_code
 
@@ -127,9 +122,6 @@ export default function AddJobPage() {
         is_active: true,
         positions_allocated: parseInt(formData.positions) || 1, // Each recruiter works on all positions
       }))
-
-      console.log('Creating assignments:', assignments)
-
       const { error: assignError } = await supabase
         .from('job_recruiter_assignments')
         .insert(assignments)
@@ -138,11 +130,8 @@ export default function AddJobPage() {
         console.error('Assignment insert error:', assignError)
         throw assignError
       }
-
-      console.log('Assignments created successfully')
-
       alert(
-        `✅ Job created successfully!\n\n` +
+        `âœ… Job created successfully!\n\n` +
         `Job Code: ${jobCode}\n` +
         `Positions: ${formData.positions}\n` +
         `Assigned to ${selectedRecruiters.length} recruiter(s)\n\n` +
@@ -170,7 +159,7 @@ export default function AddJobPage() {
             onClick={() => router.back()}
             className="text-sm text-gray-600 hover:text-gray-900 mb-2"
           >
-            ← Back to Jobs
+            â† Back to Jobs
           </button>
           <h2 className="text-2xl font-bold text-gray-900">Add New Job</h2>
           <p className="text-gray-600">Create a job opening and assign recruiters</p>
@@ -370,7 +359,7 @@ export default function AddJobPage() {
           {/* RECRUITER ASSIGNMENT (Simplified - No Position Allocation) */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              👥 Assign Recruiters *
+              ðŸ‘¥ Assign Recruiters *
               {selectedRecruiters.length > 0 && (
                 <span className="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">
                   {selectedRecruiters.length} selected
@@ -379,7 +368,7 @@ export default function AddJobPage() {
             </h3>
             
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-              💡 All assigned recruiters can add CVs for this job. Multiple recruiters working = better results!
+              ðŸ’¡ All assigned recruiters can add CVs for this job. Multiple recruiters working = better results!
             </div>
             
             {teamRecruiters.length === 0 ? (
@@ -448,7 +437,7 @@ export default function AddJobPage() {
                   placeholder="e.g., Java, Spring Boot, Microservices, AWS, React"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  💡 These skills will be used for AI-powered candidate matching
+                  ðŸ’¡ These skills will be used for AI-powered candidate matching
                 </p>
               </div>
             </div>

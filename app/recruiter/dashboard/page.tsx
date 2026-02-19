@@ -347,7 +347,7 @@ export default function RecruiterDashboard() {
                 {aiPrediction.predicted_joinings >= monthlyTarget?.target_joinings && (
                   <div className="bg-green-100 border border-green-300 rounded-lg p-3 text-center">
                     <div className="text-sm font-bold text-green-900">
-                      🎯 You're on track to hit your target!
+                      🎯 You&apos;re on track to hit your target!
                     </div>
                   </div>
                 )}

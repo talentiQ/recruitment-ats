@@ -65,36 +65,48 @@ export default function OfferDetailPage() {
   }
 
   const handleAcceptOffer = async () => {
-    if (!confirm('Mark this offer as ACCEPTED by candidate?')) return
-    setUpdating(true)
-    try {
-      const { error } = await supabase
-        .from('offers')
-        .update({ status: 'accepted' })
-        .eq('id', offerId)
+  if (!confirm('Mark this offer as ACCEPTED by candidate?')) return
+  setUpdating(true)
+  try {
+    // 1. Update offer
+    const { error: offerError } = await supabase
+      .from('offers')
+      .update({ status: 'accepted' })
+      .eq('id', offerId)
 
-      if (error) throw error
+    if (offerError) throw offerError
 
-      await supabase.from('candidates').update({
-        current_stage: 'offer_accepted'
-      }).eq('id', offer.candidates.id)
+    // 2. Update candidate stage ← ADD THIS
+    const { error: candidateError } = await supabase
+      .from('candidates')
+      .update({ 
+        current_stage: 'offer_accepted',
+        last_activity_date: new Date().toISOString()
+      })
+      .eq('id', offer.candidates.id)
 
-      await supabase.from('candidate_timeline').insert([{
-        candidate_id: offer.candidates.id,
-        activity_type: 'offer_accepted',
-        activity_title: 'Offer Accepted ✅',
-        activity_description: `Candidate accepted the offer of ₹${offer.offered_ctc}L`,
-        performed_by: user.id,
-      }])
+    if (candidateError) throw candidateError
 
-      alert('✅ Offer marked as accepted!')
-      loadOffer()
-    } catch (error: any) {
-      alert('Error: ' + error.message)
-    } finally {
-      setUpdating(false)
-    }
+    // 3. Timeline
+    await supabase.from('candidate_timeline').insert([{
+      candidate_id: offer.candidates.id,
+      activity_type: 'offer_accepted',
+      activity_title: 'Offer Accepted ✅',
+      activity_description: `Candidate accepted the offer of ₹${offer.offered_ctc}L. Stage updated to OFFER ACCEPTED.`,
+      performed_by: user.id,
+    }])
+
+    alert('✅ Offer marked as accepted and stage updated!')
+    
+    // Force page reload to sync everywhere
+    window.location.href = window.location.href
+    
+  } catch (error: any) {
+    alert('Error: ' + error.message)
+  } finally {
+    setUpdating(false)
   }
+}
 
   const handleRejectOffer = async () => {
     const reason = prompt('Reason for offer rejection?')

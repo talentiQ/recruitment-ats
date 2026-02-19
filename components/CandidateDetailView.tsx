@@ -1,4 +1,4 @@
-// components/CandidateDetailView.tsx
+﻿// components/CandidateDetailView.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -51,8 +51,6 @@ export default function CandidateDetailView({
 
       if (error) throw error
       if (data) {
-        console.log('✅ Candidate loaded:', data)
-        console.log('📋 Job ID:', data.job_id)
         setCandidate(data)
       }
     } catch (error) {
@@ -78,149 +76,140 @@ export default function CandidateDetailView({
       console.error('Error loading timeline:', error)
     }
   }
-const handleStageUpdate = async (newStage: string) => {
-  if (!candidate) return
-  if (!confirm(`Update stage to "${newStage.replace(/_/g, ' ')}"?`)) return
 
-  setUpdatingStage(true)
-  try {
-    const userData = localStorage.getItem('user')
-    const user = userData ? JSON.parse(userData) : null
+  const handleStageUpdate = async (newStage: string) => {
+    if (!candidate) return
+    if (!confirm(`Update stage to "${newStage.replace(/_/g, ' ')}"?`)) return
 
-    // Special handling for 'joined' stage
-    if (newStage === 'joined') {
-      // Need more info for joining
-      const joiningDate = prompt('Enter joining date (YYYY-MM-DD):', new Date().toISOString().split('T')[0])
-      
-      if (!joiningDate) {
-        setUpdatingStage(false)
-        return
-      }
+    setUpdatingStage(true)
+    try {
+      const userData = localStorage.getItem('user')
+      const user = userData ? JSON.parse(userData) : null
 
-      // Validate date format
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
-        alert('Invalid date format. Use YYYY-MM-DD')
-        setUpdatingStage(false)
-        return
-      }
-
-      // Get client guarantee period
-      const { data: jobData } = await supabase
-        .from('jobs')
-        .select('clients(replacement_guarantee_days)')
-        .eq('id', candidate.job_id)
-        .single()
-
-      const guaranteeDays = jobData?.clients?.[0]?.replacement_guarantee_days || 90
-      const guaranteeEnds = new Date(joiningDate)
-      guaranteeEnds.setDate(guaranteeEnds.getDate() + guaranteeDays)
-
-      // Calculate revenue
-      const fixedCTC = candidate.fixed_ctc || candidate.expected_ctc || 0
-      const revenue = fixedCTC * 0.0833
-      const revenueMonth = joiningDate.slice(0, 7)
-      const revenueYear = parseInt(joiningDate.slice(0, 4))
-
-      // Update candidate with all required fields
-      const { error: updateError } = await supabase
-        .from('candidates')
-        .update({
-          current_stage: 'joined',
-          date_joined: joiningDate,
-          revenue_earned: revenue,
-          revenue_month: revenueMonth,
-          revenue_year: revenueYear,
-          guarantee_period_ends: guaranteeEnds.toISOString().split('T')[0],
-          is_placement_safe: false,
-          placement_status: 'monitoring',
-          last_activity_date: new Date().toISOString(),
-        })
-        .eq('id', candidate.id)
-
-      if (updateError) throw updateError
-
-      // Create safety tracker
-      await supabase.from('placement_safety_tracker').insert([{
-        candidate_id: candidate.id,
-        recruiter_id: candidate.assigned_to,
-        client_id: candidate.jobs?.client_id,
-        joining_date: joiningDate,
-        guarantee_period_days: guaranteeDays,
-        guarantee_period_ends: guaranteeEnds.toISOString().split('T')[0],
-        days_remaining: guaranteeDays,
-        safety_status: 'monitoring',
-      }])
-
-      // Add timeline
-      await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidate.id,
-        activity_type: 'candidate_joined',
-        activity_title: '🎉 Candidate Joined (Manual)',
-        activity_description: `Manually marked as joined on ${new Date(joiningDate).toLocaleDateString()}. Revenue: ₹${revenue.toFixed(2)}L`,
-        performed_by: user?.id,
-      }])
-
-      alert(`✅ Candidate marked as joined!\n\nRevenue: ₹${revenue.toFixed(2)}L\nRevenue Month: ${revenueMonth}`)
-
-    } else {
-      // Regular stage update (non-joining)
-      const { error: updateError } = await supabase
-        .from('candidates')
-        .update({
-          current_stage: newStage,
-          last_activity_date: new Date().toISOString(),
-        })
-        .eq('id', candidate.id)
-
-      if (updateError) throw updateError
-
-      // Sync offer status if applicable
-      const stageToOfferStatus: { [key: string]: string } = {
-        'offer_extended': 'extended',
-        'offer_accepted': 'accepted',
-        'rejected': 'rejected',
-        'dropped': 'renege',
-      }
-
-      if (stageToOfferStatus[newStage]) {
-        const { data: existingOffer } = await supabase
-          .from('offers')
-          .select('id, status')
-          .eq('candidate_id', candidate.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        if (existingOffer) {
-          await supabase
-            .from('offers')
-            .update({ status: stageToOfferStatus[newStage] })
-            .eq('id', existingOffer.id)
+      // Special handling for 'joined' stage
+      if (newStage === 'joined') {
+        const joiningDate = prompt('Enter joining date (YYYY-MM-DD):', new Date().toISOString().split('T')[0])
+        
+        if (!joiningDate) {
+          setUpdatingStage(false)
+          return
         }
+
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+          alert('Invalid date format. Use YYYY-MM-DD')
+          setUpdatingStage(false)
+          return
+        }
+
+        const { data: jobData } = await supabase
+          .from('jobs')
+          .select('clients(replacement_guarantee_days)')
+          .eq('id', candidate.job_id)
+          .single()
+
+        const guaranteeDays = jobData?.clients?.[0]?.replacement_guarantee_days || 90
+        const guaranteeEnds = new Date(joiningDate)
+        guaranteeEnds.setDate(guaranteeEnds.getDate() + guaranteeDays)
+
+        const fixedCTC = candidate.fixed_ctc || candidate.expected_ctc || 0
+        const revenue = fixedCTC * 0.0833
+        const revenueMonth = joiningDate.slice(0, 7)
+        const revenueYear = parseInt(joiningDate.slice(0, 4))
+
+        const { error: updateError } = await supabase
+          .from('candidates')
+          .update({
+            current_stage: 'joined',
+            date_joined: joiningDate,
+            revenue_earned: revenue,
+            revenue_month: revenueMonth,
+            revenue_year: revenueYear,
+            guarantee_period_ends: guaranteeEnds.toISOString().split('T')[0],
+            is_placement_safe: false,
+            placement_status: 'monitoring',
+            last_activity_date: new Date().toISOString(),
+          })
+          .eq('id', candidate.id)
+
+        if (updateError) throw updateError
+
+        await supabase.from('placement_safety_tracker').insert([{
+          candidate_id: candidate.id,
+          recruiter_id: candidate.assigned_to,
+          client_id: candidate.jobs?.client_id,
+          joining_date: joiningDate,
+          guarantee_period_days: guaranteeDays,
+          guarantee_period_ends: guaranteeEnds.toISOString().split('T')[0],
+          days_remaining: guaranteeDays,
+          safety_status: 'monitoring',
+        }])
+
+        await supabase.from('candidate_timeline').insert([{
+          candidate_id: candidate.id,
+          activity_type: 'candidate_joined',
+          activity_title: 'Candidate Joined (Manual)',
+          activity_description: `Manually marked as joined on ${new Date(joiningDate).toLocaleDateString()}. Revenue: Rs.${revenue.toFixed(2)}L`,
+          performed_by: user?.id,
+        }])
+
+        alert(`Candidate marked as joined!\n\nRevenue: Rs.${revenue.toFixed(2)}L\nRevenue Month: ${revenueMonth}`)
+
+      } else {
+        const { error: updateError } = await supabase
+          .from('candidates')
+          .update({
+            current_stage: newStage,
+            last_activity_date: new Date().toISOString(),
+          })
+          .eq('id', candidate.id)
+
+        if (updateError) throw updateError
+
+        const stageToOfferStatus: { [key: string]: string } = {
+          'offer_extended': 'extended',
+          'offer_accepted': 'accepted',
+          'rejected': 'rejected',
+          'dropped': 'renege',
+        }
+
+        if (stageToOfferStatus[newStage]) {
+          const { data: existingOffer } = await supabase
+            .from('offers')
+            .select('id, status')
+            .eq('candidate_id', candidate.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+          if (existingOffer) {
+            await supabase
+              .from('offers')
+              .update({ status: stageToOfferStatus[newStage] })
+              .eq('id', existingOffer.id)
+          }
+        }
+
+        await supabase.from('candidate_timeline').insert([{
+          candidate_id: candidate.id,
+          activity_type: 'stage_change',
+          activity_title: 'Stage Updated',
+          activity_description: `Stage changed to: ${newStage.replace(/_/g, ' ')}`,
+          performed_by: user?.id,
+        }])
+
+        alert('Stage updated successfully!')
       }
 
-      // Add timeline
-      await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidate.id,
-        activity_type: 'stage_change',
-        activity_title: 'Stage Updated',
-        activity_description: `Stage changed to: ${newStage.replace(/_/g, ' ')}`,
-        performed_by: user?.id,
-      }])
+      loadCandidate()
+      loadTimeline()
 
-      alert('✅ Stage updated successfully!')
+    } catch (error: any) {
+      console.error('Stage update error:', error)
+      alert('Error updating stage: ' + (error.message || 'Unknown error'))
+    } finally {
+      setUpdatingStage(false)
     }
-
-    loadCandidate()
-    loadTimeline()
-
-  } catch (error: any) {
-    console.error('❌ Stage update error:', error)
-    alert('Error updating stage: ' + (error.message || 'Unknown error'))
-  } finally {
-    setUpdatingStage(false)
   }
-}
 
   const handleViewResume = async () => {
     if (!candidate.resume_url) {
@@ -252,7 +241,7 @@ const handleStageUpdate = async (newStage: string) => {
         window.open(candidate.resume_url, '_blank')
       }
     } catch (error: any) {
-      console.error('❌ View error:', error)
+      console.error('View error:', error)
       alert('Error viewing resume: ' + error.message)
     }
   }
@@ -295,10 +284,28 @@ const handleStageUpdate = async (newStage: string) => {
         window.open(candidate.resume_url, '_blank')
       }
     } catch (error: any) {
-      console.error('❌ Download error:', error)
+      console.error('Download error:', error)
       alert('Error downloading resume: ' + error.message)
       window.open(candidate.resume_url, '_blank')
     }
+  }
+
+  const getTimelineIcon = (type: string) => {
+    const iconMap: { [key: string]: { color: string; symbol: string } } = {
+      candidate_created: { color: 'bg-blue-500', symbol: '+' },
+      stage_change: { color: 'bg-yellow-500', symbol: '→' },
+      interview_scheduled: { color: 'bg-purple-500', symbol: 'I' },
+      offer_extended: { color: 'bg-green-500', symbol: '$' },
+      candidate_joined: { color: 'bg-teal-500', symbol: 'J' },
+    }
+    
+    const config = iconMap[type] || { color: 'bg-gray-400', symbol: '•' }
+    
+    return (
+      <div className={`w-8 h-8 rounded-full ${config.color} flex items-center justify-center text-white font-bold flex-shrink-0`}>
+        {config.symbol}
+      </div>
+    )
   }
 
   if (loading) {
@@ -367,50 +374,50 @@ const handleStageUpdate = async (newStage: string) => {
               <option value="on_hold">On Hold</option>
             </select>
           </div>
+
           {/* Schedule Interview Button */}
-<button
-  onClick={() => setShowScheduler(true)}
-  className="mt-6 bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 font-medium"
->
-  📅 Schedule Interview
-</button>
+          <button
+            onClick={() => setShowScheduler(true)}
+            className="mt-6 bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 font-medium"
+          >Schedule Interview
+          </button>
 
-{/* Create Offer Button */}
-{candidate.current_stage !== 'sourced' &&
- candidate.current_stage !== 'screening' &&
- candidate.current_stage !== 'joined' &&
- candidate.current_stage !== 'dropped' &&
- candidate.current_stage !== 'rejected' &&
- candidate.current_stage !== 'on_hold' && (
-  <button
-    onClick={() => router.push(`${basePath}/offers/create?candidate=${candidate.id}`)}
-    className="mt-6 bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 font-medium"
-  >
-    💰 Create Offer
-  </button>
-)}
+          {/* Create Offer Button */}
+          {candidate.current_stage !== 'sourced' &&
+           candidate.current_stage !== 'screening' &&
+           candidate.current_stage !== 'joined' &&
+           candidate.current_stage !== 'dropped' &&
+           candidate.current_stage !== 'rejected' &&
+           candidate.current_stage !== 'on_hold' && (
+            <button
+              onClick={() => router.push(`${basePath}/offers/create?candidate=${candidate.id}`)}
+              className="mt-6 bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 font-medium"
+            >
+            Create Offer
+            </button>
+          )}
 
-{/* View Offers Button */}
-{(candidate.current_stage === 'offer_extended' ||
-  candidate.current_stage === 'offer_accepted' ||
-  candidate.current_stage === 'documentation' ||
-  candidate.current_stage === 'joined' ||
-  candidate.current_stage === 'dropped') && (
-  <button
-    onClick={() => router.push(`${basePath}/offers?candidate=${candidate.id}`)}
-    className="mt-6 bg-yellow-600 text-white px-6 py-2 rounded-lg hover:bg-yellow-700 font-medium"
-  >
-    📋 View Offers
-  </button>
-)}
+          {/* View Offers Button */}
+          {(candidate.current_stage === 'offer_extended' ||
+            candidate.current_stage === 'offer_accepted' ||
+            candidate.current_stage === 'documentation' ||
+            candidate.current_stage === 'joined' ||
+            candidate.current_stage === 'dropped') && (
+            <button
+              onClick={() => router.push(`${basePath}/offers?candidate=${candidate.id}`)}
+              className="mt-6 bg-yellow-600 text-white px-6 py-2 rounded-lg hover:bg-yellow-700 font-medium"
+            >
+            View Offers
+            </button>
+          )}
 
-{/* Edit Details Button */}
-<button
-  onClick={() => router.push(`${basePath}/candidates/${candidate.id}/edit`)}
-  className="mt-6 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium"
->
-  ✏️ Edit Details
-</button>
+          {/* Edit Details Button */}
+          <button
+            onClick={() => router.push(`${basePath}/candidates/${candidate.id}/edit`)}
+            className="mt-6 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium"
+          >
+          Edit Details
+          </button>
         </div>
       </div>
 
@@ -466,11 +473,11 @@ const handleStageUpdate = async (newStage: string) => {
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="text-sm text-gray-500">Current CTC</label>
-            <p className="font-medium text-blue-600 text-xl">₹{candidate.current_ctc || 0}L</p>
+            <p className="font-medium text-blue-600 text-xl">Rs.{candidate.current_ctc || 0}L</p>
           </div>
           <div>
             <label className="text-sm text-gray-500">Expected CTC</label>
-            <p className="font-medium text-green-600 text-xl">₹{candidate.expected_ctc || 0}L</p>
+            <p className="font-medium text-green-600 text-xl">Rs.{candidate.expected_ctc || 0}L</p>
           </div>
           <div>
             <label className="text-sm text-gray-500">Notice Period</label>
@@ -525,7 +532,9 @@ const handleStageUpdate = async (newStage: string) => {
         {candidate.resume_url ? (
           <div className="space-y-3">
             <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-              <span className="text-2xl">📄</span>
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                <span className="text-blue-600 font-bold text-lg">D</span>
+              </div>
               <div className="flex-1">
                 <p className="font-medium text-gray-900">
                   {candidate.resume_file_name || `Resume_${candidate.full_name}.pdf`}
@@ -557,18 +566,14 @@ const handleStageUpdate = async (newStage: string) => {
 
       {/* Timeline */}
       <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">📋 Activity Timeline</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Activity Timeline</h3>
         {timeline.length === 0 ? (
           <p className="text-gray-500 text-center py-8">No activity yet</p>
         ) : (
           <div className="space-y-4">
             {timeline.map((activity) => (
               <div key={activity.id} className="flex gap-4 p-3 bg-gray-50 rounded-lg">
-                <div className="text-2xl">
-                  {activity.activity_type === 'candidate_created' ? '⭐' :
-                   activity.activity_type === 'stage_change' ? '🔄' :
-                   activity.activity_type === 'interview_scheduled' ? '📅' : '📌'}
-                </div>
+                {getTimelineIcon(activity.activity_type)}
                 <div className="flex-1">
                   <div className="font-semibold text-gray-900">{activity.activity_title}</div>
                   <p className="text-sm text-gray-600 mt-1">{activity.activity_description}</p>
@@ -605,7 +610,7 @@ const handleStageUpdate = async (newStage: string) => {
               <div className="p-6">
                 <h3 className="text-lg font-semibold text-red-900 mb-4">Cannot Schedule Interview</h3>
                 <p className="text-gray-700 mb-6">
-                  This candidate doesn't have an assigned job. Please assign them to a job first.
+                  This candidate doesn&apos;t have an assigned job. Please assign them to a job first.
                 </p>
                 <button
                   onClick={() => setShowScheduler(false)}

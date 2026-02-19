@@ -116,7 +116,7 @@ export default function RecruiterEditCandidatePage() {
           </button>
           <div>
             <h2 className="text-2xl font-bold text-gray-900">Edit Candidate</h2>
-            <p className="text-gray-600">Update {candidate.full_name}'s information</p>
+            <p className="text-gray-600">Update {candidate.full_name}&apos;s information</p>
           </div>
         </div>
         

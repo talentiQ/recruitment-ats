@@ -1,4 +1,4 @@
-// app/recruiter/jobs/page.tsx - FIXED: Robust query for old and new jobs
+﻿// app/recruiter/jobs/page.tsx - FIXED: Robust query for old and new jobs
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -25,8 +25,6 @@ export default function RecruiterJobsPage() {
   const loadMyJobs = async (userId: string, teamId: string) => {
     setLoading(true)
     try {
-      console.log('Loading jobs for user:', userId, 'team:', teamId)
-
       // STRATEGY: Get jobs from job_recruiter_assignments table
       // This is the source of truth for job assignments
       
@@ -35,9 +33,6 @@ export default function RecruiterJobsPage() {
         .select('job_id')
         .eq('recruiter_id', userId)
         .eq('is_active', true)
-
-      console.log('Assignments found:', assignments)
-
       if (assignError) {
         console.error('Assignment query error:', assignError)
       }
@@ -56,8 +51,6 @@ export default function RecruiterJobsPage() {
       }
 
       const jobIds = assignments.map(a => a.job_id)
-      console.log('Job IDs assigned to recruiter:', jobIds)
-
       // Get full job details
       const { data: jobsData, error: jobsError } = await supabase
         .from('jobs')
@@ -74,9 +67,6 @@ export default function RecruiterJobsPage() {
         console.error('Jobs query error:', jobsError)
         throw jobsError
       }
-
-      console.log('Jobs loaded:', jobsData)
-
       setJobs(jobsData || [])
       setDebugInfo({
         userId,
@@ -111,13 +101,13 @@ export default function RecruiterJobsPage() {
       <div className="max-w-6xl mx-auto space-y-6">
         <div className="text-center">
           <h2 className="text-2xl font-bold text-gray-900">My Assigned Jobs</h2>
-          <p className="text-gray-600">Jobs you're working on</p>
+          <p className="text-gray-600">Jobs you&apos;re working on</p>
         </div>
 
         {/* Debug Info (only show when no jobs) */}
         {!loading && jobs.length === 0 && debugInfo && (
           <div className="card bg-yellow-50 border-2 border-yellow-200">
-            <h3 className="font-bold text-yellow-900 mb-2">🔍 Debug Information</h3>
+            <h3 className="font-bold text-yellow-900 mb-2">ðŸ” Debug Information</h3>
             <div className="text-sm text-yellow-800 space-y-1">
               <p><strong>Your User ID:</strong> {debugInfo.userId}</p>
               <p><strong>Your Team ID:</strong> {debugInfo.teamId}</p>
@@ -131,11 +121,11 @@ export default function RecruiterJobsPage() {
             </div>
             <div className="mt-3 p-3 bg-white rounded border border-yellow-300">
               <p className="text-sm font-medium text-gray-900 mb-2">
-                💡 Possible reasons:
+                ðŸ’¡ Possible reasons:
               </p>
               <ul className="text-xs text-gray-700 space-y-1 list-disc list-inside">
-                <li>Your team leader hasn't assigned any jobs to you yet</li>
-                <li>Jobs need to be assigned through the "Add Job" form</li>
+                <li>Your team leader hasn&apos;t assigned any jobs to you yet</li>
+                <li>Jobs need to be assigned through the &quot;Add Job&quot; form</li>
                 <li>Database migration may need to run (contact admin)</li>
               </ul>
             </div>
@@ -149,13 +139,13 @@ export default function RecruiterJobsPage() {
           </div>
         ) : jobs.length === 0 ? (
           <div className="card text-center py-12">
-            <div className="text-6xl mb-4">📋</div>
+            <div className="text-6xl mb-4">ðŸ“‹</div>
             <p className="text-xl font-medium text-gray-900 mb-2">No jobs assigned to you yet</p>
             <p className="text-sm text-gray-500 mb-4">
               Your team leader will assign jobs to you when creating new job openings
             </p>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-md mx-auto text-left">
-              <p className="text-sm font-medium text-blue-900 mb-2">📌 What to do:</p>
+              <p className="text-sm font-medium text-blue-900 mb-2">ðŸ“Œ What to do:</p>
               <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
                 <li>Ask your team leader to assign jobs to you</li>
                 <li>Check with your team leader about open positions</li>
@@ -168,7 +158,7 @@ export default function RecruiterJobsPage() {
             {/* Success message */}
             <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
               <p className="text-sm text-green-800">
-                ✅ You have <strong>{jobs.length}</strong> job{jobs.length !== 1 ? 's' : ''} assigned to you
+                âœ… You have <strong>{jobs.length}</strong> job{jobs.length !== 1 ? 's' : ''} assigned to you
               </p>
             </div>
 
@@ -192,19 +182,19 @@ export default function RecruiterJobsPage() {
 
                   <div className="space-y-2 text-sm text-gray-600 mb-4">
                     <div className="flex items-center gap-2">
-                      <span>🏢</span>
+                      <span>ðŸ¢</span>
                       <span>{job.clients?.company_name}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span>📍</span>
+                      <span>ðŸ“</span>
                       <span>{job.location}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span>💰</span>
-                      <span>₹{job.min_ctc}-{job.max_ctc}L</span>
+                      <span>ðŸ’°</span>
+                      <span>â‚¹{job.min_ctc}-{job.max_ctc}L</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span>📅</span>
+                      <span>ðŸ“…</span>
                       <span>{job.experience_min}-{job.experience_max} years</span>
                     </div>
                   </div>

@@ -1,4 +1,4 @@
-// components/AddCandidateForm.tsx - COMPLETE WITH AI PARSING + EDIT MODE SUPPORT
+﻿// components/AddCandidateForm.tsx - COMPLETE WITH AI PARSING + EDIT MODE SUPPORT
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -85,13 +85,9 @@ export default function AddCandidateForm({
     notes: existingCandidate?.notes || '',
   })
 useEffect(() => {
-  console.log('🔄 Form useEffect triggered')
-  console.log('🔄 existingCandidate:', existingCandidate)
-  console.log('🔄 isEditMode:', isEditMode)
-  
+
+
   if (existingCandidate && isEditMode) {
-    console.log('📝 Loading existing candidate data into form:', existingCandidate)
-    
     setFormData({
       full_name: existingCandidate.full_name || '',
       email: existingCandidate.email || '',
@@ -118,23 +114,13 @@ useEffect(() => {
     setSelectedSkills(existingCandidate.key_skills || [])
     setAutoFilled(existingCandidate.auto_filled || false)
     setParseConfidence(existingCandidate.auto_fill_confidence || 0)
-    
-    console.log('✅ Form data loaded!')
   } else {
-    console.log('⚠️ useEffect skipped:', { 
-      hasCandidate: !!existingCandidate, 
-      isEdit: isEditMode 
-    })
   }
-}, [existingCandidate?.id, isEditMode])  // ← CHANGED: Use existingCandidate?.id instead
+}, [existingCandidate?.id, isEditMode])  // â† CHANGED: Use existingCandidate?.id instead
   // Load jobs
   const loadJobs = async (userId: string, teamId: string, role: string) => {
-    console.log('🔍 Loading jobs for:', { userId, teamId, role })
-    
     try {
       if (role === 'recruiter') {
-        console.log('📋 Loading jobs for recruiter from assignments...')
-        
         const { data: assignments, error: assignError } = await supabase
           .from('job_recruiter_assignments')
           .select('job_id')
@@ -142,22 +128,16 @@ useEffect(() => {
           .eq('is_active', true)
 
         if (assignError) {
-          console.error('❌ Assignments query error:', assignError)
+          console.error('âŒ Assignments query error:', assignError)
           setJobs([])
           return
         }
-
-        console.log('📦 Assignments found:', assignments)
-
         if (!assignments || assignments.length === 0) {
-          console.log('⚠️ No job assignments found for this recruiter')
           setJobs([])
           return
         }
 
         const jobIds = assignments.map(a => a.job_id)
-        console.log('🎯 Job IDs:', jobIds)
-
         const { data, error } = await supabase
           .from('jobs')
           .select(`
@@ -169,18 +149,13 @@ useEffect(() => {
           .in('id', jobIds)
           .eq('status', 'open')
           .order('created_at', { ascending: false })
-
-        console.log('📦 Recruiter Jobs loaded:', data)
-
         if (error) {
-          console.error('❌ Jobs query error:', error)
+          console.error('âŒ Jobs query error:', error)
         }
 
         if (data) setJobs((data as unknown) as Job[])
 
       } else if (role === 'team_leader' || role === 'sr_team_leader') {
-        console.log('📋 Loading jobs for TL/Sr.TL from team...')
-        
         const { data, error } = await supabase
           .from('jobs')
           .select(`
@@ -192,18 +167,13 @@ useEffect(() => {
           .eq('assigned_team_id', teamId)
           .eq('status', 'open')
           .order('created_at', { ascending: false })
-
-        console.log('📦 TL/Sr.TL Jobs loaded:', data)
-
         if (error) {
-          console.error('❌ Jobs query error:', error)
+          console.error('âŒ Jobs query error:', error)
         }
 
         if (data) setJobs((data as unknown) as Job[])
 
       } else if (role === 'system_admin' || role === 'ceo' || role === 'ops_head') {
-        console.log('📋 Loading all jobs for admin/management...')
-        
         const { data, error } = await supabase
           .from('jobs')
           .select(`
@@ -214,17 +184,14 @@ useEffect(() => {
           `)
           .eq('status', 'open')
           .order('created_at', { ascending: false })
-
-        console.log('📦 Admin Jobs loaded:', data)
-
         if (error) {
-          console.error('❌ Jobs query error:', error)
+          console.error('âŒ Jobs query error:', error)
         }
 
         if (data) setJobs((data as unknown) as Job[])
       }
     } catch (error) {
-      console.error('💥 loadJobs error:', error)
+      console.error('ðŸ’¥ loadJobs error:', error)
       setJobs([])
     }
   }
@@ -233,7 +200,6 @@ useEffect(() => {
     const userData = localStorage.getItem('user')
     if (userData) {
       const parsedUser = JSON.parse(userData)
-      console.log('👤 User loaded:', parsedUser)
       setUser(parsedUser)
       
       loadJobs(parsedUser.id, parsedUser.team_id, parsedUser.role || userRole)
@@ -289,7 +255,7 @@ useEffect(() => {
       setParseConfidence(parsed.confidence.overall)
       setAutoFilled(true)
       
-      alert(`✅ Resume parsed successfully!\n\nConfidence: ${(parsed.confidence.overall * 100).toFixed(0)}%\n\nPlease review and complete any missing fields.`)
+      alert(`âœ… Resume parsed successfully!\n\nConfidence: ${(parsed.confidence.overall * 100).toFixed(0)}%\n\nPlease review and complete any missing fields.`)
       
       if (parsed.phone || parsed.email) {
         checkDuplicate(parsed.phone || '', parsed.email || '')
@@ -349,7 +315,7 @@ useEffect(() => {
         const existing = data[0]
         setDuplicateCandidate(existing)
         setDuplicateWarning(
-          `⚠️ DUPLICATE FOUND!\n\n` +
+          `âš ï¸ DUPLICATE FOUND!\n\n` +
           `Name: ${existing.full_name}\n` +
           `Phone: ${existing.phone}\n` +
           `Email: ${existing.email || 'N/A'}\n` +
@@ -423,7 +389,7 @@ useEffect(() => {
       const isDuplicate = await checkDuplicate(formData.phone, formData.email)
       if (isDuplicate) {
         const confirm = window.confirm(
-          `⚠️ DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`
+          `âš ï¸ DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`
         )
         if (!confirm) return
       }
@@ -463,7 +429,7 @@ useEffect(() => {
           performed_by: user.id,
         }])
 
-        alert('✅ Candidate updated successfully!')
+        alert('âœ… Candidate updated successfully!')
         
         if (redirectPath) {
           router.push(redirectPath)
@@ -531,7 +497,7 @@ useEffect(() => {
           performed_by: user.id,
         }])
 
-        alert('✅ Candidate added successfully!')
+        alert('âœ… Candidate added successfully!')
         
         if (redirectPath) {
           router.push(redirectPath)
@@ -575,7 +541,7 @@ useEffect(() => {
       {!isEditMode && (
         <div className="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200">
           <h3 className="text-lg font-semibold text-blue-900 mb-4">
-            🤖 AI-Powered Resume Parser
+            AI-Powered Resume Parser
           </h3>
           
           <div className="space-y-4">
@@ -608,7 +574,7 @@ useEffect(() => {
             {autoFilled && !isEditMode && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <div className="flex items-center gap-2 text-green-800 mb-2">
-                  <span className="text-lg">✅</span>
+                  <span className="text-lg">âœ…</span>
                   <span className="font-semibold">Resume Parsed Successfully!</span>
                 </div>
                 <p className="text-sm text-green-700">
@@ -627,9 +593,8 @@ useEffect(() => {
       {isEditMode && existingCandidate?.auto_filled && (
         <div className="card mb-6 bg-green-50 border border-green-200">
           <div className="flex items-center gap-2 text-green-800">
-            <span className="text-lg">🤖</span>
-            <div>
-              <strong>This candidate was AI-parsed from resume</strong>
+           
+            <div>              <strong>This candidate was AI-parsed from resume</strong>
               <p className="text-sm text-green-700">
                 Original confidence: {(existingCandidate.auto_fill_confidence * 100).toFixed(0)}%
               </p>
@@ -641,7 +606,7 @@ useEffect(() => {
       {/* Duplicate Warning */}
       {duplicateWarning && !isEditMode && (
         <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 mb-6">
-          <strong className="text-red-900">⚠️ DUPLICATE DETECTED!</strong>
+          <strong className="text-red-900">âš ï¸ DUPLICATE DETECTED!</strong>
           <pre className="mt-2 text-sm whitespace-pre-wrap font-mono text-red-800">{duplicateWarning}</pre>
           {duplicateCandidate && (
             <button
@@ -652,7 +617,7 @@ useEffect(() => {
               }}
               className="mt-3 px-4 py-2 bg-white text-red-700 border border-red-300 rounded-lg text-sm font-medium hover:bg-red-50"
             >
-              View Existing Candidate →
+              View Existing Candidate â†’
             </button>
           )}
         </div>
@@ -662,7 +627,7 @@ useEffect(() => {
       {jobs.length === 0 && !loading && !isEditMode && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
           <div className="flex items-start gap-3">
-            <span className="text-2xl">⚠️</span>
+            <span className="text-2xl">âš ï¸</span>
             <div>
               <h3 className="font-semibold text-yellow-900">No Jobs Available</h3>
               <p className="text-sm text-yellow-800 mt-1">
@@ -935,8 +900,8 @@ useEffect(() => {
                 <option value="">Select Level</option>
                 <option value="High School">High School</option>
                 <option value="Diploma">Diploma</option>
-                <option value="Bachelor">Bachelor's</option>
-                <option value="Master">Master's</option>
+                <option value="Bachelor">Bachelor&apos;s</option>
+                <option value="Master">Master&apos;s</option>
                 <option value="PhD">PhD</option>
               </select>
             </div>
@@ -988,7 +953,7 @@ useEffect(() => {
         {/* Skills */}
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            🤖 Key Skills
+            Key Skills
             {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
           </h3>
           
@@ -1007,7 +972,7 @@ useEffect(() => {
                       onClick={() => handleRemoveSkill(skill)}
                       className="text-blue-600 hover:text-blue-900 font-bold"
                     >
-                      ×
+                      Ã—
                     </button>
                   </span>
                 ))}
@@ -1051,7 +1016,7 @@ useEffect(() => {
             </div>
 
             <p className="text-xs text-gray-500">
-              💡 Type to see AI-powered suggestions or press Enter to add custom skills
+              Type to see AI-powered suggestions or press Enter to add custom skills
             </p>
           </div>
         </div>
@@ -1106,11 +1071,11 @@ useEffect(() => {
             {loading 
               ? (isEditMode ? 'Updating...' : 'Adding...') 
               : isEditMode 
-                ? '✅ Update Candidate' 
+                ? 'Update Candidate' 
                 : duplicateWarning 
-                  ? '⚠️ Add Anyway' 
+                  ? 'Add Anyway' 
                   : autoFilled 
-                    ? '✅ Save AI-Parsed Candidate' 
+                    ? 'Save AI-Parsed Candidate' 
                     : 'Add Candidate'}
           </button>
           <button
