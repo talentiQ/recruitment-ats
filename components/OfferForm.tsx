@@ -157,7 +157,7 @@ export default function OfferForm({
       const expectedRevenue = fixedCTC * 0.0833
 
       const offerData = {
-        candidate_id: candidateId || existingOffer.candidate_id,
+        candidate_id: candidateId || existingOffer?.candidate_id,
         job_id: candidate?.job_id,
         recruiter_id: user.id,
         client_id: candidate?.jobs?.client_id,
@@ -217,7 +217,7 @@ export default function OfferForm({
           candidate_id: candidateId,
           activity_type: 'offer_extended',
           activity_title: 'Offer Extended',
-          activity_description: `Offer of ₹${totalCTC}L extended (Fixed: ₹${fixedCTC}L, Variable: ₹${variableCTC}L). Expected revenue: ₹${expectedRevenue.toFixed(2)}L`,
+          activity_description: `Offer of Rs.${totalCTC} extended (Fixed: Rs.${fixedCTC}, Variable: Rs.${variableCTC}). Expected revenue: Rs.${expectedRevenue.toFixed(2)}L`,
           metadata: {
             offer_id: newOffer.id,
             total_ctc: totalCTC,
@@ -277,7 +277,7 @@ export default function OfferForm({
             </div>
             <div>
               <span className="text-blue-600">Expected CTC:</span>
-              <span className="ml-2 font-medium">₹{candidate.expected_ctc}L</span>
+              <span className="ml-2 font-medium">Rs.{candidate.expected_ctc}L</span>
             </div>
             <div>
               <span className="text-blue-600">Notice Period:</span>
@@ -289,11 +289,11 @@ export default function OfferForm({
 
       {/* CTC Breakdown */}
       <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">💰 CTC Breakdown</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">CTC Breakdown</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Fixed CTC (Lakhs) *
+              Fixed CTC (INR) *
             </label>
             <input
               type="number"
@@ -302,17 +302,17 @@ export default function OfferForm({
               value={formData.fixed_ctc}
               onChange={handleChange}
               className="input"
-              placeholder="e.g., 10"
+              placeholder="e.g., 1000000"
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              💡 Billing base for revenue calculation
+              Billing base for revenue calculation
             </p>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Variable CTC (Lakhs)
+              Variable CTC (INR)
             </label>
             <input
               type="number"
@@ -321,10 +321,10 @@ export default function OfferForm({
               value={formData.variable_ctc}
               onChange={handleChange}
               className="input"
-              placeholder="e.g., 2"
+              placeholder="e.g., 200000"
             />
             <p className="text-xs text-gray-500 mt-1">
-              💡 Bonus, incentives (not included in billing)
+              Bonus, incentives (not included in billing)
             </p>
           </div>
         </div>
@@ -335,19 +335,19 @@ export default function OfferForm({
             <div>
               <div className="text-sm text-gray-600">Total CTC</div>
               <div className="text-2xl font-bold text-gray-900">
-                ₹{calculateTotalCTC().toFixed(1)}L
+                Rs.{calculateTotalCTC().toFixed(1)}
               </div>
             </div>
             <div>
               <div className="text-sm text-gray-600">Billable CTC</div>
               <div className="text-2xl font-bold text-blue-600">
-                ₹{parseFloat(formData.fixed_ctc || '0').toFixed(1)}L
+                Rs.{parseFloat(formData.fixed_ctc || '0').toFixed(1)}
               </div>
             </div>
             <div>
               <div className="text-sm text-gray-600">Expected Revenue</div>
               <div className="text-2xl font-bold text-green-600">
-                ₹{calculateExpectedRevenue().toFixed(2)}L
+                Rs.{calculateExpectedRevenue().toFixed(2)}
               </div>
             </div>
           </div>
@@ -356,7 +356,7 @@ export default function OfferForm({
 
       {/* Dates */}
       <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">📅 Important Dates</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Important Dates</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -402,7 +402,7 @@ export default function OfferForm({
 
       {/* Job Details */}
       <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">💼 Job Details</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Job Details</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -464,7 +464,7 @@ export default function OfferForm({
 
       {/* Notes */}
       <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">📝 Additional Notes</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Additional Notes</h3>
         <textarea
           name="notes"
           value={formData.notes}
@@ -479,7 +479,7 @@ export default function OfferForm({
       {client && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-start gap-2">
-            <span className="text-2xl">⚠️</span>
+            <span className="text-2xl">!</span>
             <div>
               <h4 className="font-semibold text-yellow-900">Replacement Guarantee Period</h4>
               <p className="text-sm text-yellow-800 mt-1">
@@ -499,7 +499,7 @@ export default function OfferForm({
           disabled={loading}
           className="btn-primary flex-1"
         >
-          {loading ? 'Processing...' : isEditMode ? '✅ Update Offer' : '🎉 Create Offer'}
+          {loading ? 'Processing...' : isEditMode ? 'Update Offer' : 'Create Offer'}
         </button>
         <button
           type="button"

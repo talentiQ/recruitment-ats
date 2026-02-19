@@ -30,14 +30,15 @@ export default function LoginPage() {
         return
       }
 
-      // 2. Get user details from users table
+      // 2. Get user details from users table using AUTH USER ID (not email)
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*, teams(*)')
-        .eq('email', email.toLowerCase().trim())
+        .eq('id', authData.user.id)  // FIXED: Use auth user ID instead of email
         .single()
 
       if (userError) {
+        console.error('User query error:', userError)
         setError('User not found in system')
         setLoading(false)
         return
@@ -48,19 +49,19 @@ export default function LoginPage() {
 
       // 4. Redirect based on role
       if (userData.role === 'recruiter') {
-  window.location.href = '/recruiter/dashboard'
-} else if (userData.role === 'team_leader') {
-  window.location.href = '/tl/dashboard'
-} else if (userData.role === 'sr_team_leader') {
-  window.location.href = '/sr-tl/dashboard'
-} else if (userData.role === 'system_admin') {  // Changed from 'admin' to 'system_admin'
-  window.location.href = '/admin/dashboard'
-} else if (['ceo', 'ops_head', 'finance_head'].includes(userData.role)) {
-  window.location.href = '/management/dashboard'
-} else {
-  setError('Invalid user role: ' + userData.role)
-  setLoading(false)
-}
+        window.location.href = '/recruiter/dashboard'
+      } else if (userData.role === 'team_leader') {
+        window.location.href = '/tl/dashboard'
+      } else if (userData.role === 'sr_team_leader') {
+        window.location.href = '/sr-tl/dashboard'
+      } else if (userData.role === 'system_admin') {
+        window.location.href = '/admin/dashboard'
+      } else if (['ceo', 'ops_head', 'finance_head'].includes(userData.role)) {
+        window.location.href = '/management/dashboard'
+      } else {
+        setError('Invalid user role: ' + userData.role)
+        setLoading(false)
+      }
 
     } catch (error: any) {
       console.error('Login error:', error)
@@ -147,7 +148,7 @@ export default function LoginPage() {
 
         <div className="mt-8 text-center">
           <p className="text-sm text-blue-100">
-            &copy; 2026 Talent IQ. All rights reserved Talenti.
+            &copy; 2026 Talent IQ. All rights reserved.
           </p>
         </div>
       </div>

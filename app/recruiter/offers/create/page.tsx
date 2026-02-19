@@ -61,6 +61,17 @@ function CreateOfferContent() {
     )
   }
 
+  if (!candidate) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-600">Candidate not found</p>
+        <button onClick={() => router.back()} className="mt-4 btn-primary">
+          Go Back
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-4xl mx-auto">
       <div className="mb-6">
@@ -72,12 +83,12 @@ function CreateOfferContent() {
         </button>
         <h2 className="text-2xl font-bold text-gray-900">Create Offer</h2>
         <p className="text-gray-600">
-          {candidate ? `For ${candidate.full_name}` : 'Create a new offer'}
+          For {candidate.full_name}
         </p>
       </div>
 
       <OfferForm 
-        candidate={candidate} 
+        candidateId={candidate.id}
         onSuccess={() => router.push('/recruiter/offers')}
         onCancel={() => router.back()}
       />

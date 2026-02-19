@@ -1,4 +1,4 @@
-// app/admin/dashboard/page.tsx
+// app/admin/teams/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -89,7 +89,7 @@ export default function TeamsManagementPage() {
           .eq('id', editingTeam.id)
 
         if (error) throw error
-        alert('✅ Team updated successfully!')
+        alert('Team updated successfully!')
       } else {
         const { error } = await supabase
           .from('teams')
@@ -101,13 +101,13 @@ export default function TeamsManagementPage() {
           }])
 
         if (error) throw error
-        alert('✅ Team created successfully!')
+        alert('Team created successfully!')
       }
 
       setFormData({ name: '', specialization: '', description: '' })
       setShowAddForm(false)
       setEditingTeam(null)
-      loadTeams()
+      await loadTeams() // FIXED: Added await
     } catch (error: any) {
       console.error('Error:', error)
       alert('Error: ' + error.message)
@@ -124,6 +124,7 @@ export default function TeamsManagementPage() {
       description: team.description || '',
     })
     setShowAddForm(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const handleDeactivate = async (teamId: string) => {
@@ -136,8 +137,8 @@ export default function TeamsManagementPage() {
         .eq('id', teamId)
 
       if (error) throw error
-      alert('✅ Team deactivated')
-      loadTeams()
+      alert('Team deactivated')
+      await loadTeams() // FIXED: Added await
     } catch (error: any) {
       alert('Error: ' + error.message)
     }
@@ -259,7 +260,7 @@ export default function TeamsManagementPage() {
                     <td className="text-sm text-gray-600">{team.teamLeaderName}</td>
                     <td>
                       <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-semibold">
-                        👥 {team.userCount}
+                        {team.userCount} members
                       </span>
                     </td>
                     <td>

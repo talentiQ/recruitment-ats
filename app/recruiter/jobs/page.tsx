@@ -107,7 +107,7 @@ export default function RecruiterJobsPage() {
         {/* Debug Info (only show when no jobs) */}
         {!loading && jobs.length === 0 && debugInfo && (
           <div className="card bg-yellow-50 border-2 border-yellow-200">
-            <h3 className="font-bold text-yellow-900 mb-2">ðŸ” Debug Information</h3>
+            <h3 className="font-bold text-yellow-900 mb-2">Debug Information</h3>
             <div className="text-sm text-yellow-800 space-y-1">
               <p><strong>Your User ID:</strong> {debugInfo.userId}</p>
               <p><strong>Your Team ID:</strong> {debugInfo.teamId}</p>
@@ -121,7 +121,7 @@ export default function RecruiterJobsPage() {
             </div>
             <div className="mt-3 p-3 bg-white rounded border border-yellow-300">
               <p className="text-sm font-medium text-gray-900 mb-2">
-                ðŸ’¡ Possible reasons:
+              Possible reasons:
               </p>
               <ul className="text-xs text-gray-700 space-y-1 list-disc list-inside">
                 <li>Your team leader hasn&apos;t assigned any jobs to you yet</li>
@@ -139,13 +139,13 @@ export default function RecruiterJobsPage() {
           </div>
         ) : jobs.length === 0 ? (
           <div className="card text-center py-12">
-            <div className="text-6xl mb-4">ðŸ“‹</div>
+            <div className="text-6xl mb-4"></div>
             <p className="text-xl font-medium text-gray-900 mb-2">No jobs assigned to you yet</p>
             <p className="text-sm text-gray-500 mb-4">
               Your team leader will assign jobs to you when creating new job openings
             </p>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-md mx-auto text-left">
-              <p className="text-sm font-medium text-blue-900 mb-2">ðŸ“Œ What to do:</p>
+              <p className="text-sm font-medium text-blue-900 mb-2">What to do:</p>
               <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
                 <li>Ask your team leader to assign jobs to you</li>
                 <li>Check with your team leader about open positions</li>

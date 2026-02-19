@@ -255,7 +255,7 @@ useEffect(() => {
       setParseConfidence(parsed.confidence.overall)
       setAutoFilled(true)
       
-      alert(`âœ… Resume parsed successfully!\n\nConfidence: ${(parsed.confidence.overall * 100).toFixed(0)}%\n\nPlease review and complete any missing fields.`)
+      alert(`✅ Resume parsed successfully!\n\nConfidence: ${(parsed.confidence.overall * 100).toFixed(0)}%\n\nPlease review and complete any missing fields.`)
       
       if (parsed.phone || parsed.email) {
         checkDuplicate(parsed.phone || '', parsed.email || '')
@@ -497,7 +497,7 @@ useEffect(() => {
           performed_by: user.id,
         }])
 
-        alert('âœ… Candidate added successfully!')
+        alert('Candidate added successfully!')
         
         if (redirectPath) {
           router.push(redirectPath)
@@ -627,7 +627,7 @@ useEffect(() => {
       {jobs.length === 0 && !loading && !isEditMode && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
           <div className="flex items-start gap-3">
-            <span className="text-2xl">âš ï¸</span>
+            <span className="text-2xl"></span>
             <div>
               <h3 className="font-semibold text-yellow-900">No Jobs Available</h3>
               <p className="text-sm text-yellow-800 mt-1">

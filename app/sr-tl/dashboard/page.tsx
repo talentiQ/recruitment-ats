@@ -30,36 +30,65 @@ export default function SrTeamLeaderDashboard() {
   const loadDashboard = async (user: any) => {
     setLoading(true)
     try {
-      // Get team members count
-      const { data: teamMembers, error: membersError } = await supabase
+      // CORRECT: Get direct reports only (who report to this Sr.TL)
+      // This includes TLs who report directly + Recruiters who report directly
+      const { data: directReports, error: reportsError } = await supabase
         .from('users')
-        .select('id, role')
-        .eq('team_id', user.team_id)
+        .select('id, role, team_id, full_name')
+        .eq('reports_to', user.id)  // ✅ ONLY direct reports
+        .eq('is_active', true)
 
-      if (membersError) {
-        console.error('Team members error:', membersError)
+      if (reportsError) {
+        console.error('Direct reports error:', reportsError)
       }
 
-      const totalTLs = teamMembers?.filter(m => m.role === 'team_leader').length || 0
-      const totalRecruiters = teamMembers?.filter(m => m.role === 'recruiter').length || 0
-      const totalTeamMembers = teamMembers?.length || 0
+      console.log('Direct reports to Sr.TL:', directReports)
 
-      // Get total candidates
+      // Also get recruiters who report to TLs under this Sr.TL
+      const tlIds = directReports?.filter(m => m.role === 'team_leader').map(m => m.id) || []
+      
+      let indirectRecruiters: any[] = []
+      if (tlIds.length > 0) {
+        const { data: recruiterReports, error: recError } = await supabase
+          .from('users')
+          .select('id, role, team_id, full_name')
+          .in('reports_to', tlIds)  // Recruiters reporting to TLs
+          .eq('role', 'recruiter')
+          .eq('is_active', true)
+        
+        if (recError) {
+          console.error('Indirect recruiters error:', recError)
+        } else {
+          indirectRecruiters = recruiterReports || []
+        }
+      }
+
+      // Combine direct reports + indirect recruiters
+      const allTeamMembers = [...(directReports || []), ...indirectRecruiters]
+
+      console.log('Total team members under Sr.TL:', allTeamMembers.length)
+
+      const totalTLs = allTeamMembers.filter(m => m.role === 'team_leader').length
+      const totalRecruiters = allTeamMembers.filter(m => m.role === 'recruiter').length
+
+      // Get candidates for this Sr.TL's team
+      const memberIds = allTeamMembers.map(m => m.id)
+      
       const { count: candidatesCount } = await supabase
         .from('candidates')
         .select('*', { count: 'exact', head: true })
-        .eq('team_id', user.team_id)
+        .in('assigned_to', memberIds)
 
-      // Get this month joinings
+      // Get this month joinings for this team
       const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
       const { count: monthJoinings } = await supabase
         .from('candidates')
         .select('*', { count: 'exact', head: true })
-        .eq('team_id', user.team_id)
+        .in('assigned_to', memberIds)
         .eq('current_stage', 'joined')
         .gte('date_joined', firstDayOfMonth)
 
-      // Get jobs count
+      // Get jobs for this team
       const { count: totalJobs } = await supabase
         .from('jobs')
         .select('*', { count: 'exact', head: true })
@@ -74,17 +103,17 @@ export default function SrTeamLeaderDashboard() {
       setTeamStats({
         total_tls: totalTLs,
         total_recruiters: totalRecruiters,
-        total_team_members: totalTeamMembers,
+        total_team_members: allTeamMembers.length,
         total_candidates: candidatesCount || 0,
         month_joinings: monthJoinings || 0,
         total_jobs: totalJobs || 0,
         active_jobs: activeJobs || 0,
       })
 
-      // Get member performance
-      if (teamMembers && teamMembers.length > 0) {
+      // Get member performance for team members only
+      if (allTeamMembers.length > 0) {
         const performanceData = await Promise.all(
-          teamMembers.map(async (member) => {
+          allTeamMembers.map(async (member) => {
             const { count: candidatesCount } = await supabase
               .from('candidates')
               .select('*', { count: 'exact', head: true })
@@ -103,17 +132,10 @@ export default function SrTeamLeaderDashboard() {
               .eq('assigned_to', member.id)
               .in('current_stage', ['screening', 'interview_scheduled', 'interview_completed', 'offer_extended', 'offer_accepted'])
 
-            // Get user details
-            const { data: userData } = await supabase
-              .from('users')
-              .select('full_name, role')
-              .eq('id', member.id)
-              .single()
-
             return {
               user_id: member.id,
-              user_name: userData?.full_name || 'Unknown',
-              role: userData?.role || member.role,
+              user_name: member.full_name,
+              role: member.role,
               candidates_count: candidatesCount || 0,
               this_month_joinings: monthJoinings || 0,
               pipeline_count: pipelineCount || 0,
@@ -132,10 +154,10 @@ export default function SrTeamLeaderDashboard() {
   }
 
   const getPerformanceBadge = (joinings: number) => {
-    if (joinings >= 5) return { text: 'Top Performer', color: 'bg-green-100 text-green-800', icon: '★' }
-    if (joinings >= 2) return { text: 'Good', color: 'bg-blue-100 text-blue-800', icon: '✓' }
-    if (joinings >= 1) return { text: 'Active', color: 'bg-yellow-100 text-yellow-800', icon: '•' }
-    return { text: 'Starting', color: 'bg-gray-100 text-gray-800', icon: '○' }
+    if (joinings >= 5) return { text: 'Top Performer', color: 'bg-green-100 text-green-800', icon: 'S' }
+    if (joinings >= 2) return { text: 'Good', color: 'bg-blue-100 text-blue-800', icon: 'G' }
+    if (joinings >= 1) return { text: 'Active', color: 'bg-yellow-100 text-yellow-800', icon: 'A' }
+    return { text: 'Starting', color: 'bg-gray-100 text-gray-800', icon: '-' }
   }
 
   if (loading) {
@@ -156,18 +178,18 @@ export default function SrTeamLeaderDashboard() {
           <h1 className="text-3xl font-bold mb-2">
             Welcome, {user?.full_name}
           </h1>
-          <p className="text-blue-100">Sr. Team Leader Dashboard - Manage Your Team</p>
+          <p className="text-blue-100">Sr. Team Leader Dashboard - Your Team Performance</p>
         </div>
 
         {/* Team Statistics */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <div className="card bg-white hover:shadow-lg transition">
-            <div className="text-sm text-gray-600 mb-1">Team Leaders</div>
+            <div className="text-sm text-gray-600 mb-1">TEAM LEADERS</div>
             <div className="text-3xl font-bold text-gray-900">{teamStats.total_tls || 0}</div>
           </div>
 
           <div className="card bg-white hover:shadow-lg transition">
-            <div className="text-sm text-gray-600 mb-1">Recruiters</div>
+            <div className="text-sm text-gray-600 mb-1">RECRUITERS</div>
             <div className="text-3xl font-bold text-gray-900">{teamStats.total_recruiters || 0}</div>
           </div>
 
@@ -177,7 +199,7 @@ export default function SrTeamLeaderDashboard() {
           </div>
 
           <div className="card bg-green-50 hover:shadow-lg transition border-2 border-green-200">
-            <div className="text-sm text-green-700 mb-1 font-semibold">This Month Joinings</div>
+            <div className="text-sm text-green-700 mb-1 font-semibold">THIS MONTH JOININGS</div>
             <div className="text-3xl font-bold text-green-600">{teamStats.month_joinings || 0}</div>
           </div>
 
@@ -198,7 +220,7 @@ export default function SrTeamLeaderDashboard() {
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-xl font-bold text-gray-900">Team Member Performance</h3>
-              <p className="text-sm text-gray-600">Track individual contributions and results</p>
+              <p className="text-sm text-gray-600">Your direct team contributions and results</p>
             </div>
             <button
               onClick={() => router.push('/sr-tl/team-leaders')}
@@ -254,13 +276,9 @@ export default function SrTeamLeaderDashboard() {
                             <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
                               member.role === 'team_leader' 
                                 ? 'bg-blue-100 text-blue-800' 
-                                : member.role === 'sr_team_leader'
-                                ? 'bg-indigo-100 text-indigo-800'
                                 : 'bg-green-100 text-green-800'
                             }`}>
-                              {member.role === 'team_leader' ? 'Team Leader' : 
-                               member.role === 'sr_team_leader' ? 'Sr. Team Leader' : 
-                               'Recruiter'}
+                              {member.role === 'team_leader' ? 'Team Leader' : 'Recruiter'}
                             </span>
                           </td>
                           <td className="text-center">

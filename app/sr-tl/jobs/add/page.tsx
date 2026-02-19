@@ -1,4 +1,5 @@
-﻿'use client'
+﻿//app/sr-tl/jobs/add/page.tsx
+'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
@@ -9,9 +10,9 @@ export default function SrTLAddJobPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [clients, setClients] = useState<any[]>([])
-  const [teamMembers, setTeamMembers] = useState<any[]>([]) // Changed from teamRecruiters
+  const [teamMembers, setTeamMembers] = useState<any[]>([])
   const [user, setUser] = useState<any>(null)
-  const [selectedMembers, setSelectedMembers] = useState<string[]>([]) // Changed from selectedRecruiters
+  const [selectedMembers, setSelectedMembers] = useState<string[]>([])
 
   const [formData, setFormData] = useState({
     client_id: '',
@@ -36,7 +37,7 @@ export default function SrTLAddJobPage() {
       const parsedUser = JSON.parse(userData)
       setUser(parsedUser)
       loadClients()
-      loadTeamMembers(parsedUser.team_id) // Changed function name
+      loadTeamMembers(parsedUser.id)  // Pass Sr.TL's ID
     }
   }, [])
 
@@ -50,25 +51,60 @@ export default function SrTLAddJobPage() {
     if (data) setClients(data)
   }
 
-// Load TLs from ALL teams + Recruiters from own team
-const loadTeamMembers = async (teamId: string) => {
-  // Get all TLs from any team
-  const { data: allTLs } = await supabase
-    .from('users')
-    .select('id, full_name, email, role, team_id')
-    .eq('role', 'team_leader')
-    .order('full_name')
-  // Get recruiters from own team
-  const { data: ownRecruiters } = await supabase
-    .from('users')
-    .select('id, full_name, email, role, team_id')
-    .eq('team_id', teamId)
-    .eq('role', 'recruiter')
-    .order('full_name')
-  // Combine them
-  const combined = [...(allTLs || []), ...(ownRecruiters || [])]
-  setTeamMembers(combined)
-}
+  // CORRECT: Load team members who report to this Sr.TL
+  const loadTeamMembers = async (srTlId: string) => {
+    try {
+      console.log('Loading team members for Sr.TL:', srTlId)
+      
+      // Get direct reports (TLs and Recruiters who report directly to Sr.TL)
+      const { data: directReports, error: directError } = await supabase
+        .from('users')
+        .select('id, full_name, email, role, team_id, is_active')
+        .eq('reports_to', srTlId)  // ✅ Direct reports only
+        .eq('is_active', true)
+        .order('full_name')
+      
+      if (directError) {
+        console.error('Error loading direct reports:', directError)
+      }
+      
+      console.log('Direct reports:', directReports)
+      
+      // Get TL IDs to find recruiters under them
+      const tlIds = directReports?.filter(m => m.role === 'team_leader').map(m => m.id) || []
+      
+      let indirectRecruiters: any[] = []
+      if (tlIds.length > 0) {
+        // Get recruiters who report to these TLs
+        const { data: recruiterReports, error: recError } = await supabase
+          .from('users')
+          .select('id, full_name, email, role, team_id, is_active')
+          .in('reports_to', tlIds)  // ✅ Recruiters under TLs
+          .eq('role', 'recruiter')
+          .eq('is_active', true)
+          .order('full_name')
+        
+        if (recError) {
+          console.error('Error loading indirect recruiters:', recError)
+        } else {
+          indirectRecruiters = recruiterReports || []
+        }
+        
+        console.log('Indirect recruiters (under TLs):', indirectRecruiters)
+      }
+      
+      // Combine direct reports + indirect recruiters
+      const combined = [...(directReports || []), ...indirectRecruiters]
+      console.log('Total team members:', combined.length)
+      console.log('Team Leaders:', directReports?.filter(m => m.role === 'team_leader').length || 0)
+      console.log('Recruiters:', (directReports?.filter(m => m.role === 'recruiter').length || 0) + indirectRecruiters.length)
+      setTeamMembers(combined)
+      
+    } catch (error) {
+      console.error('Exception in loadTeamMembers:', error)
+    }
+  }
+
   const toggleMember = (memberId: string) => {
     setSelectedMembers(prev => 
       prev.includes(memberId)
@@ -118,7 +154,7 @@ const loadTeamMembers = async (teamId: string) => {
 
       const assignments = selectedMembers.map(memberId => ({
         job_id: jobId,
-        recruiter_id: memberId, // This column handles both TLs and Recruiters
+        recruiter_id: memberId,
         assigned_by: user.id,
         is_active: true,
         positions_allocated: parseInt(formData.positions) || 1,
@@ -131,7 +167,7 @@ const loadTeamMembers = async (teamId: string) => {
       if (assignError) throw assignError
 
       alert(
-        `âœ… Job created successfully!\n\nJob Code: ${jobCode}\nPositions: ${formData.positions}\nAssigned to ${selectedMembers.length} team member(s)`
+        `Job created successfully!\n\nJob Code: ${jobCode}\nPositions: ${formData.positions}\nAssigned to ${selectedMembers.length} team member(s)`
       )
       
       router.push('/sr-tl/jobs')
@@ -147,7 +183,6 @@ const loadTeamMembers = async (teamId: string) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
   }
 
-  // Helper to get role badge
   const getRoleBadge = (role: string) => {
     if (role === 'team_leader') {
       return (
@@ -171,10 +206,10 @@ const loadTeamMembers = async (teamId: string) => {
             onClick={() => router.back()}
             className="text-sm text-gray-600 hover:text-gray-900 mb-2"
           >
-            â† Back to Jobs
+            ← Back to Jobs
           </button>
           <h2 className="text-2xl font-bold text-gray-900">Add New Job</h2>
-          <p className="text-gray-600">Create a job opening and assign team members</p>
+          <p className="text-gray-600">Create a job opening and assign your team members</p>
         </div>
 
         <form onSubmit={handleSubmit} className="card space-y-6">
@@ -365,10 +400,10 @@ const loadTeamMembers = async (teamId: string) => {
             </div>
           </div>
 
-          {/* UPDATED: Team Member Assignment (TLs + Recruiters) */}
+          {/* Team Member Assignment */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              ðŸ‘¥ Assign Team Members (TLs & Recruiters) *
+              Assign Your Team Members *
               {selectedMembers.length > 0 && (
                 <span className="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">
                   {selectedMembers.length} selected
@@ -377,12 +412,12 @@ const loadTeamMembers = async (teamId: string) => {
             </h3>
             
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-              ðŸ’¡ Assign this job to Team Leaders and/or Recruiters. All assigned members can add CVs.
+              Assign this job to your Team Leaders and/or Recruiters. All assigned members can add CVs.
             </div>
             
             {teamMembers.length === 0 ? (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
-                No team members available
+                No team members available. Please contact admin to assign team members to you.
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

@@ -1,4 +1,4 @@
-﻿// app/admin/dashboard/page.tsx
+﻿// app/admin/users/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -23,6 +23,11 @@ export default function UsersManagementPage() {
     team_id: '',
     reports_to: '',
     job_title: '',
+    monthly_target: '',
+    quarterly_target: '',
+    annual_target: '',
+    target_start_date: '',
+    target_end_date: '',
   })
 
   useEffect(() => {
@@ -60,7 +65,7 @@ export default function UsersManagementPage() {
       if (usersData.data) setUsers(usersData.data)
       if (teamsData.data) setTeams(teamsData.data)
 
-      // Get potential managers (Team Leaders and Sr. Team Leaders)
+      // Load all managers (TL and Sr.TL)
       const { data: managersData } = await supabase
         .from('users')
         .select('id, full_name, role, team_id')
@@ -69,7 +74,7 @@ export default function UsersManagementPage() {
         .order('full_name')
       if (managersData) setManagers(managersData)
     } catch (error) {
-      console.error('âŒ Error loading data:', error)
+      console.error('Error loading data:', error)
     } finally {
       setLoading(false)
     }
@@ -87,25 +92,18 @@ export default function UsersManagementPage() {
 
     try {
       if (editingUser) {
-        // ========================================
         // UPDATE EXISTING USER
-        // ========================================
-
-        console.log('ðŸ“ Update data:', {
-          full_name: formData.full_name,
-          role: formData.role,
-          team_id: formData.team_id || null,
-          reports_to: formData.reports_to || null,
-          job_title: formData.job_title,
-          hierarchy_level: getHierarchyLevel(formData.role),
-        })
-
         const updateData = {
           full_name: formData.full_name,
           role: formData.role,
           team_id: formData.team_id || null,
           reports_to: formData.reports_to || null,
           job_title: formData.job_title,
+          monthly_target: formData.monthly_target ? parseFloat(formData.monthly_target) : null,
+          quarterly_target: formData.quarterly_target ? parseFloat(formData.quarterly_target) : null,
+          annual_target: formData.annual_target ? parseFloat(formData.annual_target) : null,
+          target_start_date: formData.target_start_date || null,
+          target_end_date: formData.target_end_date || null,
           hierarchy_level: getHierarchyLevel(formData.role),
           updated_at: new Date().toISOString(),
         }
@@ -115,37 +113,19 @@ export default function UsersManagementPage() {
           .update(updateData)
           .eq('id', editingUser.id)
           .select()
-        if (error) {
-          console.error('âŒ Database error:', error)
-          throw new Error(`Database error: ${error.message}\nCode: ${error.code}\nDetails: ${error.details}`)
-        }
+          
+        if (error) throw new Error(`Database error: ${error.message}`)
+        if (!data || data.length === 0) throw new Error('Update failed')
 
-        if (!data || data.length === 0) {
-          console.error('âŒ No data returned from update')
-          throw new Error('Update failed: No data returned. User might not exist or RLS policy is blocking the update.')
-        }
-        alert('âœ… User updated successfully!')
+        alert('User updated successfully!')
         
-        // Reset form state
         setShowAddForm(false)
         setEditingUser(null)
-        setFormData({
-          email: '',
-          password: '',
-          full_name: '',
-          role: 'recruiter',
-          team_id: '',
-          reports_to: '',
-          job_title: '',
-        })
-        
-        // Force reload data
+        resetForm()
         await loadData()
         
       } else {
-        // ========================================
         // CREATE NEW USER
-        // ========================================
         if (!formData.password) {
           alert('Password is required for new users')
           setLoading(false)
@@ -153,12 +133,12 @@ export default function UsersManagementPage() {
         }
 
         alert(
-          'âš ï¸ MANUAL STEP REQUIRED:\n\n' +
-          '1. Go to Supabase Dashboard â†’ Authentication â†’ Users\n' +
+          'MANUAL STEP REQUIRED:\n\n' +
+          '1. Go to Supabase Dashboard → Authentication → Users\n' +
           '2. Click "Add user"\n' +
           '3. Email: ' + formData.email + '\n' +
           '4. Password: ' + formData.password + '\n' +
-          '5. âœ“ Check "Auto Confirm User"\n' +
+          '5. Check "Auto Confirm User"\n' +
           '6. Create user and COPY THE UUID\n' +
           '7. Come back and paste the UUID in the next prompt'
         )
@@ -170,6 +150,7 @@ export default function UsersManagementPage() {
           setLoading(false)
           return
         }
+
         const insertData = {
           id: authUUID,
           email: formData.email,
@@ -178,6 +159,11 @@ export default function UsersManagementPage() {
           team_id: formData.team_id || null,
           reports_to: formData.reports_to || null,
           job_title: formData.job_title,
+          monthly_target: formData.monthly_target ? parseFloat(formData.monthly_target) : null,
+          quarterly_target: formData.quarterly_target ? parseFloat(formData.quarterly_target) : null,
+          annual_target: formData.annual_target ? parseFloat(formData.annual_target) : null,
+          target_start_date: formData.target_start_date || null,
+          target_end_date: formData.target_end_date || null,
           hierarchy_level: getHierarchyLevel(formData.role),
           is_active: true,
           created_at: new Date().toISOString(),
@@ -188,32 +174,39 @@ export default function UsersManagementPage() {
           .from('users')
           .insert([insertData])
           .select()
-        if (error) {
-          console.error('âŒ Database error:', error)
-          throw new Error(`Database error: ${error.message}\nCode: ${error.code}`)
-        }
-        alert('âœ… User created successfully!')
+          
+        if (error) throw new Error(`Database error: ${error.message}`)
+
+        alert('User created successfully!')
         
         setShowAddForm(false)
-        setFormData({
-          email: '',
-          password: '',
-          full_name: '',
-          role: 'recruiter',
-          team_id: '',
-          reports_to: '',
-          job_title: '',
-        })
-        
+        resetForm()
         await loadData()
       }
 
     } catch (error: any) {
-      console.error('ðŸ’¥ Error in handleSubmit:', error)
-      alert('âŒ Error: ' + (error.message || 'Unknown error occurred'))
+      console.error('Error in handleSubmit:', error)
+      alert('Error: ' + (error.message || 'Unknown error occurred'))
     } finally {
       setLoading(false)
     }
+  }
+
+  const resetForm = () => {
+    setFormData({
+      email: '',
+      password: '',
+      full_name: '',
+      role: 'recruiter',
+      team_id: '',
+      reports_to: '',
+      job_title: '',
+      monthly_target: '',
+      quarterly_target: '',
+      annual_target: '',
+      target_start_date: '',
+      target_end_date: '',
+    })
   }
 
   const getHierarchyLevel = (role: string): number => {
@@ -235,6 +228,11 @@ export default function UsersManagementPage() {
       team_id: user.team_id || '',
       reports_to: user.reports_to || '',
       job_title: user.job_title || '',
+      monthly_target: user.monthly_target?.toString() || '',
+      quarterly_target: user.quarterly_target?.toString() || '',
+      annual_target: user.annual_target?.toString() || '',
+      target_start_date: user.target_start_date || '',
+      target_end_date: user.target_end_date || '',
     })
     setShowAddForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -244,17 +242,16 @@ export default function UsersManagementPage() {
     if (!confirm('Are you sure you want to deactivate this user?')) return
 
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('users')
         .update({ is_active: false })
         .eq('id', userId)
-        .select()
 
       if (error) throw error
-      alert('âœ… User deactivated')
+      alert('User deactivated')
       await loadData()
     } catch (error: any) {
-      console.error('âŒ Deactivation error:', error)
+      console.error('Deactivation error:', error)
       alert('Error: ' + error.message)
     }
   }
@@ -284,19 +281,37 @@ export default function UsersManagementPage() {
   }
 
   const getFilteredManagers = () => {
-    if (!formData.team_id) return managers
+    // Team Leaders must report to Sr.TL from SAME team
+    if (formData.role === 'team_leader') {
+      if (!formData.team_id) return []
+      return managers.filter(m => 
+        m.role === 'sr_team_leader' && m.team_id === formData.team_id
+      )
+    }
+    
+    // Recruiters can report to:
+    // - Team Leader from SAME team
+    // - ANY Sr. Team Leader (they manage multiple teams)
+    if (formData.role === 'recruiter') {
+      if (!formData.team_id) return []
+      return managers.filter(m => {
+        if (m.role === 'team_leader') {
+          return m.team_id === formData.team_id  // Same team only
+        }
+        if (m.role === 'sr_team_leader') {
+          return true  // Any Sr.TL can manage recruiter
+        }
+        return false
+      })
+    }
+    
+    // Sr. Team Leaders and management - show all managers
+    return managers
+  }
 
-    return managers.filter(m => {
-      // If assigning Team Leader, show only Sr. Team Leaders from same team
-      if (formData.role === 'team_leader') {
-        return m.role === 'sr_team_leader' && m.team_id === formData.team_id
-      }
-      // If assigning Recruiter, show Team Leaders from same team
-      if (formData.role === 'recruiter') {
-        return m.role === 'team_leader' && m.team_id === formData.team_id
-      }
-      return true
-    })
+  const getTeamName = (teamId: string) => {
+    const team = teams.find(t => t.id === teamId)
+    return team ? team.name : ''
   }
 
   return (
@@ -312,15 +327,7 @@ export default function UsersManagementPage() {
             onClick={() => {
               setShowAddForm(true)
               setEditingUser(null)
-              setFormData({
-                email: '',
-                password: '',
-                full_name: '',
-                role: 'recruiter',
-                team_id: '',
-                reports_to: '',
-                job_title: '',
-              })
+              resetForm()
             }}
             className="btn-primary"
           >
@@ -333,7 +340,7 @@ export default function UsersManagementPage() {
           <div className="card bg-blue-50 border-2 border-blue-200">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-900">
-                {editingUser ? 'âœï¸ Edit User' : 'âž• Create New User'}
+                {editingUser ? 'Edit User' : 'Create New User'}
               </h3>
               {editingUser && (
                 <span className="text-sm text-gray-600">
@@ -344,159 +351,204 @@ export default function UsersManagementPage() {
             
             {!editingUser && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-800">
-                âš ï¸ <strong>Important:</strong> User must be created in Supabase Authentication first!
-                <br />
-                <span className="text-xs">Go to Supabase Dashboard â†’ Authentication â†’ Users â†’ Add user</span>
+                <strong>Important:</strong> User must be created in Supabase Authentication first!
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Email *
-                  </label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="input"
-                    required
-                    disabled={!!editingUser}
-                  />
-                  {editingUser && (
-                    <p className="text-xs text-gray-500 mt-1">Email cannot be changed</p>
-                  )}
-                </div>
-
-                {!editingUser && (
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Basic Info */}
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-3">Basic Information</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Temporary Password *
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Email *</label>
+                    <input
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      className="input"
+                      required
+                      disabled={!!editingUser}
+                    />
+                  </div>
+
+                  {!editingUser && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Password *</label>
+                      <input
+                        type="text"
+                        value={formData.password}
+                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                        className="input"
+                        placeholder="For Supabase Auth"
+                        required
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Full Name *</label>
                     <input
                       type="text"
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      value={formData.full_name}
+                      onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
                       className="input"
-                      placeholder="For Supabase Auth"
                       required
                     />
-                    <p className="text-xs text-gray-500 mt-1">Use in Supabase Auth creation</p>
                   </div>
-                )}
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Full Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.full_name}
-                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                    className="input"
-                    required
-                  />
-                </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Job Title</label>
+                    <input
+                      type="text"
+                      value={formData.job_title}
+                      onChange={(e) => setFormData({ ...formData, job_title: e.target.value })}
+                      className="input"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Job Title
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.job_title}
-                    onChange={(e) => setFormData({ ...formData, job_title: e.target.value })}
-                    className="input"
-                    placeholder="e.g., Team Leader - IT"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Role *</label>
+                    <select
+                      value={formData.role}
+                      onChange={(e) => setFormData({ ...formData, role: e.target.value, reports_to: '' })}
+                      className="input"
+                      required
+                    >
+                      <option value="recruiter">Recruiter</option>
+                      <option value="team_leader">Team Leader</option>
+                      <option value="sr_team_leader">Sr. Team Leader</option>
+                      <option value="ops_head">Operations Head</option>
+                      <option value="ceo">CEO</option>
+                      <option value="system_admin">System Admin</option>
+                    </select>
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Role *
-                  </label>
-                  <select
-                    value={formData.role}
-                    onChange={(e) => setFormData({ ...formData, role: e.target.value, reports_to: '' })}
-                    className="input"
-                    required
-                  >
-                    <option value="recruiter">Recruiter</option>
-                    <option value="team_leader">Team Leader</option>
-                    <option value="sr_team_leader">Sr. Team Leader</option>
-                    <option value="ops_head">Operations Head</option>
-                    <option value="ceo">CEO</option>
-                    <option value="system_admin">System Admin</option>
-                  </select>
-                </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Team</label>
+                    <select
+                      value={formData.team_id}
+                      onChange={(e) => setFormData({ ...formData, team_id: e.target.value, reports_to: '' })}
+                      className="input"
+                    >
+                      <option value="">No Team</option>
+                      {teams.map(team => (
+                        <option key={team.id} value={team.id}>{team.name}</option>
+                      ))}
+                    </select>
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Team
-                  </label>
-                  <select
-                    value={formData.team_id}
-                    onChange={(e) => setFormData({ ...formData, team_id: e.target.value, reports_to: '' })}
-                    className="input"
-                  >
-                    <option value="">No Team (Admin/Management)</option>
-                    {teams.map(team => (
-                      <option key={team.id} value={team.id}>{team.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Reports To (Manager)
-                  </label>
-                  <select
-                    value={formData.reports_to}
-                    onChange={(e) => setFormData({ ...formData, reports_to: e.target.value })}
-                    className="input"
-                  >
-                    <option value="">No Direct Manager</option>
-                    {getFilteredManagers().map(manager => (
-                      <option key={manager.id} value={manager.id}>
-                        {manager.full_name} ({getRoleLabel(manager.role)})
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {formData.role === 'recruiter' && 'ðŸ’¡ Select a Team Leader'}
-                    {formData.role === 'team_leader' && 'ðŸ’¡ Select a Sr. Team Leader (optional)'}
-                    {formData.role === 'sr_team_leader' && 'ðŸ’¡ Typically reports to management'}
-                    {!formData.team_id && formData.role !== 'system_admin' && ' âš ï¸ Select a team first'}
-                  </p>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Reports To</label>
+                    <select
+                      value={formData.reports_to}
+                      onChange={(e) => setFormData({ ...formData, reports_to: e.target.value })}
+                      className="input"
+                    >
+                      <option value="">No Direct Manager</option>
+                      {getFilteredManagers().map(manager => (
+                        <option key={manager.id} value={manager.id}>
+                          {manager.full_name} ({getRoleLabel(manager.role)})
+                          {manager.team_id && ` - ${getTeamName(manager.team_id)}`}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {formData.role === 'recruiter' && formData.team_id && 'Recruiter can report to Team Leader (same team) or any Sr. Team Leader'}
+                      {formData.role === 'team_leader' && formData.team_id && 'Team Leader must report to Sr. Team Leader from same team'}
+                      {formData.role === 'sr_team_leader' && 'Sr. Team Leader typically reports to management'}
+                      {!formData.team_id && formData.role !== 'system_admin' && 'Select a team first'}
+                    </p>
+                  </div>
                 </div>
               </div>
 
+              {/* Targets Section */}
+              <div className="border-t border-gray-300 pt-4">
+                <h4 className="font-semibold text-gray-900 mb-3">Revenue Targets (Optional)</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Monthly Target (INR)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={formData.monthly_target}
+                      onChange={(e) => setFormData({ ...formData, monthly_target: e.target.value })}
+                      className="input"
+                      placeholder="e.g., 150000"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Quarterly Target (INR)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={formData.quarterly_target}
+                      onChange={(e) => setFormData({ ...formData, quarterly_target: e.target.value })}
+                      className="input"
+                      placeholder="e.g., 450000"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Annual Target (INR)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={formData.annual_target}
+                      onChange={(e) => setFormData({ ...formData, annual_target: e.target.value })}
+                      className="input"
+                      placeholder="e.g., 1800000"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Target Start Date
+                    </label>
+                    <input
+                      type="date"
+                      value={formData.target_start_date}
+                      onChange={(e) => setFormData({ ...formData, target_start_date: e.target.value })}
+                      className="input"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Target End Date
+                    </label>
+                    <input
+                      type="date"
+                      value={formData.target_end_date}
+                      onChange={(e) => setFormData({ ...formData, target_end_date: e.target.value })}
+                      className="input"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Set revenue targets for recruiters and team leaders. Leave blank if not applicable.
+                </p>
+              </div>
+
+              {/* Submit Buttons */}
               <div className="flex gap-4 pt-4 border-t border-gray-300">
                 <button type="submit" disabled={loading} className="btn-primary">
-                  {loading ? (
-                    <span className="flex items-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Saving...
-                    </span>
-                  ) : (
-                    editingUser ? 'ðŸ’¾ Update User' : 'âž• Create User'
-                  )}
+                  {loading ? 'Saving...' : editingUser ? 'Update User' : 'Create User'}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setShowAddForm(false)
                     setEditingUser(null)
-                    setFormData({
-                      email: '',
-                      password: '',
-                      full_name: '',
-                      role: 'recruiter',
-                      team_id: '',
-                      reports_to: '',
-                      job_title: '',
-                    })
+                    resetForm()
                   }}
                   className="bg-white border border-gray-300 px-6 py-2 rounded-lg hover:bg-gray-50"
                 >
@@ -513,30 +565,16 @@ export default function UsersManagementPage() {
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
             <p className="text-gray-600">Loading users...</p>
           </div>
-        ) : users.length === 0 ? (
-          <div className="card text-center py-12">
-            <p className="text-gray-600 mb-4">No users found</p>
-            <button
-              onClick={() => setShowAddForm(true)}
-              className="btn-primary"
-            >
-              Create First User
-            </button>
-          </div>
         ) : (
           <div className="card overflow-x-auto">
-            <div className="mb-4 text-sm text-gray-600">
-              Showing <strong>{users.length}</strong> user{users.length !== 1 ? 's' : ''}
-            </div>
             <table className="table">
               <thead>
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
-                  <th>Job Title</th>
                   <th>Role</th>
                   <th>Team</th>
-                  <th>Reports To</th>
+                  <th>Monthly Target</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -544,23 +582,22 @@ export default function UsersManagementPage() {
               <tbody>
                 {users.map(user => (
                   <tr key={user.id}>
-                    <td className="font-medium text-gray-900">{user.full_name}</td>
+                    <td className="font-medium">{user.full_name}</td>
                     <td className="text-sm text-gray-600">{user.email}</td>
-                    <td className="text-sm text-gray-600">{user.job_title || '-'}</td>
                     <td>
                       <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getRoleBadge(user.role)}`}>
                         {getRoleLabel(user.role)}
                       </span>
                     </td>
-                    <td className="text-sm text-gray-600">{user.teams?.name || 'No Team'}</td>
-                    <td className="text-sm text-gray-600">{user.manager?.full_name || '-'}</td>
+                    <td className="text-sm">{user.teams?.name || '-'}</td>
+                    <td className="text-sm font-medium">
+                      {user.monthly_target ? `Rs.${user.monthly_target}` : '-'}
+                    </td>
                     <td>
                       {user.is_active ? (
                         <span className="badge-success">Active</span>
                       ) : (
-                        <span className="bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-xs font-semibold">
-                          Inactive
-                        </span>
+                        <span className="bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-xs">Inactive</span>
                       )}
                     </td>
                     <td>
