@@ -1,4 +1,4 @@
-// app/tl/offers/page.tsx - UPDATED WITH SAFETY TRACKING
+// app/tl/offers/page.tsx - UPDATED WITH DYNAMIC FEE%
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -21,7 +21,6 @@ export default function TLOffersPage() {
       loadOffers(parsedUser.team_id)
     }
 
-    // Auto-refresh every 2 minutes
     const interval = setInterval(() => {
       if (user) loadOffers(user.team_id)
     }, 120000)
@@ -32,7 +31,6 @@ export default function TLOffersPage() {
   const loadOffers = async (teamId: string) => {
     setLoading(true)
     try {
-      // Get all candidates in team
       const { data: teamCandidates } = await supabase
         .from('candidates')
         .select('id')
@@ -79,7 +77,6 @@ export default function TLOffersPage() {
 
       if (error) throw error
 
-      // Calculate safety status
       const enhanced = data?.map(offer => {
         let daysRemaining = null
         let safetyStatus = null
@@ -135,7 +132,7 @@ export default function TLOffersPage() {
   }
 
   const totalRevenue = offers.filter(o => o.status === 'joined')
-    .reduce((sum, o) => sum + (o.fixed_ctc * 0.0833), 0)
+    .reduce((sum, o) => sum + ((o.fixed_ctc * (o.revenue_percentage || 8.33) / 100) / 100000), 0)
 
   const counts = {
     all: offers.length,
@@ -163,7 +160,6 @@ export default function TLOffersPage() {
           <p className="text-gray-600">Monitor team offers and placement safety</p>
         </div>
 
-        {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           {[
             { key: 'all', label: 'All', color: 'text-gray-900' },
@@ -187,7 +183,6 @@ export default function TLOffersPage() {
           ))}
         </div>
 
-        {/* Safety Monitor */}
         {counts.joined > 0 && (
           <div className="card bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200">
             <div className="flex items-center justify-between mb-4">
@@ -229,7 +224,6 @@ export default function TLOffersPage() {
           </div>
         )}
 
-        {/* Offers List */}
         {loading ? (
           <div className="card text-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
@@ -271,16 +265,16 @@ export default function TLOffersPage() {
                       <div className="grid grid-cols-3 gap-4">
                         <div>
                           <div className="text-xs text-gray-500">Total CTC</div>
-                          <div className="font-bold text-gray-900">₹{offer.offered_ctc}L</div>
+                          <div className="font-bold text-gray-900">₹{offer.offered_ctc}</div>
                         </div>
                         <div>
                           <div className="text-xs text-gray-500">Fixed CTC</div>
-                          <div className="font-bold text-blue-600">₹{offer.fixed_ctc}L</div>
+                          <div className="font-bold text-blue-600">₹{offer.fixed_ctc}</div>
                         </div>
                         <div>
-                          <div className="text-xs text-gray-500">Revenue</div>
+                          <div className="text-xs text-gray-500">Revenue ({offer.revenue_percentage || 8.33}%)</div>
                           <div className="font-bold text-green-600">
-                            ₹{(offer.fixed_ctc * 0.0833).toFixed(2)}L
+                            ₹{((offer.fixed_ctc * (offer.revenue_percentage || 8.33) / 100) / 100000).toFixed(2)}L
                           </div>
                         </div>
                       </div>

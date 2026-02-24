@@ -234,7 +234,7 @@ export default function RecruiterOffersPage() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="text-center p-4 bg-white rounded-lg">
                 <div className="text-sm text-gray-600 mb-1">Total Revenue</div>
-                <div className="text-2xl font-bold text-blue-900">₹{totalRevenue.toFixed(2)}L</div>
+                <div className="text-2xl font-bold text-blue-900">₹{totalRevenue.toFixed(2)}</div>
                 <div className="text-xs text-gray-500 mt-1">{counts.joined} placements</div>
               </div>
               
@@ -353,16 +353,16 @@ export default function RecruiterOffersPage() {
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                         <div>
                           <div className="text-xs text-gray-500">Total CTC</div>
-                          <div className="text-sm font-bold text-gray-900">₹{offer.offered_ctc}L</div>
+                          <div className="text-sm font-bold text-gray-900">₹{offer.offered_ctc}</div>
                         </div>
                         <div>
                           <div className="text-xs text-gray-500">Fixed CTC</div>
-                          <div className="text-sm font-bold text-blue-600">₹{offer.fixed_ctc}L</div>
+                          <div className="text-sm font-bold text-blue-600">₹{offer.fixed_ctc}</div>
                         </div>
                         <div>
                           <div className="text-xs text-gray-500">Revenue</div>
                           <div className="text-sm font-bold text-green-600">
-                            ₹{(offer.fixed_ctc * 0.0833).toFixed(2)}L
+                            ₹{(offer.fixed_ctc * 0.0833).toFixed(1)}
                           </div>
                         </div>
                         

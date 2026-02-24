@@ -101,7 +101,7 @@ export default function RecruiterJobsPage() {
       <div className="max-w-6xl mx-auto space-y-6">
         <div className="text-center">
           <h2 className="text-2xl font-bold text-gray-900">My Assigned Jobs</h2>
-          <p className="text-gray-600">Jobs you&apos;re working on</p>
+          <p className="text-gray-600">Jobs you are working on</p>
         </div>
 
         {/* Debug Info (only show when no jobs) */}
@@ -124,8 +124,8 @@ export default function RecruiterJobsPage() {
               Possible reasons:
               </p>
               <ul className="text-xs text-gray-700 space-y-1 list-disc list-inside">
-                <li>Your team leader hasn&apos;t assigned any jobs to you yet</li>
-                <li>Jobs need to be assigned through the &quot;Add Job&quot; form</li>
+                <li>Your team leader hasn't assigned any jobs to you yet</li>
+                <li>Jobs need to be assigned through the Add Job form</li>
                 <li>Database migration may need to run (contact admin)</li>
               </ul>
             </div>
@@ -158,7 +158,7 @@ export default function RecruiterJobsPage() {
             {/* Success message */}
             <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
               <p className="text-sm text-green-800">
-                âœ… You have <strong>{jobs.length}</strong> job{jobs.length !== 1 ? 's' : ''} assigned to you
+              You have <strong>{jobs.length}</strong> job{jobs.length !== 1 ? 's' : ''} assigned to you
               </p>
             </div>
 
@@ -182,20 +182,16 @@ export default function RecruiterJobsPage() {
 
                   <div className="space-y-2 text-sm text-gray-600 mb-4">
                     <div className="flex items-center gap-2">
-                      <span>ðŸ¢</span>
-                      <span>{job.clients?.company_name}</span>
+                    <span>{job.clients?.company_name}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span>ðŸ“</span>
-                      <span>{job.location}</span>
+                     <span>{job.location}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span>ðŸ’°</span>
-                      <span>â‚¹{job.min_ctc}-{job.max_ctc}L</span>
+                    <span>{job.min_ctc}-{job.max_ctc}L</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span>ðŸ“…</span>
-                      <span>{job.experience_min}-{job.experience_max} years</span>
+                    <span>{job.experience_min}-{job.experience_max} years</span>
                     </div>
                   </div>
 

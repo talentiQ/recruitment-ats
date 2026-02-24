@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import InterviewScheduler from '@/components/InterviewScheduler'
+import OfferForm from '@/components/OfferForm'
 
 interface CandidateDetailViewProps {
   candidateId: string
@@ -23,10 +24,16 @@ export default function CandidateDetailView({
   const [timeline, setTimeline] = useState<any[]>([])
   const [updatingStage, setUpdatingStage] = useState(false)
   const [showScheduler, setShowScheduler] = useState(false)
+  const [showOfferForm, setShowOfferForm] = useState(false)
+  
+  // For offer management
+  const [existingOffers, setExistingOffers] = useState<any[]>([])
+  const [activeOffer, setActiveOffer] = useState<any>(null)
 
   useEffect(() => {
     loadCandidate()
     loadTimeline()
+    loadOffers()
   }, [candidateId])
 
   const loadCandidate = async () => {
@@ -39,7 +46,12 @@ export default function CandidateDetailView({
             id,
             job_title,
             job_code,
-            clients (company_name)
+            client_id,
+            clients (
+              id,
+              company_name,
+              replacement_guarantee_days
+            )
           ),
           users:assigned_to (
             full_name,
@@ -77,6 +89,29 @@ export default function CandidateDetailView({
     }
   }
 
+  const loadOffers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('offers')
+        .select('*')
+        .eq('candidate_id', candidateId)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+      
+      if (data && data.length > 0) {
+        setExistingOffers(data)
+        
+        const active = data.find((offer: any) => 
+          ['extended', 'accepted', 'joined'].includes(offer.status)
+        )
+        setActiveOffer(active || null)
+      }
+    } catch (error) {
+      console.error('Error loading offers:', error)
+    }
+  }
+
   const handleStageUpdate = async (newStage: string) => {
     if (!candidate) return
     if (!confirm(`Update stage to "${newStage.replace(/_/g, ' ')}"?`)) return
@@ -86,7 +121,6 @@ export default function CandidateDetailView({
       const userData = localStorage.getItem('user')
       const user = userData ? JSON.parse(userData) : null
 
-      // Special handling for 'joined' stage
       if (newStage === 'joined') {
         const joiningDate = prompt('Enter joining date (YYYY-MM-DD):', new Date().toISOString().split('T')[0])
         
@@ -107,12 +141,17 @@ export default function CandidateDetailView({
           .eq('id', candidate.job_id)
           .single()
 
-        const guaranteeDays = jobData?.clients?.[0]?.replacement_guarantee_days || 90
+        const clientData = Array.isArray(jobData?.clients) 
+          ? jobData.clients[0] 
+          : jobData?.clients
+        const guaranteeDays = clientData?.replacement_guarantee_days || 90
+        
         const guaranteeEnds = new Date(joiningDate)
         guaranteeEnds.setDate(guaranteeEnds.getDate() + guaranteeDays)
 
         const fixedCTC = candidate.fixed_ctc || candidate.expected_ctc || 0
-        const revenue = fixedCTC * 0.0833
+        const feePercentage = 8.33 // Default fee percentage
+        const revenue = (fixedCTC * feePercentage) / 100
         const revenueMonth = joiningDate.slice(0, 7)
         const revenueYear = parseInt(joiningDate.slice(0, 4))
 
@@ -148,7 +187,7 @@ export default function CandidateDetailView({
           candidate_id: candidate.id,
           activity_type: 'candidate_joined',
           activity_title: 'Candidate Joined (Manual)',
-          activity_description: `Manually marked as joined on ${new Date(joiningDate).toLocaleDateString()}. Revenue: Rs.${revenue.toFixed(2)}L`,
+          activity_description: `Manually marked as joined on ${new Date(joiningDate).toLocaleDateString()}. Fee: ${feePercentage}%. Revenue: Rs.${revenue.toFixed(2)}L`,
           performed_by: user?.id,
         }])
 
@@ -165,14 +204,24 @@ export default function CandidateDetailView({
 
         if (updateError) throw updateError
 
-        const stageToOfferStatus: { [key: string]: string } = {
-          'offer_extended': 'extended',
-          'offer_accepted': 'accepted',
-          'rejected': 'rejected',
-          'dropped': 'renege',
+        let offerStatus: string | null = null
+
+        switch (newStage) {
+          case 'offer_extended':
+            offerStatus = 'extended'
+            break
+          case 'offer_accepted':
+            offerStatus = 'accepted'
+            break
+          case 'rejected':
+            offerStatus = 'rejected'
+            break
+          case 'dropped':
+            offerStatus = 'renege'
+            break
         }
 
-        if (stageToOfferStatus[newStage]) {
+        if (offerStatus) {
           const { data: existingOffer } = await supabase
             .from('offers')
             .select('id, status')
@@ -184,7 +233,7 @@ export default function CandidateDetailView({
           if (existingOffer) {
             await supabase
               .from('offers')
-              .update({ status: stageToOfferStatus[newStage] })
+              .update({ status: offerStatus })
               .eq('id', existingOffer.id)
           }
         }
@@ -202,6 +251,7 @@ export default function CandidateDetailView({
 
       loadCandidate()
       loadTimeline()
+      loadOffers()
 
     } catch (error: any) {
       console.error('Stage update error:', error)
@@ -209,6 +259,316 @@ export default function CandidateDetailView({
     } finally {
       setUpdatingStage(false)
     }
+  }
+
+  const handleMarkAsJoined = async () => {
+    if (!activeOffer || !candidate) return
+    
+    const joiningDate = prompt('Enter joining date (YYYY-MM-DD):', new Date().toISOString().split('T')[0])
+    
+    if (!joiningDate) return
+    
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+      alert('Invalid date format. Please use YYYY-MM-DD')
+      return
+    }
+    
+    const confirmed = window.confirm(
+      `Mark ${candidate.full_name} as joined?\n\n` +
+      `Joining Date: ${new Date(joiningDate).toLocaleDateString()}\n` +
+      `Client: ${candidate.jobs?.clients?.company_name}\n` +
+      `Billable CTC: Rs. ${(activeOffer.billable_ctc / 100000).toFixed(2)}L\n` +
+      `Fee: ${activeOffer.revenue_percentage || 8.33}%\n` +
+      `Revenue: Rs. ${((activeOffer.billable_ctc * (activeOffer.revenue_percentage || 8.33) / 100) / 100000).toFixed(2)}L`
+    )
+    
+    if (!confirmed) return
+    
+    setUpdatingStage(true)
+    
+    try {
+      const userData = localStorage.getItem('user')
+      const user = userData ? JSON.parse(userData) : null
+      
+      // Use offer's revenue percentage or default to 8.33%
+      const feePercentage = activeOffer.revenue_percentage || 8.33
+      const revenue = (activeOffer.billable_ctc * feePercentage) / 100 / 100000
+      const revenueMonth = joiningDate.slice(0, 7)
+      const revenueYear = parseInt(joiningDate.slice(0, 4))
+      
+      const { data: jobData } = await supabase
+        .from('jobs')
+        .select('clients(replacement_guarantee_days)')
+        .eq('id', candidate.job_id)
+        .single()
+
+      const clientData = Array.isArray(jobData?.clients) 
+        ? jobData.clients[0] 
+        : jobData?.clients
+      const guaranteeDays = clientData?.replacement_guarantee_days || 90
+      
+      const guaranteeEnds = new Date(joiningDate)
+      guaranteeEnds.setDate(guaranteeEnds.getDate() + guaranteeDays)
+      
+      const { error: offerError } = await supabase
+        .from('offers')
+        .update({
+          status: 'joined',
+          actual_joining_date: joiningDate,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', activeOffer.id)
+      
+      if (offerError) throw offerError
+      
+      const { error: candidateError } = await supabase
+        .from('candidates')
+        .update({
+          current_stage: 'joined',
+          date_joined: joiningDate,
+          billable_ctc: activeOffer.billable_ctc,
+          revenue_earned: revenue,
+          revenue_month: revenueMonth,
+          revenue_year: revenueYear,
+          guarantee_period_ends: guaranteeEnds.toISOString().split('T')[0],
+          is_placement_safe: false,
+          placement_status: 'monitoring',
+          last_activity_date: new Date().toISOString(),
+        })
+        .eq('id', candidate.id)
+      
+      if (candidateError) throw candidateError
+      
+      await supabase.from('placement_safety_tracker').insert([{
+        candidate_id: candidate.id,
+        recruiter_id: candidate.assigned_to,
+        client_id: candidate.jobs?.client_id,
+        joining_date: joiningDate,
+        guarantee_period_days: guaranteeDays,
+        guarantee_period_ends: guaranteeEnds.toISOString().split('T')[0],
+        days_remaining: guaranteeDays,
+        safety_status: 'monitoring',
+      }])
+      
+      await supabase.from('candidate_timeline').insert([{
+        candidate_id: candidate.id,
+        activity_type: 'candidate_joined',
+        activity_title: 'Candidate Joined',
+        activity_description: `Marked as joined on ${new Date(joiningDate).toLocaleDateString()}. Fee: ${feePercentage}%. Revenue: Rs. ${revenue.toFixed(2)}L`,
+        performed_by: user?.id,
+      }])
+      
+      alert(
+        `✓ Successfully marked as joined!\n\n` +
+        `Revenue Earned: Rs. ${revenue.toFixed(2)}L\n` +
+        `Revenue Month: ${revenueMonth}\n` +
+        `Guarantee Period: ${guaranteeDays} days`
+      )
+      
+      await Promise.all([
+        loadCandidate(),
+        loadTimeline(),
+        loadOffers()
+      ])
+      
+    } catch (error: any) {
+      console.error('Error marking as joined:', error)
+      alert(`Error: ${error.message || 'Failed to mark as joined'}`)
+    } finally {
+      setUpdatingStage(false)
+    }
+  }
+
+  const handleRenege = async () => {
+    if (!candidate) return
+    
+    const reason = prompt('Enter reason for renege:')
+    if (!reason) return
+    
+    const confirmed = window.confirm(
+      `Mark ${candidate.full_name} as reneged?\n\n` +
+      `This will:\n` +
+      `- Update status to "Dropped"\n` +
+      `- Reverse revenue if within guarantee period\n` +
+      `- Record renege reason\n\n` +
+      `Continue?`
+    )
+    
+    if (!confirmed) return
+    
+    setUpdatingStage(true)
+    
+    try {
+      const userData = localStorage.getItem('user')
+      const user = userData ? JSON.parse(userData) : null
+      
+      const withinGuarantee = candidate.guarantee_period_ends 
+        ? new Date() <= new Date(candidate.guarantee_period_ends)
+        : false
+      
+      const { error: candidateError } = await supabase
+        .from('candidates')
+        .update({
+          current_stage: 'dropped',
+          placement_status: 'renege',
+          renege_reason: reason,
+          renege_date: new Date().toISOString().split('T')[0],
+          revenue_earned: withinGuarantee ? 0 : candidate.revenue_earned,
+          last_activity_date: new Date().toISOString(),
+        })
+        .eq('id', candidate.id)
+      
+      if (candidateError) throw candidateError
+      
+      if (activeOffer) {
+        await supabase
+          .from('offers')
+          .update({ 
+            status: 'renege',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', activeOffer.id)
+      }
+      
+      await supabase
+        .from('placement_safety_tracker')
+        .update({
+          safety_status: 'renege',
+          renege_date: new Date().toISOString().split('T')[0],
+          renege_reason: reason,
+        })
+        .eq('candidate_id', candidate.id)
+      
+      await supabase.from('candidate_timeline').insert([{
+        candidate_id: candidate.id,
+        activity_type: 'renege',
+        activity_title: 'Candidate Reneged',
+        activity_description: `Marked as reneged. Reason: ${reason}${withinGuarantee ? ' (Revenue reversed)' : ''}`,
+        performed_by: user?.id,
+      }])
+      
+      alert(
+        `✓ Candidate marked as reneged!\n\n` +
+        `Status: Dropped\n` +
+        (withinGuarantee ? 'Revenue: Reversed to Rs. 0\n' : '') +
+        `Reason: ${reason}`
+      )
+      
+      await Promise.all([
+        loadCandidate(),
+        loadTimeline(),
+        loadOffers()
+      ])
+      
+    } catch (error: any) {
+      console.error('Error marking as renege:', error)
+      alert(`Error: ${error.message || 'Failed to mark as renege'}`)
+    } finally {
+      setUpdatingStage(false)
+    }
+  }
+
+  const canCreateOffer = () => {
+    // Check if stage is interview_completed
+    if (candidate?.current_stage !== 'interview_completed') return false
+    
+    // Check if there's already an active offer
+    if (activeOffer) return false
+    
+    // TL and Sr.TL can create offers
+    return ['team_leader', 'sr_team_leader'].includes(userRole)
+  }
+
+  const canEditOffer = () => {
+    // Only Sr.TL can edit offers
+    return userRole === 'sr_team_leader' && activeOffer
+  }
+
+  const renderOfferButtons = () => {
+    // If showing offer form, don't show buttons
+    if (showOfferForm) return null
+
+    // If there's an active offer
+    if (activeOffer) {
+      if (activeOffer.status === 'extended') {
+        return (
+          <>
+            {canEditOffer() && (
+              <button
+                onClick={() => setShowOfferForm(true)}
+                className="mt-6 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium"
+              >
+                Edit Offer
+              </button>
+            )}
+          </>
+        )
+      }
+
+      if (activeOffer.status === 'accepted') {
+        return (
+          <>
+            <button
+              onClick={handleMarkAsJoined}
+              disabled={updatingStage}
+              className="mt-6 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+            >
+              {updatingStage ? 'Processing...' : 'Mark as Joined'}
+            </button>
+            <button
+              onClick={handleRenege}
+              disabled={updatingStage}
+              className="mt-6 bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 font-medium disabled:opacity-50"
+            >
+              Renege
+            </button>
+          </>
+        )
+      }
+
+      if (activeOffer.status === 'joined') {
+        return (
+          <>
+            <div className="mt-6 px-6 py-2 bg-green-100 text-green-800 rounded-lg font-semibold inline-flex items-center gap-2">
+              <span className="text-green-600">✓</span>
+              Joined on {activeOffer.actual_joining_date ? new Date(activeOffer.actual_joining_date).toLocaleDateString() : 'N/A'}
+            </div>
+            {candidate.guarantee_period_ends && new Date() <= new Date(candidate.guarantee_period_ends) && (
+              <button
+                onClick={handleRenege}
+                disabled={updatingStage}
+                className="mt-6 bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 font-medium disabled:opacity-50"
+              >
+                Mark as Renege
+              </button>
+            )}
+          </>
+        )
+      }
+    }
+
+    // If no active offer and can create
+    if (canCreateOffer()) {
+      return (
+        <button
+          onClick={() => setShowOfferForm(true)}
+          className="mt-6 bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 font-medium"
+        >
+          Create Offer
+        </button>
+      )
+    }
+
+    return null
+  }
+
+  const handleOfferSuccess = async () => {
+    setShowOfferForm(false)
+    await Promise.all([
+      loadCandidate(),
+      loadTimeline(),
+      loadOffers()
+    ])
   }
 
   const handleViewResume = async () => {
@@ -297,6 +657,7 @@ export default function CandidateDetailView({
       interview_scheduled: { color: 'bg-purple-500', symbol: 'I' },
       offer_extended: { color: 'bg-green-500', symbol: '$' },
       candidate_joined: { color: 'bg-teal-500', symbol: 'J' },
+      renege: { color: 'bg-red-500', symbol: 'R' },
     }
     
     const config = iconMap[type] || { color: 'bg-gray-400', symbol: '•' }
@@ -306,6 +667,11 @@ export default function CandidateDetailView({
         {config.symbol}
       </div>
     )
+  }
+
+  // Check if interview scheduler should be disabled
+  const isInterviewDisabled = () => {
+    return ['offer_accepted', 'offer_extended', 'joined', 'dropped', 'rejected'].includes(candidate?.current_stage || '')
   }
 
   if (loading) {
@@ -348,6 +714,31 @@ export default function CandidateDetailView({
         </div>
       </div>
 
+      {/* Offer Form (Embedded) */}
+      {showOfferForm && (
+        <div className="card bg-blue-50 border-2 border-blue-300">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-bold text-blue-900">
+              {activeOffer ? 'Edit Offer' : 'Create Offer'}
+            </h3>
+            <button
+              onClick={() => setShowOfferForm(false)}
+              className="text-blue-600 hover:text-blue-900 font-medium"
+            >
+              ✕ Close
+            </button>
+          </div>
+          <OfferForm
+            candidateId={candidateId}
+            candidate={candidate}
+            existingOffer={activeOffer}
+            isEditMode={!!activeOffer}
+            onSuccess={handleOfferSuccess}
+            onCancel={() => setShowOfferForm(false)}
+          />
+        </div>
+      )}
+
       {/* Update Stage & Actions */}
       <div className="card">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Update Pipeline Stage</h3>
@@ -375,48 +766,35 @@ export default function CandidateDetailView({
             </select>
           </div>
 
-          {/* Schedule Interview Button */}
           <button
             onClick={() => setShowScheduler(true)}
-            className="mt-6 bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 font-medium"
-          >Schedule Interview
+            disabled={isInterviewDisabled()}
+            className={`mt-6 px-6 py-2 rounded-lg font-medium ${
+              isInterviewDisabled()
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : 'bg-purple-600 text-white hover:bg-purple-700'
+            }`}
+            title={isInterviewDisabled() ? 'Interview scheduling disabled for this stage' : 'Schedule Interview'}
+          >
+            Schedule Interview
           </button>
 
-          {/* Create Offer Button */}
-          {candidate.current_stage !== 'sourced' &&
-           candidate.current_stage !== 'screening' &&
-           candidate.current_stage !== 'joined' &&
-           candidate.current_stage !== 'dropped' &&
-           candidate.current_stage !== 'rejected' &&
-           candidate.current_stage !== 'on_hold' && (
-            <button
-              onClick={() => router.push(`${basePath}/offers/create?candidate=${candidate.id}`)}
-              className="mt-6 bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 font-medium"
-            >
-            Create Offer
-            </button>
-          )}
+          {renderOfferButtons()}
 
-          {/* View Offers Button */}
-          {(candidate.current_stage === 'offer_extended' ||
-            candidate.current_stage === 'offer_accepted' ||
-            candidate.current_stage === 'documentation' ||
-            candidate.current_stage === 'joined' ||
-            candidate.current_stage === 'dropped') && (
+          {existingOffers.length > 0 && !showOfferForm && (
             <button
               onClick={() => router.push(`${basePath}/offers?candidate=${candidate.id}`)}
               className="mt-6 bg-yellow-600 text-white px-6 py-2 rounded-lg hover:bg-yellow-700 font-medium"
             >
-            View Offers
+              View All Offers ({existingOffers.length})
             </button>
           )}
 
-          {/* Edit Details Button */}
           <button
             onClick={() => router.push(`${basePath}/candidates/${candidate.id}/edit`)}
             className="mt-6 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium"
           >
-          Edit Details
+            Edit Details
           </button>
         </div>
       </div>
@@ -503,8 +881,8 @@ export default function CandidateDetailView({
             <p className="font-medium">{candidate.jobs?.clients?.company_name || 'N/A'}</p>
           </div>
           <div>
-            <label className="text-sm text-gray-500">Added By</label>
-            <p className="font-medium">{candidate.users?.full_name || 'N/A'}</p>
+            <label className="text-sm text-gray-500">Added By (Revenue Credit)</label>
+            <p className="font-medium text-green-600">{candidate.users?.full_name || 'N/A'}</p>
           </div>
         </div>
       </div>

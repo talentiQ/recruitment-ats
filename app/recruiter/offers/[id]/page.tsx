@@ -92,7 +92,7 @@ export default function OfferDetailPage() {
       candidate_id: offer.candidates.id,
       activity_type: 'offer_accepted',
       activity_title: 'Offer Accepted ✅',
-      activity_description: `Candidate accepted the offer of ₹${offer.offered_ctc}L. Stage updated to OFFER ACCEPTED.`,
+      activity_description: `Candidate accepted the offer of ₹${offer.offered_ctc}. Stage updated to OFFER ACCEPTED.`,
       performed_by: user.id,
     }])
 
@@ -253,11 +253,11 @@ export default function OfferDetailPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center p-4 bg-gray-50 rounded-lg">
               <div className="text-sm text-gray-500 mb-1">Total CTC</div>
-              <div className="text-2xl font-bold text-gray-900">₹{offer.offered_ctc}L</div>
+              <div className="text-2xl font-bold text-gray-900">₹{offer.offered_ctc}</div>
             </div>
             <div className="text-center p-4 bg-blue-50 rounded-lg">
               <div className="text-sm text-blue-600 mb-1">Fixed CTC</div>
-              <div className="text-2xl font-bold text-blue-900">₹{offer.fixed_ctc}L</div>
+              <div className="text-2xl font-bold text-blue-900">₹{offer.fixed_ctc}</div>
             </div>
             <div className="text-center p-4 bg-yellow-50 rounded-lg">
               <div className="text-sm text-yellow-600 mb-1">Variable CTC</div>
@@ -265,7 +265,7 @@ export default function OfferDetailPage() {
             </div>
             <div className="text-center p-4 bg-green-50 rounded-lg">
               <div className="text-sm text-green-600 mb-1">Revenue (8.33%)</div>
-              <div className="text-2xl font-bold text-green-900">₹{expectedRevenue}L</div>
+              <div className="text-2xl font-bold text-green-900">₹{expectedRevenue}</div>
             </div>
           </div>
         </div>
@@ -335,7 +335,7 @@ export default function OfferDetailPage() {
               <p className="text-sm text-yellow-800 mt-1">
                 {offer.candidates?.jobs?.clients?.company_name} has a{' '}
                 <strong>{guaranteeDays} days</strong> guarantee period.
-                Revenue of ₹{expectedRevenue}L will be provisional until guarantee period ends.
+                Revenue of ₹{expectedRevenue} will be provisional until guarantee period ends.
               </p>
             </div>
           </div>

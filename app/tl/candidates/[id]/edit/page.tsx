@@ -71,7 +71,7 @@ export default function TLEditCandidatePage() {
           <p className="text-red-600 text-lg mb-2">Error loading candidate</p>
           <p className="text-gray-600 mb-4">{error || 'Candidate not found'}</p>
           <button onClick={() => router.back()} className="btn-primary">
-            Go Back
+          Go Back
           </button>
         </div>
       </DashboardLayout>

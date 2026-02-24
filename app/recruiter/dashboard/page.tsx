@@ -1,4 +1,4 @@
-// app/recruiter/dashboard/page.tsx - AI-POWERED WITH REALISTIC ACHIEVEMENTS
+// app/recruiter/dashboard/page.tsx - MODIFIED WITH REVENUE TRACKING
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -20,10 +20,17 @@ export default function RecruiterDashboard() {
     thisWeek: 0,
     offersAccepted: 0,
   })
+  const [revenueStats, setRevenueStats] = useState({
+    monthlyRevenue: 0,
+    monthlyTarget: 0,
+    quarterlyRevenue: 0,
+    annualRevenue: 0,
+    monthlyJoinings: 0,
+    targetAchieved: false,
+  })
   const [monthlyTarget, setMonthlyTarget] = useState<any>(null)
   const [aiPrediction, setAiPrediction] = useState<any>(null)
   const [achievements, setAchievements] = useState<any[]>([])
-  const [personalRecords, setPersonalRecords] = useState<any[]>([])
   const [featuredAchievement, setFeaturedAchievement] = useState<any>(null)
   const [recentCandidates, setRecentCandidates] = useState<any[]>([])
   const [user, setUser] = useState<any>(null)
@@ -42,10 +49,10 @@ export default function RecruiterDashboard() {
     try {
       await Promise.all([
         loadStats(userId),
+        loadRevenueStats(userId),
         loadMonthlyTarget(userId),
         loadAIPrediction(userId),
         loadAchievements(userId),
-        loadPersonalRecords(userId),
         loadRecentCandidates(userId),
       ])
     } catch (error) {
@@ -77,6 +84,95 @@ export default function RecruiterDashboard() {
       thisMonth: data.filter(c => c.date_joined && new Date(c.date_joined) >= monthStart).length,
       thisWeek: data.filter(c => c.date_sourced && new Date(c.date_sourced) >= weekAgo).length,
       offersAccepted: data.filter(c => c.current_stage === 'offer_accepted').length,
+    })
+  }
+
+  const loadRevenueStats = async (userId: string) => {
+    const now = new Date()
+    const currentYear = now.getFullYear()
+    const currentMonth = now.getMonth() + 1 // 1-12
+    
+    // Calculate business quarter (Apr-Mar fiscal year)
+    let businessQuarter: number
+    if (currentMonth >= 4 && currentMonth <= 6) businessQuarter = 1
+    else if (currentMonth >= 7 && currentMonth <= 9) businessQuarter = 2
+    else if (currentMonth >= 10 && currentMonth <= 12) businessQuarter = 3
+    else businessQuarter = 4
+
+    // Get current month revenue
+    const { data: monthlyData } = await supabase
+      .from('candidates')
+      .select('revenue_earned')
+      .eq('assigned_to', userId)
+      .eq('current_stage', 'joined')
+      .gte('date_joined', `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`)
+      .lt('date_joined', `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`)
+
+    const monthlyRevenue = monthlyData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+    const monthlyJoinings = monthlyData?.length || 0
+
+    // Get quarterly revenue - FIXED
+    let quarterStartMonth: number
+    let quarterEndMonth: number
+    let quarterStartYear: number
+    let quarterEndYear: number
+
+    if (businessQuarter === 1) {
+      // Q1: Apr-Jun
+      quarterStartMonth = 4
+      quarterEndMonth = 7
+      quarterStartYear = currentYear
+      quarterEndYear = currentYear
+    } else if (businessQuarter === 2) {
+      // Q2: Jul-Sep
+      quarterStartMonth = 7
+      quarterEndMonth = 10
+      quarterStartYear = currentYear
+      quarterEndYear = currentYear
+    } else if (businessQuarter === 3) {
+      // Q3: Oct-Dec
+      quarterStartMonth = 10
+      quarterEndMonth = 1 // Jan of next year
+      quarterStartYear = currentYear
+      quarterEndYear = currentYear + 1
+    } else {
+      // Q4: Jan-Mar
+      quarterStartMonth = 1
+      quarterEndMonth = 4
+      quarterStartYear = currentYear
+      quarterEndYear = currentYear
+    }
+
+    const { data: quarterlyData } = await supabase
+      .from('candidates')
+      .select('revenue_earned')
+      .eq('assigned_to', userId)
+      .eq('current_stage', 'joined')
+      .gte('date_joined', `${quarterStartYear}-${String(quarterStartMonth).padStart(2, '0')}-01`)
+      .lt('date_joined', `${quarterEndYear}-${String(quarterEndMonth).padStart(2, '0')}-01`)
+
+    const quarterlyRevenue = quarterlyData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+
+    // Get annual revenue (Apr to Mar fiscal year)
+    const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
+    
+    const { data: annualData } = await supabase
+      .from('candidates')
+      .select('revenue_earned')
+      .eq('assigned_to', userId)
+      .eq('current_stage', 'joined')
+      .gte('date_joined', `${fiscalYearStart}-04-01`)
+      .lt('date_joined', `${fiscalYearStart + 1}-04-01`)
+
+    const annualRevenue = annualData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+
+    setRevenueStats({
+      monthlyRevenue,
+      monthlyTarget: 2, // Default target of 2L, can be made dynamic
+      quarterlyRevenue,
+      annualRevenue,
+      monthlyJoinings,
+      targetAchieved: monthlyRevenue >= 2,
     })
   }
 
@@ -162,15 +258,6 @@ export default function RecruiterDashboard() {
     }
   }
 
-  const loadPersonalRecords = async (userId: string) => {
-    const { data } = await supabase
-      .from('personal_records')
-      .select('*')
-      .eq('user_id', userId)
-
-    if (data) setPersonalRecords(data)
-  }
-
   const loadRecentCandidates = async (userId: string) => {
     const { data } = await supabase
       .from('candidates')
@@ -207,6 +294,10 @@ export default function RecruiterDashboard() {
     return 'bg-gray-400'
   }
 
+  const formatRevenue = (amount: number) => {
+    return `Rs. ${(amount * 100000).toLocaleString('en-IN')}`
+  }
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -216,6 +307,10 @@ export default function RecruiterDashboard() {
       </DashboardLayout>
     )
   }
+
+  const achievementPercentage = revenueStats.monthlyTarget > 0 
+    ? (revenueStats.monthlyRevenue / revenueStats.monthlyTarget * 100) 
+    : 0
 
   return (
     <DashboardLayout>
@@ -250,58 +345,102 @@ export default function RecruiterDashboard() {
 
         {/* Monthly Target & AI Prediction */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Monthly Target Progress */}
+          {/* Monthly Target Progress - MODIFIED */}
           <div className="card">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
               📊 Monthly Target Progress
             </h3>
             
-            {monthlyTarget && (
-              <div className="space-y-4">
-                <div className="text-center">
-                  <div className="text-5xl font-bold text-gray-900 mb-2">
-                    {monthlyTarget.actual_joinings} / {monthlyTarget.target_joinings}
+            <div className="space-y-4">
+              {/* Revenue Section */}
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-4 border-2 border-blue-200">
+                <div className="text-center mb-3">
+                  <div className="text-sm text-blue-700 mb-1">Revenue This Month</div>
+                  <div className="text-3xl font-bold text-blue-900">
+                    {formatRevenue(revenueStats.monthlyRevenue)}
                   </div>
-                  <div className="text-sm text-gray-600">Joinings this month</div>
+                  <div className="text-xs text-blue-600 mt-1">
+                    Target: {formatRevenue(revenueStats.monthlyTarget)}
+                  </div>
                 </div>
 
                 {/* Progress Bar */}
                 <div className="relative">
-                  <div className="w-full bg-gray-200 rounded-full h-6">
+                  <div className="w-full bg-blue-200 rounded-full h-6">
                     <div
-                      className={`h-6 rounded-full transition-all duration-500 flex items-center justify-center text-white text-sm font-bold ${getProgressColor(monthlyTarget.achievement_percentage)}`}
-                      style={{ width: `${Math.min(monthlyTarget.achievement_percentage, 100)}%` }}
+                      className={`h-6 rounded-full transition-all duration-500 flex items-center justify-center text-white text-sm font-bold ${getProgressColor(achievementPercentage)}`}
+                      style={{ width: `${Math.min(achievementPercentage, 100)}%` }}
                     >
-                      {monthlyTarget.achievement_percentage >= 20 && `${Math.round(monthlyTarget.achievement_percentage)}%`}
+                      {achievementPercentage >= 20 && `${Math.round(achievementPercentage)}%`}
                     </div>
                   </div>
-                  {monthlyTarget.achievement_percentage < 20 && (
-                    <div className="text-center mt-1 text-sm font-bold text-gray-700">
-                      {Math.round(monthlyTarget.achievement_percentage)}%
+                  {achievementPercentage < 20 && (
+                    <div className="text-center mt-1 text-sm font-bold text-blue-700">
+                      {Math.round(achievementPercentage)}%
                     </div>
                   )}
                 </div>
 
-                {/* Achievement Badges */}
-                <div className="grid grid-cols-3 gap-2 mt-4">
-                  <div className={`text-center p-3 rounded-lg ${monthlyTarget.achievement_percentage >= 100 ? 'bg-blue-100 border-2 border-blue-500' : 'bg-gray-50'}`}>
-                    <div className="text-2xl">⭐</div>
-                    <div className="text-xs font-bold mt-1">100%</div>
-                    <div className="text-xs text-gray-600">Star</div>
+                {/* Achievement Badge */}
+                {revenueStats.targetAchieved && (
+                  <div className="mt-3 bg-green-100 border-2 border-green-500 rounded-lg p-2 text-center">
+                    <div className="text-green-800 font-bold flex items-center justify-center gap-2">
+                      <span className="text-2xl">🎯</span>
+                      <span>Target Achieved!</span>
+                    </div>
                   </div>
-                  <div className={`text-center p-3 rounded-lg ${monthlyTarget.achievement_percentage >= 150 ? 'bg-green-100 border-2 border-green-500' : 'bg-gray-50'}`}>
-                    <div className="text-2xl">🚀</div>
-                    <div className="text-xs font-bold mt-1">150%</div>
-                    <div className="text-xs text-gray-600">Achiever</div>
+                )}
+              </div>
+
+              {/* Joinings & Additional Stats */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-purple-50 rounded-lg p-3 text-center border border-purple-200">
+                  <div className="text-2xl font-bold text-purple-900">
+                    {revenueStats.monthlyJoinings}
                   </div>
-                  <div className={`text-center p-3 rounded-lg ${monthlyTarget.achievement_percentage >= 200 ? 'bg-purple-100 border-2 border-purple-500' : 'bg-gray-50'}`}>
-                    <div className="text-2xl">👑</div>
-                    <div className="text-xs font-bold mt-1">200%</div>
-                    <div className="text-xs text-gray-600">Legend</div>
+                  <div className="text-xs text-purple-700 mt-1">Joinings</div>
+                </div>
+                <div className="bg-green-50 rounded-lg p-3 text-center border border-green-200">
+                  <div className="text-2xl font-bold text-green-900">
+                    {formatRevenue(revenueStats.quarterlyRevenue)}
                   </div>
+                  <div className="text-xs text-green-700 mt-1">Quarterly</div>
                 </div>
               </div>
-            )}
+
+              {/* Annual Revenue */}
+              <div className="bg-gradient-to-br from-yellow-50 to-orange-50 rounded-lg p-4 text-center border-2 border-yellow-300">
+                <div className="text-sm text-orange-700 mb-1">Annual Revenue (FY)</div>
+                <div className="text-3xl font-bold text-orange-900">
+                  {formatRevenue(revenueStats.annualRevenue)}
+                </div>
+                <div className="text-xs text-orange-600 mt-1">
+                  {new Date().getMonth() >= 3 
+                    ? `Apr ${new Date().getFullYear()} - Mar ${new Date().getFullYear() + 1}`
+                    : `Apr ${new Date().getFullYear() - 1} - Mar ${new Date().getFullYear()}`
+                  }
+                </div>
+              </div>
+
+              {/* Achievement Tier Badges */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 100 ? 'bg-blue-100 border-2 border-blue-500' : 'bg-gray-50'}`}>
+                  <div className="text-2xl">⭐</div>
+                  <div className="text-xs font-bold mt-1">100%</div>
+                  <div className="text-xs text-gray-600">Star</div>
+                </div>
+                <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 150 ? 'bg-green-100 border-2 border-green-500' : 'bg-gray-50'}`}>
+                  <div className="text-2xl">🚀</div>
+                  <div className="text-xs font-bold mt-1">150%</div>
+                  <div className="text-xs text-gray-600">Achiever</div>
+                </div>
+                <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 200 ? 'bg-purple-100 border-2 border-purple-500' : 'bg-gray-50'}`}>
+                  <div className="text-2xl">👑</div>
+                  <div className="text-xs font-bold mt-1">200%</div>
+                  <div className="text-xs text-gray-600">Legend</div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* AI Prediction */}
@@ -364,33 +503,6 @@ export default function RecruiterDashboard() {
           </div>
         </div>
 
-        {/* Personal Records */}
-        {personalRecords.length > 0 && (
-          <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
-              🏆 Your Personal Records
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {personalRecords.map(record => (
-                <div key={record.id} className="bg-gradient-to-br from-yellow-50 to-orange-50 border-2 border-yellow-300 rounded-lg p-4 text-center">
-                  <div className="text-3xl mb-2">🏆</div>
-                  <div className="font-bold text-yellow-900 mb-1">
-                    {record.record_type === 'most_joinings_month' && 'Most Joinings in a Month'}
-                    {record.record_type === 'fastest_placement' && 'Fastest Placement'}
-                    {record.record_type === 'highest_revenue_month' && 'Highest Revenue Month'}
-                  </div>
-                  <div className="text-2xl font-bold text-yellow-900">
-                    {record.record_type === 'fastest_placement' ? `${record.record_value} days` : record.record_value}
-                  </div>
-                  <div className="text-xs text-yellow-700 mt-1">
-                    {record.record_details?.month || new Date(record.achieved_date).toLocaleDateString()}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Main Stats Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="kpi-card text-center">
@@ -414,9 +526,8 @@ export default function RecruiterDashboard() {
             <div className="kpi-title">Offers Accepted</div>
             <div className="kpi-value">{stats.offersAccepted}</div>
             <div className="text-xs text-gray-500">Close to join!</div>
-            
           </div>
-          </div>
+        </div>
 
         {/* Pipeline Stages */}
         <div className="card">
@@ -447,7 +558,7 @@ export default function RecruiterDashboard() {
           </div>
         </div>
 
-        {/* Recent Achievements */}
+        {/* Recent Achievements - KEPT (More informative than Personal Records) */}
         {achievements.length > 0 && (
           <div className="card">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">

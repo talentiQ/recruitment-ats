@@ -75,7 +75,8 @@ export default function LoginPage() {
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white mb-2">Talent IQ</h1>
-          <p className="text-blue-100 text-lg">Your Smart Hiring Platform</p>
+          <p className="text-blue-100 text-lg">Your Smart Hiring Engine</p>
+        <p className="text-blue-100 text-lg">Beta Version 2.0</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-2xl p-8">
@@ -148,7 +149,7 @@ export default function LoginPage() {
 
         <div className="mt-8 text-center">
           <p className="text-sm text-blue-100">
-            &copy; 2026 Talent IQ. All rights reserved.
+            &copy; 2026 Talent IQ. All rights reserved with Talenti HR Consulting.
           </p>
         </div>
       </div>

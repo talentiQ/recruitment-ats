@@ -1,4 +1,4 @@
-// app/sr-tl/offers/page.tsx - COMPLETE WITH SAFETY TRACKING
+// app/sr-tl/offers/page.tsx - UPDATED WITH DYNAMIC FEE%
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -21,7 +21,6 @@ export default function SrTLOffersPage() {
       loadOffers(parsedUser.team_id)
     }
 
-    // Auto-refresh every 2 minutes
     const interval = setInterval(() => {
       if (user) loadOffers(user.team_id)
     }, 120000)
@@ -32,7 +31,6 @@ export default function SrTLOffersPage() {
   const loadOffers = async (teamId: string) => {
     setLoading(true)
     try {
-      // Get all candidates in team (Sr.TL sees all team candidates)
       const { data: teamCandidates } = await supabase
         .from('candidates')
         .select('id')
@@ -76,7 +74,6 @@ export default function SrTLOffersPage() {
         .in('candidate_id', candidateIds)
         .order('created_at', { ascending: false })
 
-      // Apply filter
       if (filter !== 'all') {
         query = query.eq('status', filter)
       }
@@ -85,7 +82,6 @@ export default function SrTLOffersPage() {
 
       if (error) throw error
 
-      // Calculate days remaining for joined candidates
       const enhanced = data?.map(offer => {
         let daysRemaining = null
         let safetyStatus = null
@@ -146,7 +142,6 @@ export default function SrTLOffersPage() {
     return badges[safetyStatus]
   }
 
-  // Calculate stats
   const counts = {
     all: offers.length,
     extended: offers.filter(o => o.status === 'extended').length,
@@ -155,10 +150,9 @@ export default function SrTLOffersPage() {
     renege: offers.filter(o => o.status === 'renege').length,
   }
 
-  // Revenue and safety stats
   const totalRevenue = offers
     .filter(o => o.status === 'joined')
-    .reduce((sum, o) => sum + (o.fixed_ctc * 0.0833), 0)
+    .reduce((sum, o) => sum + ((o.fixed_ctc * (o.revenue_percentage || 8.33) / 100) / 100000), 0)
 
   const criticalPlacements = offers.filter(o => o.safetyStatus === 'critical')
   const atRiskPlacements = offers.filter(o => o.safetyStatus === 'at_risk')
@@ -173,7 +167,6 @@ export default function SrTLOffersPage() {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">All Team Offers & Placements</h2>
@@ -181,7 +174,6 @@ export default function SrTLOffersPage() {
           </div>
         </div>
 
-        {/* Offer Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <button
             onClick={() => setFilter('all')}
@@ -234,7 +226,6 @@ export default function SrTLOffersPage() {
           </button>
         </div>
 
-        {/* Safety Monitoring Stats - Only show if there are joined candidates */}
         {counts.joined > 0 && (
           <div className="card bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200">
             <div className="flex items-center justify-between mb-4">
@@ -296,7 +287,6 @@ export default function SrTLOffersPage() {
               </div>
             </div>
 
-            {/* Quick Insights */}
             <div className="mt-4 pt-4 border-t border-blue-200">
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-6">
@@ -315,7 +305,6 @@ export default function SrTLOffersPage() {
           </div>
         )}
 
-        {/* Offers List */}
         {loading ? (
           <div className="card text-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
@@ -378,9 +367,9 @@ export default function SrTLOffersPage() {
                           <div className="text-sm font-bold text-blue-600">₹{offer.fixed_ctc}</div>
                         </div>
                         <div>
-                          <div className="text-xs text-gray-500">Revenue</div>
+                          <div className="text-xs text-gray-500">Revenue ({offer.revenue_percentage || 8.33}%)</div>
                           <div className="text-sm font-bold text-green-600">
-                            ₹{(offer.fixed_ctc * 0.0833).toFixed(1)}
+                            ₹{((offer.fixed_ctc * (offer.revenue_percentage || 8.33) / 100) / 100000).toFixed(2)}L
                           </div>
                         </div>
                         
@@ -415,7 +404,6 @@ export default function SrTLOffersPage() {
                         )}
                       </div>
 
-                      {/* Critical Alert */}
                       {offer.safetyStatus === 'critical' && (
                         <div className="mt-3 p-3 bg-red-100 border-2 border-red-300 rounded-lg">
                           <div className="flex items-center gap-2 text-red-900">
@@ -429,7 +417,6 @@ export default function SrTLOffersPage() {
                         </div>
                       )}
 
-                      {/* At Risk Warning */}
                       {offer.safetyStatus === 'at_risk' && (
                         <div className="mt-3 p-3 bg-yellow-50 border border-yellow-300 rounded-lg">
                           <div className="flex items-center gap-2 text-yellow-900">

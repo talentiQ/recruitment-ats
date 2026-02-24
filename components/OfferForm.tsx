@@ -1,4 +1,4 @@
-// components/OfferForm.tsx
+// components/OfferForm.tsx - UPDATED WITH AUTO STAGE CHANGE
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -58,6 +58,7 @@ export default function OfferForm({
     // CTC Breakdown
     fixed_ctc: existingOffer?.fixed_ctc?.toString() || '',
     variable_ctc: existingOffer?.variable_ctc?.toString() || '0',
+    fee_percentage: existingOffer?.revenue_percentage?.toString() || '8.33',
     
     // Dates
     offer_date: existingOffer?.offer_date || new Date().toISOString().split('T')[0],
@@ -79,7 +80,6 @@ export default function OfferForm({
     if (userData) {
       setUser(JSON.parse(userData))
     }
-    // if parent passed candidate, use it; otherwise load from ID
     if (propCandidate) {
       setCandidate(propCandidate)
       if (propCandidate.jobs?.clients) setClient(propCandidate.jobs.clients)
@@ -114,7 +114,6 @@ export default function OfferForm({
       setCandidate(d)
       if (d.jobs?.clients) setClient(d.jobs.clients)
 
-      // Pre-fill designation from job title
       if (d.jobs?.job_title && !formData.designation) {
         setFormData(prev => ({
           ...prev,
@@ -135,7 +134,8 @@ export default function OfferForm({
 
   const calculateExpectedRevenue = () => {
     const fixed = parseFloat(formData.fixed_ctc) || 0
-    return fixed * 0.0833  // 8.33%
+    const feePercent = parseFloat(formData.fee_percentage) || 8.33
+    return (fixed * feePercent) / 100
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -152,9 +152,10 @@ export default function OfferForm({
     try {
       const fixedCTC = parseFloat(formData.fixed_ctc)
       const variableCTC = parseFloat(formData.variable_ctc) || 0
+      const feePercentage = parseFloat(formData.fee_percentage) || 8.33
       const totalCTC = fixedCTC + variableCTC
-      const billableCTC = fixedCTC  // Billable = Fixed only
-      const expectedRevenue = fixedCTC * 0.0833
+      const billableCTC = fixedCTC
+      const expectedRevenue = (fixedCTC * feePercentage) / 100
 
       const offerData = {
         candidate_id: candidateId || existingOffer?.candidate_id,
@@ -162,18 +163,16 @@ export default function OfferForm({
         recruiter_id: user.id,
         client_id: candidate?.jobs?.client_id,
         
-        // CTC
         offered_ctc: totalCTC,
         fixed_ctc: fixedCTC,
         variable_ctc: variableCTC,
         billable_ctc: billableCTC,
+        revenue_percentage: feePercentage,
         
-        // Dates
         offer_date: formData.offer_date,
         offer_valid_until: formData.offer_valid_until || null,
         expected_joining_date: formData.expected_joining_date,
         
-        // Job Details
         work_location: formData.work_location,
         designation: formData.designation,
         department: formData.department,
@@ -194,7 +193,7 @@ export default function OfferForm({
         if (error) throw error
 
       } else {
-        // CREATE
+        // CREATE - Auto-update stage to offer_extended
         const { data: newOffer, error } = await supabase
           .from('offers')
           .insert([offerData])
@@ -203,7 +202,7 @@ export default function OfferForm({
 
         if (error) throw error
 
-        // Update candidate
+        // ✅ AUTO-UPDATE STAGE TO OFFER_EXTENDED
         await supabase.from('candidates').update({
           current_stage: 'offer_extended',
           offered_ctc: totalCTC,
@@ -217,23 +216,25 @@ export default function OfferForm({
           candidate_id: candidateId,
           activity_type: 'offer_extended',
           activity_title: 'Offer Extended',
-          activity_description: `Offer of Rs.${totalCTC} extended (Fixed: Rs.${fixedCTC}, Variable: Rs.${variableCTC}). Expected revenue: Rs.${expectedRevenue.toFixed(2)}L`,
+          activity_description: `Offer of Rs.${totalCTC} extended (Fixed: Rs.${fixedCTC}, Variable: Rs.${variableCTC}). Fee: ${feePercentage}%. Expected revenue: Rs.${(expectedRevenue / 100000).toFixed(2)}L. Stage updated to Offer Extended.`,
           metadata: {
             offer_id: newOffer.id,
             total_ctc: totalCTC,
             fixed_ctc: fixedCTC,
-            expected_revenue: expectedRevenue
+            fee_percentage: feePercentage,
+            expected_revenue: expectedRevenue / 100000
           },
           performed_by: user.id,
         }])
       }
 
-      const successMsg = `Offer ${isEditMode ? 'updated' : 'created'} successfully!`
+      const successMsg = `Offer ${isEditMode ? 'updated' : 'created'} successfully!${!isEditMode ? ' Stage updated to Offer Extended.' : ''}`
       setFormSuccess(successMsg)
+      
       if (onSuccess) {
-        onSuccess()
+        setTimeout(() => onSuccess(), 1500)
       } else {
-        router.back()
+        setTimeout(() => router.back(), 1500)
       }
 
     } catch (err: unknown) {
@@ -260,6 +261,7 @@ export default function OfferForm({
       {formSuccess && (
         <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded">{formSuccess}</div>
       )}
+      
       {/* Candidate Info Banner */}
       {candidate && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -290,7 +292,7 @@ export default function OfferForm({
       {/* CTC Breakdown */}
       <div className="card">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">CTC Breakdown</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Fixed CTC (INR) *
@@ -327,11 +329,30 @@ export default function OfferForm({
               Bonus, incentives (not included in billing)
             </p>
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Fee Percentage (%) *
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              name="fee_percentage"
+              value={formData.fee_percentage}
+              onChange={handleChange}
+              className="input"
+              placeholder="e.g., 8.33"
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Client-specific fee percentage
+            </p>
+          </div>
         </div>
 
         {/* Summary */}
         <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-          <div className="grid grid-cols-3 gap-4 text-center">
+          <div className="grid grid-cols-4 gap-4 text-center">
             <div>
               <div className="text-sm text-gray-600">Total CTC</div>
               <div className="text-2xl font-bold text-gray-900">
@@ -345,9 +366,15 @@ export default function OfferForm({
               </div>
             </div>
             <div>
+              <div className="text-sm text-gray-600">Fee %</div>
+              <div className="text-2xl font-bold text-purple-600">
+                {parseFloat(formData.fee_percentage || '8.33').toFixed(2)}%
+              </div>
+            </div>
+            <div>
               <div className="text-sm text-gray-600">Expected Revenue</div>
               <div className="text-2xl font-bold text-green-600">
-                Rs.{calculateExpectedRevenue().toFixed(2)}
+                Rs.{(calculateExpectedRevenue() / 100000).toFixed(2)}L
               </div>
             </div>
           </div>
@@ -479,13 +506,28 @@ export default function OfferForm({
       {client && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-start gap-2">
-            <span className="text-2xl">!</span>
+            <span className="text-2xl">ℹ️</span>
             <div>
               <h4 className="font-semibold text-yellow-900">Replacement Guarantee Period</h4>
               <p className="text-sm text-yellow-800 mt-1">
                 Client: <strong>{client.company_name}</strong> has a{' '}
                 <strong>{client.replacement_guarantee_days || 90} days</strong> guarantee period.
                 Revenue will be provisional until this period ends.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stage Update Notice */}
+      {!isEditMode && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-start gap-2">
+            <span className="text-2xl">✓</span>
+            <div>
+              <h4 className="font-semibold text-blue-900">Auto Stage Update</h4>
+              <p className="text-sm text-blue-800 mt-1">
+                When you create this offer, the candidate stage will automatically update to <strong>Offer Extended</strong>.
               </p>
             </div>
           </div>

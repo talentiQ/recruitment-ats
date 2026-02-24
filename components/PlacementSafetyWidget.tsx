@@ -187,7 +187,7 @@ export default function PlacementSafetyWidget({ userRole, userId, teamId }: Plac
                     {getDaysLabel(placement.days_remaining)} left
                   </span>
                   <span className="text-gray-500">
-                    Revenue: ₹{placement.candidates?.revenue_earned?.toFixed(2)}L
+                    Revenue: ₹{placement.candidates?.revenue_earned?.toFixed(1)}
                   </span>
                   {placement.last_followup_date && (
                     <span className="text-gray-500">

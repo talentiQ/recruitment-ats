@@ -51,22 +51,29 @@ export default function CandidateTimeline({ candidateId }: CandidateTimelineProp
   }
 
   const getActivityIcon = (type: string) => {
-    const icons: { [key: string]: string } = {
-      resume_uploaded: '📄',
-      candidate_created: '✨',
-      stage_changed: '🔄',
-      submitted_to_client: '📧',
-      interview_scheduled: '📅',
-      interview_completed: '✅',
-      interview_feedback: '💬',
-      offer_made: '💰',
-      offer_accepted: '🎉',
-      joined: '🎊',
-      note_added: '📝',
-      reassigned: '👥',
-      duplicate_detected: '⚠️',
+    const iconMap: { [key: string]: { color: string; symbol: string } } = {
+      resume_uploaded: { color: 'bg-gray-500', symbol: 'D' },
+      candidate_created: { color: 'bg-blue-500', symbol: '+' },
+      stage_changed: { color: 'bg-yellow-500', symbol: '→' },
+      submitted_to_client: { color: 'bg-purple-500', symbol: 'S' },
+      interview_scheduled: { color: 'bg-indigo-500', symbol: 'I' },
+      interview_completed: { color: 'bg-green-500', symbol: '✓' },
+      interview_feedback: { color: 'bg-teal-500', symbol: 'F' },
+      offer_made: { color: 'bg-emerald-500', symbol: '$' },
+      offer_accepted: { color: 'bg-lime-500', symbol: '✓' },
+      joined: { color: 'bg-cyan-500', symbol: 'J' },
+      note_added: { color: 'bg-amber-500', symbol: 'N' },
+      reassigned: { color: 'bg-pink-500', symbol: 'R' },
+      duplicate_detected: { color: 'bg-red-500', symbol: '!' },
     }
-    return icons[type] || '•'
+    
+    const config = iconMap[type] || { color: 'bg-gray-400', symbol: '•' }
+    
+    return (
+      <div className={`w-10 h-10 rounded-full ${config.color} flex items-center justify-center text-white font-bold flex-shrink-0`}>
+        {config.symbol}
+      </div>
+    )
   }
 
   const formatDate = (dateString: string) => {
@@ -113,7 +120,7 @@ export default function CandidateTimeline({ candidateId }: CandidateTimelineProp
         <div key={item.id} className="flex gap-4">
           {/* Timeline line */}
           <div className="flex flex-col items-center">
-            <div className="text-2xl">{getActivityIcon(item.activity_type)}</div>
+            {getActivityIcon(item.activity_type)}
             {index < timeline.length - 1 && (
               <div className="w-0.5 flex-1 bg-gray-200 mt-2"></div>
             )}

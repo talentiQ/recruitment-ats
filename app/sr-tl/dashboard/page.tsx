@@ -34,7 +34,7 @@ export default function SrTeamLeaderDashboard() {
       // This includes TLs who report directly + Recruiters who report directly
       const { data: directReports, error: reportsError } = await supabase
         .from('users')
-        .select('id, role, team_id, full_name')
+        .select('id, role, team_id, full_name, monthly_target, quarterly_target, annual_target')
         .eq('reports_to', user.id)  // ✅ ONLY direct reports
         .eq('is_active', true)
 
@@ -45,13 +45,13 @@ export default function SrTeamLeaderDashboard() {
       console.log('Direct reports to Sr.TL:', directReports)
 
       // Also get recruiters who report to TLs under this Sr.TL
-      const tlIds = directReports?.filter(m => m.role === 'team_leader').map(m => m.id) || []
+      const tlIds = directReports?.filter((m: any) => m.role === 'team_leader').map((m: any) => m.id) || []
       
       let indirectRecruiters: any[] = []
       if (tlIds.length > 0) {
         const { data: recruiterReports, error: recError } = await supabase
           .from('users')
-          .select('id, role, team_id, full_name')
+          .select('id, role, team_id, full_name, monthly_target, quarterly_target, annual_target')
           .in('reports_to', tlIds)  // Recruiters reporting to TLs
           .eq('role', 'recruiter')
           .eq('is_active', true)
@@ -68,11 +68,11 @@ export default function SrTeamLeaderDashboard() {
 
       console.log('Total team members under Sr.TL:', allTeamMembers.length)
 
-      const totalTLs = allTeamMembers.filter(m => m.role === 'team_leader').length
-      const totalRecruiters = allTeamMembers.filter(m => m.role === 'recruiter').length
+      const totalTLs = allTeamMembers.filter((m: any) => m.role === 'team_leader').length
+      const totalRecruiters = allTeamMembers.filter((m: any) => m.role === 'recruiter').length
 
       // Get candidates for this Sr.TL's team
-      const memberIds = allTeamMembers.map(m => m.id)
+      const memberIds = allTeamMembers.map((m: any) => m.id)
       
       const { count: candidatesCount } = await supabase
         .from('candidates')
@@ -112,8 +112,46 @@ export default function SrTeamLeaderDashboard() {
 
       // Get member performance for team members only
       if (allTeamMembers.length > 0) {
+        // Calculate date ranges for revenue
+        const now = new Date()
+        const currentYear = now.getFullYear()
+        const currentMonth = now.getMonth() + 1
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
+
+        // Business quarter
+        let businessQuarter: number
+        if (currentMonth >= 4 && currentMonth <= 6) businessQuarter = 1
+        else if (currentMonth >= 7 && currentMonth <= 9) businessQuarter = 2
+        else if (currentMonth >= 10 && currentMonth <= 12) businessQuarter = 3
+        else businessQuarter = 4
+
+        let quarterStartMonth: number, quarterEndMonth: number
+        let quarterStartYear: number, quarterEndYear: number
+
+        if (businessQuarter === 1) {
+          quarterStartMonth = 4; quarterEndMonth = 7
+          quarterStartYear = currentYear; quarterEndYear = currentYear
+        } else if (businessQuarter === 2) {
+          quarterStartMonth = 7; quarterEndMonth = 10
+          quarterStartYear = currentYear; quarterEndYear = currentYear
+        } else if (businessQuarter === 3) {
+          quarterStartMonth = 10; quarterEndMonth = 1
+          quarterStartYear = currentYear; quarterEndYear = currentYear + 1
+        } else {
+          quarterStartMonth = 1; quarterEndMonth = 4
+          quarterStartYear = currentYear; quarterEndYear = currentYear
+        }
+
+        const quarterStart = `${quarterStartYear}-${String(quarterStartMonth).padStart(2, '0')}-01`
+        const quarterEnd = `${quarterEndYear}-${String(quarterEndMonth).padStart(2, '0')}-01`
+
+        // Fiscal year
+        const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
+        const annualStart = `${fiscalYearStart}-04-01`
+        const annualEnd = `${fiscalYearStart + 1}-04-01`
+
         const performanceData = await Promise.all(
-          allTeamMembers.map(async (member) => {
+          allTeamMembers.map(async (member: any) => {
             const { count: candidatesCount } = await supabase
               .from('candidates')
               .select('*', { count: 'exact', head: true })
@@ -132,6 +170,42 @@ export default function SrTeamLeaderDashboard() {
               .eq('assigned_to', member.id)
               .in('current_stage', ['screening', 'interview_scheduled', 'interview_completed', 'offer_extended', 'offer_accepted'])
 
+            // Get revenue data
+            const { data: monthlyRevData } = await supabase
+              .from('candidates')
+              .select('revenue_earned')
+              .eq('assigned_to', member.id)
+              .eq('current_stage', 'joined')
+              .gte('date_joined', monthStart)
+
+            const { data: quarterlyRevData } = await supabase
+              .from('candidates')
+              .select('revenue_earned')
+              .eq('assigned_to', member.id)
+              .eq('current_stage', 'joined')
+              .gte('date_joined', quarterStart)
+              .lt('date_joined', quarterEnd)
+
+            const { data: annualRevData } = await supabase
+              .from('candidates')
+              .select('revenue_earned')
+              .eq('assigned_to', member.id)
+              .eq('current_stage', 'joined')
+              .gte('date_joined', annualStart)
+              .lt('date_joined', annualEnd)
+
+            const monthlyRevenue = monthlyRevData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+            const quarterlyRevenue = quarterlyRevData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+            const annualRevenue = annualRevData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+
+            // Get targets from users table
+            const monthlyTarget = member.monthly_target ? Number(member.monthly_target) / 100000 : 
+                                (member.role === 'team_leader' ? 5 : 2)
+            const quarterlyTarget = member.quarterly_target ? Number(member.quarterly_target) / 100000 : 
+                                   (monthlyTarget * 3)
+            const annualTarget = member.annual_target ? Number(member.annual_target) / 100000 : 
+                                (monthlyTarget * 12)
+
             return {
               user_id: member.id,
               user_name: member.full_name,
@@ -139,11 +213,20 @@ export default function SrTeamLeaderDashboard() {
               candidates_count: candidatesCount || 0,
               this_month_joinings: monthJoinings || 0,
               pipeline_count: pipelineCount || 0,
+              monthly_revenue: monthlyRevenue,
+              quarterly_revenue: quarterlyRevenue,
+              annual_revenue: annualRevenue,
+              monthly_target: monthlyTarget,
+              quarterly_target: quarterlyTarget,
+              annual_target: annualTarget,
+              monthly_achievement: monthlyTarget > 0 ? Math.round((monthlyRevenue / monthlyTarget) * 100) : 0,
+              quarterly_achievement: quarterlyTarget > 0 ? Math.round((quarterlyRevenue / quarterlyTarget) * 100) : 0,
+              annual_achievement: annualTarget > 0 ? Math.round((annualRevenue / annualTarget) * 100) : 0,
             }
           })
         )
 
-        setMemberPerformance(performanceData.filter(p => p.candidates_count > 0))
+        setMemberPerformance(performanceData)
       }
 
     } catch (error) {
@@ -151,6 +234,10 @@ export default function SrTeamLeaderDashboard() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const formatRevenue = (amount: number) => {
+    return `₹${(amount * 100000).toLocaleString('en-IN')}`
   }
 
   const getPerformanceBadge = (joinings: number) => {
@@ -170,6 +257,18 @@ export default function SrTeamLeaderDashboard() {
     )
   }
 
+  // Calculate team totals
+  const teamMonthlyTarget = memberPerformance.reduce((sum, m) => sum + m.monthly_target, 0)
+  const teamMonthlyRevenue = memberPerformance.reduce((sum, m) => sum + m.monthly_revenue, 0)
+  const teamQuarterlyTarget = memberPerformance.reduce((sum, m) => sum + m.quarterly_target, 0)
+  const teamQuarterlyRevenue = memberPerformance.reduce((sum, m) => sum + m.quarterly_revenue, 0)
+  const teamAnnualTarget = memberPerformance.reduce((sum, m) => sum + m.annual_target, 0)
+  const teamAnnualRevenue = memberPerformance.reduce((sum, m) => sum + m.annual_revenue, 0)
+
+  const teamMonthlyAchievement = teamMonthlyTarget > 0 ? Math.round((teamMonthlyRevenue / teamMonthlyTarget) * 100) : 0
+  const teamQuarterlyAchievement = teamQuarterlyTarget > 0 ? Math.round((teamQuarterlyRevenue / teamQuarterlyTarget) * 100) : 0
+  const teamAnnualAchievement = teamAnnualTarget > 0 ? Math.round((teamAnnualRevenue / teamAnnualTarget) * 100) : 0
+
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
@@ -178,7 +277,7 @@ export default function SrTeamLeaderDashboard() {
           <h1 className="text-3xl font-bold mb-2">
             Welcome, {user?.full_name}
           </h1>
-          <p className="text-blue-100">Sr. Team Leader Dashboard - Your Team Performance</p>
+          <p className="text-blue-100">Senior Leader Dashboard - Your Team Performance</p>
         </div>
 
         {/* Team Statistics */}
@@ -214,6 +313,118 @@ export default function SrTeamLeaderDashboard() {
             <div className="text-3xl font-bold text-purple-600">{teamStats.total_team_members || 0}</div>
           </div>
         </div>
+
+        {/* Team Members Target vs Achievement */}
+        {memberPerformance.length > 0 && (
+          <div className="card">
+            <h3 className="text-xl font-bold text-gray-900 mb-6">📊 Team Members Target vs Achievement</h3>
+            
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Member</th>
+                    <th className="text-center">Role</th>
+                    <th className="text-center">Monthly Target</th>
+                    <th className="text-center">Monthly Revenue</th>
+                    <th className="text-center">Achievement</th>
+                    <th className="text-center">Quarterly Target</th>
+                    <th className="text-center">Quarterly Revenue</th>
+                    <th className="text-center">Achievement</th>
+                    <th className="text-center">Annual Target</th>
+                    <th className="text-center">Annual Revenue</th>
+                    <th className="text-center">Achievement</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {memberPerformance.map(member => (
+                    <tr key={member.user_id}>
+                      <td className="font-medium">{member.user_name}</td>
+                      <td className="text-center">
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          member.role === 'team_leader' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {member.role === 'team_leader' ? 'TL' : 'Recruiter'}
+                        </span>
+                      </td>
+                      <td className="text-center font-semibold">{formatRevenue(member.monthly_target)}</td>
+                      <td className="text-center text-blue-600 font-semibold">{formatRevenue(member.monthly_revenue)}</td>
+                      <td className="text-center">
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                          member.monthly_achievement >= 100 ? 'bg-green-100 text-green-800' :
+                          member.monthly_achievement >= 75 ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {member.monthly_achievement}%
+                        </span>
+                      </td>
+                      <td className="text-center font-semibold">{formatRevenue(member.quarterly_target)}</td>
+                      <td className="text-center text-blue-600 font-semibold">{formatRevenue(member.quarterly_revenue)}</td>
+                      <td className="text-center">
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                          member.quarterly_achievement >= 100 ? 'bg-green-100 text-green-800' :
+                          member.quarterly_achievement >= 75 ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {member.quarterly_achievement}%
+                        </span>
+                      </td>
+                      <td className="text-center font-semibold">{formatRevenue(member.annual_target)}</td>
+                      <td className="text-center text-blue-600 font-semibold">{formatRevenue(member.annual_revenue)}</td>
+                      <td className="text-center">
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                          member.annual_achievement >= 100 ? 'bg-green-100 text-green-800' :
+                          member.annual_achievement >= 75 ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {member.annual_achievement}%
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {/* Team Total Row */}
+                  <tr className="bg-gradient-to-br from-blue-50 to-indigo-50 font-bold border-t-2 border-blue-300">
+                    <td>TEAM TOTAL</td>
+                    <td className="text-center">-</td>
+                    <td className="text-center text-blue-900">{formatRevenue(teamMonthlyTarget)}</td>
+                    <td className="text-center text-blue-900">{formatRevenue(teamMonthlyRevenue)}</td>
+                    <td className="text-center">
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                        teamMonthlyAchievement >= 100 ? 'bg-green-600 text-white' :
+                        teamMonthlyAchievement >= 75 ? 'bg-yellow-600 text-white' :
+                        'bg-red-600 text-white'
+                      }`}>
+                        {teamMonthlyAchievement}%
+                      </span>
+                    </td>
+                    <td className="text-center text-blue-900">{formatRevenue(teamQuarterlyTarget)}</td>
+                    <td className="text-center text-blue-900">{formatRevenue(teamQuarterlyRevenue)}</td>
+                    <td className="text-center">
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                        teamQuarterlyAchievement >= 100 ? 'bg-green-600 text-white' :
+                        teamQuarterlyAchievement >= 75 ? 'bg-yellow-600 text-white' :
+                        'bg-red-600 text-white'
+                      }`}>
+                        {teamQuarterlyAchievement}%
+                      </span>
+                    </td>
+                    <td className="text-center text-blue-900">{formatRevenue(teamAnnualTarget)}</td>
+                    <td className="text-center text-blue-900">{formatRevenue(teamAnnualRevenue)}</td>
+                    <td className="text-center">
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                        teamAnnualAchievement >= 100 ? 'bg-green-600 text-white' :
+                        teamAnnualAchievement >= 75 ? 'bg-yellow-600 text-white' :
+                        'bg-red-600 text-white'
+                      }`}>
+                        {teamAnnualAchievement}%
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Team Performance */}
         <div className="card">
