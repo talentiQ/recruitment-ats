@@ -44,13 +44,16 @@ export default function RecruiterDashboard() {
     }
   }, [])
 
+  // FIX: Load monthly target FIRST, then pass its value to loadRevenueStats
+  // This prevents the race condition where both were running in parallel via Promise.all
   const loadDashboard = async (userId: string) => {
     setLoading(true)
     try {
+      const target = await loadMonthlyTarget(userId)
+
       await Promise.all([
         loadStats(userId),
-        loadRevenueStats(userId),
-        loadMonthlyTarget(userId),
+        loadRevenueStats(userId, target),
         loadAIPrediction(userId),
         loadAchievements(userId),
         loadRecentCandidates(userId),
@@ -87,11 +90,13 @@ export default function RecruiterDashboard() {
     })
   }
 
-  const loadRevenueStats = async (userId: string) => {
+  // FIX: Accept userMonthlyTarget as a parameter instead of reading from state
+  // (state is not guaranteed to be set yet when this runs)
+  const loadRevenueStats = async (userId: string, userMonthlyTarget: number) => {
     const now = new Date()
     const currentYear = now.getFullYear()
     const currentMonth = now.getMonth() + 1 // 1-12
-    
+
     // Calculate business quarter (Apr-Mar fiscal year)
     let businessQuarter: number
     if (currentMonth >= 4 && currentMonth <= 6) businessQuarter = 1
@@ -108,35 +113,34 @@ export default function RecruiterDashboard() {
       .gte('date_joined', `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`)
       .lt('date_joined', `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`)
 
-    const monthlyRevenue = monthlyData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+    const monthlyRevenueLakhs = monthlyData?.reduce(
+    (sum, c) => sum + (c.revenue_earned || 0),0) || 0
+    const monthlyRevenue = monthlyRevenueLakhs * 100000
     const monthlyJoinings = monthlyData?.length || 0
+    
 
-    // Get quarterly revenue - FIXED
+    // Get quarterly revenue
     let quarterStartMonth: number
     let quarterEndMonth: number
     let quarterStartYear: number
     let quarterEndYear: number
 
     if (businessQuarter === 1) {
-      // Q1: Apr-Jun
       quarterStartMonth = 4
       quarterEndMonth = 7
       quarterStartYear = currentYear
       quarterEndYear = currentYear
     } else if (businessQuarter === 2) {
-      // Q2: Jul-Sep
       quarterStartMonth = 7
       quarterEndMonth = 10
       quarterStartYear = currentYear
       quarterEndYear = currentYear
     } else if (businessQuarter === 3) {
-      // Q3: Oct-Dec
       quarterStartMonth = 10
-      quarterEndMonth = 1 // Jan of next year
+      quarterEndMonth = 1
       quarterStartYear = currentYear
       quarterEndYear = currentYear + 1
     } else {
-      // Q4: Jan-Mar
       quarterStartMonth = 1
       quarterEndMonth = 4
       quarterStartYear = currentYear
@@ -151,11 +155,12 @@ export default function RecruiterDashboard() {
       .gte('date_joined', `${quarterStartYear}-${String(quarterStartMonth).padStart(2, '0')}-01`)
       .lt('date_joined', `${quarterEndYear}-${String(quarterEndMonth).padStart(2, '0')}-01`)
 
-    const quarterlyRevenue = quarterlyData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
-
+    const quarterlyRevenueLakhs = quarterlyData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+    const quarterlyRevenue = quarterlyRevenueLakhs * 100000
+    
     // Get annual revenue (Apr to Mar fiscal year)
     const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
-    
+
     const { data: annualData } = await supabase
       .from('candidates')
       .select('revenue_earned')
@@ -164,46 +169,39 @@ export default function RecruiterDashboard() {
       .gte('date_joined', `${fiscalYearStart}-04-01`)
       .lt('date_joined', `${fiscalYearStart + 1}-04-01`)
 
-    const annualRevenue = annualData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
-
+    const annualRevenueLakhs = annualData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+    const annualRevenue = annualRevenueLakhs * 100000
     setRevenueStats({
       monthlyRevenue,
-      monthlyTarget: 2, // Default target of 2L, can be made dynamic
+      monthlyTarget: userMonthlyTarget,   // FIX: use the directly passed value
       quarterlyRevenue,
       annualRevenue,
       monthlyJoinings,
-      targetAchieved: monthlyRevenue >= 2,
+      targetAchieved: userMonthlyTarget > 0 ? monthlyRevenue >= userMonthlyTarget : false,
     })
   }
 
-  const loadMonthlyTarget = async (userId: string) => {
-    const currentMonth = new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
-    
-    const { data } = await supabase
-      .from('monthly_targets')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('month_year', currentMonth)
+  // Fetches monthly_target directly from the user's row in the users table.
+  // No month_year filter — monthly_target is a plain column on the user record.
+  const loadMonthlyTarget = async (userId: string): Promise<number> => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('monthly_target')
+      .eq('id', userId)
       .single()
 
-    if (data) {
-      setMonthlyTarget(data)
-    } else {
-      // Create default target
-      const { data: newTarget } = await supabase
-        .from('monthly_targets')
-        .insert([{
-          user_id: userId,
-          month_year: currentMonth,
-          target_joinings: 2,
-          actual_joinings: stats.thisMonth,
-          achievement_percentage: stats.thisMonth > 0 ? (stats.thisMonth / 2 * 100) : 0,
-        }])
-        .select()
-        .single()
-      
-      if (newTarget) setMonthlyTarget(newTarget)
-    }
+    console.log('Monthly target result — data:', data, 'error:', error)
+
+  if (error) {
+    console.error('Monthly target error:', error)
+    return 0
+  }
+
+  if (data && data.monthly_target !== null) {
+    return Number(data.monthly_target)
+  }
+
+    return 0
   }
 
   const loadAIPrediction = async (userId: string) => {
@@ -213,8 +211,7 @@ export default function RecruiterDashboard() {
 
       if (data && !error) {
         setAiPrediction(data)
-        
-        // Save prediction
+
         await supabase.from('ai_predictions').insert([{
           user_id: userId,
           predicted_joinings_this_month: data.predicted_joinings,
@@ -238,20 +235,17 @@ export default function RecruiterDashboard() {
 
     if (data) {
       setAchievements(data)
-      
-      // Pick a random unviewed achievement for motivation
+
       const unviewed = data.filter(a => !a.is_viewed)
       if (unviewed.length > 0) {
         const random = unviewed[Math.floor(Math.random() * unviewed.length)]
         setFeaturedAchievement(random)
-        
-        // Mark as viewed
+
         await supabase
           .from('recruiter_achievements')
           .update({ is_viewed: true })
           .eq('id', random.id)
       } else if (data.length > 0) {
-        // All viewed, pick random from all
         const random = data[Math.floor(Math.random() * data.length)]
         setFeaturedAchievement(random)
       }
@@ -295,7 +289,7 @@ export default function RecruiterDashboard() {
   }
 
   const formatRevenue = (amount: number) => {
-    return `Rs. ${(amount * 100000).toLocaleString('en-IN')}`
+    return `Rs. ${(amount).toLocaleString('en-IN')}`
   }
 
   if (loading) {
@@ -308,8 +302,8 @@ export default function RecruiterDashboard() {
     )
   }
 
-  const achievementPercentage = revenueStats.monthlyTarget > 0 
-    ? (revenueStats.monthlyRevenue / revenueStats.monthlyTarget * 100) 
+  const achievementPercentage = revenueStats.monthlyTarget > 0
+    ? (revenueStats.monthlyRevenue / revenueStats.monthlyTarget * 100)
     : 0
 
   return (
@@ -318,9 +312,9 @@ export default function RecruiterDashboard() {
         {/* Welcome Section with Featured Achievement */}
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Welcome back, {user?.full_name?.split(' ')[0]}! 👋
+            Welcome Back, {user?.full_name?.split(' ')[0]}! 👋
           </h1>
-          
+
           {featuredAchievement && (
             <div className={`inline-block bg-gradient-to-r ${getAchievementBadgeStyle(featuredAchievement.badge_color)} text-white rounded-lg p-6 mt-3 shadow-lg`}>
               <div className="flex items-center gap-4 justify-center">
@@ -345,12 +339,12 @@ export default function RecruiterDashboard() {
 
         {/* Monthly Target & AI Prediction */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Monthly Target Progress - MODIFIED */}
+          {/* Monthly Target Progress */}
           <div className="card">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
               📊 Monthly Target Progress
             </h3>
-            
+
             <div className="space-y-4">
               {/* Revenue Section */}
               <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-4 border-2 border-blue-200">
@@ -360,26 +354,30 @@ export default function RecruiterDashboard() {
                     {formatRevenue(revenueStats.monthlyRevenue)}
                   </div>
                   <div className="text-xs text-blue-600 mt-1">
-                    Target: {formatRevenue(revenueStats.monthlyTarget)}
+                    {revenueStats.monthlyTarget > 0
+                      ? `Target: ${formatRevenue(revenueStats.monthlyTarget)}`
+                      : 'No target set for this month'}
                   </div>
                 </div>
 
-                {/* Progress Bar */}
-                <div className="relative">
-                  <div className="w-full bg-blue-200 rounded-full h-6">
-                    <div
-                      className={`h-6 rounded-full transition-all duration-500 flex items-center justify-center text-white text-sm font-bold ${getProgressColor(achievementPercentage)}`}
-                      style={{ width: `${Math.min(achievementPercentage, 100)}%` }}
-                    >
-                      {achievementPercentage >= 20 && `${Math.round(achievementPercentage)}%`}
+                {/* Progress Bar — only show if target exists */}
+                {revenueStats.monthlyTarget > 0 && (
+                  <div className="relative">
+                    <div className="w-full bg-blue-200 rounded-full h-6">
+                      <div
+                        className={`h-6 rounded-full transition-all duration-500 flex items-center justify-center text-white text-sm font-bold ${getProgressColor(achievementPercentage)}`}
+                        style={{ width: `${Math.min(achievementPercentage, 100)}%` }}
+                      >
+                        {achievementPercentage >= 20 && `${Math.round(achievementPercentage)}%`}
+                      </div>
                     </div>
+                    {achievementPercentage < 20 && (
+                      <div className="text-center mt-1 text-sm font-bold text-blue-700">
+                        {Math.round(achievementPercentage)}%
+                      </div>
+                    )}
                   </div>
-                  {achievementPercentage < 20 && (
-                    <div className="text-center mt-1 text-sm font-bold text-blue-700">
-                      {Math.round(achievementPercentage)}%
-                    </div>
-                  )}
-                </div>
+                )}
 
                 {/* Achievement Badge */}
                 {revenueStats.targetAchieved && (
@@ -392,7 +390,7 @@ export default function RecruiterDashboard() {
                 )}
               </div>
 
-              {/* Joinings & Additional Stats */}
+              {/* Joinings & Quarterly Stats */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-purple-50 rounded-lg p-3 text-center border border-purple-200">
                   <div className="text-2xl font-bold text-purple-900">
@@ -415,31 +413,33 @@ export default function RecruiterDashboard() {
                   {formatRevenue(revenueStats.annualRevenue)}
                 </div>
                 <div className="text-xs text-orange-600 mt-1">
-                  {new Date().getMonth() >= 3 
+                  {new Date().getMonth() >= 3
                     ? `Apr ${new Date().getFullYear()} - Mar ${new Date().getFullYear() + 1}`
                     : `Apr ${new Date().getFullYear() - 1} - Mar ${new Date().getFullYear()}`
                   }
                 </div>
               </div>
 
-              {/* Achievement Tier Badges */}
-              <div className="grid grid-cols-3 gap-2">
-                <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 100 ? 'bg-blue-100 border-2 border-blue-500' : 'bg-gray-50'}`}>
-                  <div className="text-2xl">⭐</div>
-                  <div className="text-xs font-bold mt-1">100%</div>
-                  <div className="text-xs text-gray-600">Star</div>
+              {/* Achievement Tier Badges — only show if target exists */}
+              {revenueStats.monthlyTarget > 0 && (
+                <div className="grid grid-cols-3 gap-2">
+                  <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 100 ? 'bg-blue-100 border-2 border-blue-500' : 'bg-gray-50'}`}>
+                    <div className="text-2xl">⭐</div>
+                    <div className="text-xs font-bold mt-1">100%</div>
+                    <div className="text-xs text-gray-600">Star</div>
+                  </div>
+                  <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 150 ? 'bg-green-100 border-2 border-green-500' : 'bg-gray-50'}`}>
+                    <div className="text-2xl">🚀</div>
+                    <div className="text-xs font-bold mt-1">150%</div>
+                    <div className="text-xs text-gray-600">Achiever</div>
+                  </div>
+                  <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 200 ? 'bg-purple-100 border-2 border-purple-500' : 'bg-gray-50'}`}>
+                    <div className="text-2xl">👑</div>
+                    <div className="text-xs font-bold mt-1">200%</div>
+                    <div className="text-xs text-gray-600">Legend</div>
+                  </div>
                 </div>
-                <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 150 ? 'bg-green-100 border-2 border-green-500' : 'bg-gray-50'}`}>
-                  <div className="text-2xl">🚀</div>
-                  <div className="text-xs font-bold mt-1">150%</div>
-                  <div className="text-xs text-gray-600">Achiever</div>
-                </div>
-                <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 200 ? 'bg-purple-100 border-2 border-purple-500' : 'bg-gray-50'}`}>
-                  <div className="text-2xl">👑</div>
-                  <div className="text-xs font-bold mt-1">200%</div>
-                  <div className="text-xs text-gray-600">Legend</div>
-                </div>
-              </div>
+              )}
             </div>
           </div>
 
@@ -448,7 +448,7 @@ export default function RecruiterDashboard() {
             <h3 className="text-lg font-semibold text-purple-900 mb-4 text-center">
               🤖 AI-Powered Prediction
             </h3>
-            
+
             {aiPrediction && (
               <div className="space-y-4">
                 <div className="text-center">
@@ -483,15 +483,15 @@ export default function RecruiterDashboard() {
                   </div>
                 </div>
 
-                {aiPrediction.predicted_joinings >= monthlyTarget?.target_joinings && (
+                {monthlyTarget && aiPrediction.predicted_joinings >= monthlyTarget?.target_joinings && (
                   <div className="bg-green-100 border border-green-300 rounded-lg p-3 text-center">
                     <div className="text-sm font-bold text-green-900">
                       🎯 You&apos;re on track to hit your target!
                     </div>
                   </div>
                 )}
-                
-                {aiPrediction.predicted_joinings < monthlyTarget?.target_joinings && (
+
+                {monthlyTarget && aiPrediction.predicted_joinings < monthlyTarget?.target_joinings && (
                   <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-3 text-center">
                     <div className="text-sm font-bold text-yellow-900">
                       ⚡ {monthlyTarget.target_joinings - aiPrediction.predicted_joinings} more needed to hit target!
@@ -558,7 +558,7 @@ export default function RecruiterDashboard() {
           </div>
         </div>
 
-        {/* Recent Achievements - KEPT (More informative than Personal Records) */}
+        {/* Recent Achievements */}
         {achievements.length > 0 && (
           <div className="card">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
