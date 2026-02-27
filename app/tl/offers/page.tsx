@@ -243,7 +243,7 @@ export default function TLOffersPage() {
                     offer.safetyStatus === 'critical' ? 'border-2 border-red-300 bg-red-50' :
                     offer.safetyStatus === 'at_risk' ? 'border-2 border-yellow-300 bg-yellow-50' : ''
                   }`}
-                  onClick={() => router.push(`/tl/candidates/${offer.candidate_id}`)}
+                  onClick={() => router.push(`/tl/offers/${offer.id}`)}
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">

@@ -1,3 +1,4 @@
+//app/sr-tl/jobs/[id]/add-candidate/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'

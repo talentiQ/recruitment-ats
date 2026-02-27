@@ -1,4 +1,4 @@
-// app/recruiter/offers/[id]/page.tsx - FIXED WITH DYNAMIC FEE%
+// app/tl/offers/[id]/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-export default function RecruiterOfferDetailPage() {
+export default function TLOfferDetailPage() {
   const params = useParams()
   const router = useRouter()
   const offerId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -232,7 +232,7 @@ export default function RecruiterOfferDetailPage() {
               Use the candidate detail page to mark as joined or renege.
             </p>
             <button
-              onClick={() => router.push(`/recruiter/candidates/${offer.candidates.id}`)}
+              onClick={() => router.push(`/tl/candidates/${offer.candidates.id}`)}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium"
             >
               Go to Candidate Details

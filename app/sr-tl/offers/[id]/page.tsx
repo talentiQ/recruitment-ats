@@ -1,12 +1,13 @@
-// app/recruiter/offers/[id]/page.tsx - FIXED WITH DYNAMIC FEE%
+// app/sr-tl/offers/[id]/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import OfferForm from '@/components/OfferForm'
 
-export default function RecruiterOfferDetailPage() {
+export default function SrTLOfferDetailPage() {
   const params = useParams()
   const router = useRouter()
   const offerId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -15,6 +16,7 @@ export default function RecruiterOfferDetailPage() {
   const [offer, setOffer] = useState<any>(null)
   const [user, setUser] = useState<any>(null)
   const [updating, setUpdating] = useState(false)
+  const [showEditForm, setShowEditForm] = useState(false)
 
   useEffect(() => {
     const userData = localStorage.getItem('user')
@@ -40,8 +42,10 @@ export default function RecruiterOfferDetailPage() {
             date_joined,
             guarantee_period_ends,
             jobs (
+              id,
               job_title,
               job_code,
+              client_id,
               clients (
                 id,
                 company_name,
@@ -149,6 +153,11 @@ export default function RecruiterOfferDetailPage() {
     return badges[status] || 'bg-gray-100 text-gray-800'
   }
 
+  const handleEditSuccess = () => {
+    setShowEditForm(false)
+    loadOffer()
+  }
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -176,6 +185,33 @@ export default function RecruiterOfferDetailPage() {
   const expectedRevenue = ((offer.fixed_ctc * feePercentage / 100) / 100000).toFixed(2)
   const guaranteeDays = offer.candidates?.jobs?.clients?.replacement_guarantee_days || 90
 
+  // Show edit form
+  if (showEditForm) {
+    return (
+      <DashboardLayout>
+        <div className="max-w-4xl mx-auto space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <button onClick={() => setShowEditForm(false)} className="text-gray-600 hover:text-gray-900">
+                ← Cancel Edit
+              </button>
+              <h2 className="text-2xl font-bold text-gray-900">Edit Offer</h2>
+            </div>
+          </div>
+          
+          <OfferForm
+            candidateId={offer.candidate_id}
+            candidate={offer.candidates}
+            existingOffer={offer}
+            isEditMode={true}
+            onSuccess={handleEditSuccess}
+            onCancel={() => setShowEditForm(false)}
+          />
+        </div>
+      </DashboardLayout>
+    )
+  }
+
   return (
     <DashboardLayout>
       <div className="max-w-4xl mx-auto space-y-6">
@@ -197,9 +233,19 @@ export default function RecruiterOfferDetailPage() {
               </p>
             </div>
           </div>
-          <span className={`px-4 py-2 rounded-full text-sm font-bold ${getStatusBadge(offer.status)}`}>
-            {offer.status.toUpperCase()}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className={`px-4 py-2 rounded-full text-sm font-bold ${getStatusBadge(offer.status)}`}>
+              {offer.status.toUpperCase()}
+            </span>
+            {offer.status === 'extended' && (
+              <button
+                onClick={() => setShowEditForm(true)}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium text-sm"
+              >
+                ✏️ Edit Offer
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Action Buttons */}
@@ -232,7 +278,7 @@ export default function RecruiterOfferDetailPage() {
               Use the candidate detail page to mark as joined or renege.
             </p>
             <button
-              onClick={() => router.push(`/recruiter/candidates/${offer.candidates.id}`)}
+              onClick={() => router.push(`/sr-tl/candidates/${offer.candidates.id}`)}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium"
             >
               Go to Candidate Details
