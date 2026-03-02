@@ -1,4 +1,4 @@
-// app/tl/offers/page.tsx - UPDATED WITH DYNAMIC FEE%
+// app/tl/offers/page.tsx - FIXED: Shows only TL's direct team offers
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -18,23 +18,31 @@ export default function TLOffersPage() {
     if (userData) {
       const parsedUser = JSON.parse(userData)
       setUser(parsedUser)
-      loadOffers(parsedUser.team_id)
+      loadOffers(parsedUser)
     }
-
-    const interval = setInterval(() => {
-      if (user) loadOffers(user.team_id)
-    }, 120000)
-
-    return () => clearInterval(interval)
   }, [filter])
 
-  const loadOffers = async (teamId: string) => {
+  const loadOffers = async (currentUser: any) => {
     setLoading(true)
     try {
+      // Step 1: Get only direct recruiters reporting to this TL
+      const { data: recruiters } = await supabase
+        .from('users')
+        .select('id')
+        .eq('reports_to', currentUser.id)
+        .eq('role', 'recruiter')
+
+      // TL herself + her direct recruiters only
+      const myTeamMemberIds = [
+        currentUser.id,
+        ...(recruiters?.map((r: any) => r.id) || [])
+      ]
+
+      // Step 2: Get candidates created by these specific users only
       const { data: teamCandidates } = await supabase
         .from('candidates')
         .select('id')
-        .eq('team_id', teamId)
+        .in('created_by', myTeamMemberIds)
 
       if (!teamCandidates || teamCandidates.length === 0) {
         setOffers([])
@@ -42,7 +50,7 @@ export default function TLOffersPage() {
         return
       }
 
-      const candidateIds = teamCandidates.map(c => c.id)
+      const candidateIds = teamCandidates.map((c: any) => c.id)
 
       let query = supabase
         .from('offers')
@@ -77,7 +85,7 @@ export default function TLOffersPage() {
 
       if (error) throw error
 
-      const enhanced = data?.map(offer => {
+      const enhanced = data?.map((offer: any) => {
         let daysRemaining = null
         let safetyStatus = null
 
@@ -85,7 +93,7 @@ export default function TLOffersPage() {
           daysRemaining = Math.max(0, Math.floor(
             (new Date(offer.candidates.guarantee_period_ends).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
           ))
-          
+
           if (offer.candidates.placement_status === 'safe') {
             safetyStatus = 'safe'
           } else if (daysRemaining <= 7) {
@@ -132,7 +140,7 @@ export default function TLOffersPage() {
   }
 
   const totalRevenue = offers.filter(o => o.status === 'joined')
-    .reduce((sum, o) => sum + ((o.fixed_ctc * (o.revenue_percentage || 8.33) / 100) / 100000), 0)
+    .reduce((sum, o) => sum + ((o.fixed_ctc * (o.revenue_percentage || 8.33) / 100)), 0)
 
   const counts = {
     all: offers.length,
@@ -196,29 +204,27 @@ export default function TLOffersPage() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="text-center p-4 bg-white rounded-lg">
                 <div className="text-sm text-gray-600">Total Revenue</div>
-                <div className="text-2xl font-bold text-blue-900">₹{totalRevenue.toFixed(2)}L</div>
+                <div className="text-2xl font-bold text-blue-900">₹{totalRevenue.toFixed(2)}</div>
               </div>
               <div className="text-center p-4 bg-red-50 rounded-lg border-2 border-red-200">
                 <div className="text-sm text-red-600">🔴 Critical</div>
-                <div className="text-2xl font-bold text-red-900">
-                  {criticalPlacements.length}
-                </div>
-                <div className="text-xs text-red-600 mt-1">₹{criticalRevenue.toFixed(2)}L</div>
+                <div className="text-2xl font-bold text-red-900">{criticalPlacements.length}</div>
+                <div className="text-xs text-red-600 mt-1">₹{criticalRevenue.toFixed(2)}</div>
               </div>
               <div className="text-center p-4 bg-yellow-50 rounded-lg border-2 border-yellow-200">
                 <div className="text-sm text-yellow-600">🟡 At Risk</div>
                 <div className="text-2xl font-bold text-yellow-900">{atRiskPlacements.length}</div>
-                <div className="text-xs text-yellow-600 mt-1">₹{atRiskRevenue.toFixed(2)}L</div>
+                <div className="text-xs text-yellow-600 mt-1">₹{atRiskRevenue.toFixed(2)}</div>
               </div>
               <div className="text-center p-4 bg-blue-50 rounded-lg border-2 border-blue-200">
                 <div className="text-sm text-blue-600">🟢 Monitoring</div>
                 <div className="text-2xl font-bold text-blue-900">{monitoringPlacements.length}</div>
-                <div className="text-xs text-blue-600 mt-1">₹{monitoringRevenue.toFixed(2)}L</div>
+                <div className="text-xs text-blue-600 mt-1">₹{monitoringRevenue.toFixed(2)}</div>
               </div>
               <div className="text-center p-4 bg-green-50 rounded-lg border-2 border-green-200">
                 <div className="text-sm text-green-600">✅ Safe</div>
                 <div className="text-2xl font-bold text-green-900">{safePlacements.length}</div>
-                <div className="text-xs text-green-600 mt-1">₹{safeRevenue.toFixed(2)}L</div>
+                <div className="text-xs text-green-600 mt-1">₹{safeRevenue.toFixed(2)}</div>
               </div>
             </div>
           </div>
@@ -274,13 +280,13 @@ export default function TLOffersPage() {
                         <div>
                           <div className="text-xs text-gray-500">Revenue ({offer.revenue_percentage || 8.33}%)</div>
                           <div className="font-bold text-green-600">
-                            ₹{((offer.fixed_ctc * (offer.revenue_percentage || 8.33) / 100) / 100000).toFixed(2)}L
+                            ₹{((offer.fixed_ctc * (offer.revenue_percentage || 8.33) / 100)).toFixed(2)}
                           </div>
                         </div>
                       </div>
                       {offer.safetyStatus === 'critical' && (
                         <div className="mt-3 p-2 bg-red-100 border border-red-300 rounded text-sm text-red-900">
-                          <strong>⚠️ URGENT:</strong> {offer.daysRemaining} days left! Revenue: ₹{offer.candidates?.revenue_earned?.toFixed(2)}L
+                          <strong>⚠️ URGENT:</strong> {offer.daysRemaining} days left! Revenue: ₹{offer.candidates?.revenue_earned?.toFixed(2)}
                         </div>
                       )}
                     </div>

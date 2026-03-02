@@ -1,3 +1,4 @@
+// app/sr-tl/interviews/page.tsx - FIXED VERSION
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -12,6 +13,7 @@ export default function SrTLInterviewsPage() {
   const [interviews, setInterviews] = useState<any[]>([])
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list')
   const [filterType, setFilterType] = useState('all')
+  const [teamMembers, setTeamMembers] = useState<any[]>([])
 
   useEffect(() => {
     const userData = localStorage.getItem('user')
@@ -25,26 +27,101 @@ export default function SrTLInterviewsPage() {
         return
       }
       
-      loadInterviews(parsedUser)
+      loadTeamMembers(parsedUser)
     }
-  }, [filterType])
+  }, [])
 
-  const loadInterviews = async (user: any) => {
+  useEffect(() => {
+    if (teamMembers.length > 0) {
+      loadInterviews()
+    }
+  }, [teamMembers, filterType])
+
+  const loadTeamMembers = async (currentUser: any) => {
+    try {
+      console.log('🔵 Loading team for Sr.TL:', currentUser.full_name)
+
+      // STEP 1: Get direct reports (TLs and any direct recruiters)
+      const { data: directReports, error: directError } = await supabase
+        .from('users')
+        .select('id, full_name, role, team_id')
+        .eq('reports_to', currentUser.id)
+        .eq('is_active', true)
+
+      if (directError) {
+        console.error('❌ Error loading direct reports:', directError)
+        throw directError
+      }
+
+      console.log('✅ Direct reports:', directReports?.length || 0)
+
+      // STEP 2: Get TL IDs
+      const tlIds = directReports?.filter(m => m.role === 'team_leader').map(m => m.id) || []
+      console.log('🟢 TL IDs:', tlIds)
+
+      // STEP 3: Get recruiters who report to those TLs
+      let indirectRecruiters: any[] = []
+      if (tlIds.length > 0) {
+        const { data: recruiterReports, error: recError } = await supabase
+          .from('users')
+          .select('id, full_name, role, team_id')
+          .in('reports_to', tlIds)
+          .eq('role', 'recruiter')
+          .eq('is_active', true)
+
+        if (recError) {
+          console.error('❌ Error loading indirect recruiters:', recError)
+        } else {
+          indirectRecruiters = recruiterReports || []
+          console.log('✅ Indirect recruiters:', indirectRecruiters.length)
+        }
+      }
+
+      // STEP 4: Combine all team members
+      const allMembers = [...(directReports || []), ...indirectRecruiters]
+      console.log('📊 Total team members:', allMembers.length)
+
+      setTeamMembers(allMembers)
+
+    } catch (error) {
+      console.error('❌ Fatal error loading team:', error)
+      setTeamMembers([])
+    }
+  }
+
+  const loadInterviews = async () => {
     setLoading(true)
     try {
-      // Get all team candidates
-      const { data: teamCandidates } = await supabase
+      const teamMemberIds = teamMembers.map(m => m.id)
+
+      if (teamMemberIds.length === 0) {
+        setInterviews([])
+        setLoading(false)
+        return
+      }
+
+      console.log('📥 Loading candidates for', teamMemberIds.length, 'team members')
+
+      // Get candidates for team members
+      const { data: teamCandidates, error: candidatesError } = await supabase
         .from('candidates')
         .select('id')
-        .eq('team_id', user.team_id)
+        .in('assigned_to', teamMemberIds)
+
+      if (candidatesError) {
+        console.error('❌ Error loading candidates:', candidatesError)
+        throw candidatesError
+      }
 
       if (!teamCandidates || teamCandidates.length === 0) {
+        console.log('⚠️ No candidates found for team')
         setInterviews([])
         setLoading(false)
         return
       }
 
       const candidateIds = teamCandidates.map(c => c.id)
+      console.log('✅ Found candidates:', candidateIds.length)
 
       // Get interviews for team candidates
       let query = supabase
@@ -69,10 +146,12 @@ export default function SrTLInterviewsPage() {
       // Apply filters
       if (filterType === 'today') {
         const today = new Date().toISOString().split('T')[0]
-        query = query.gte('interview_date', today).lt('interview_date', new Date(Date.now() + 86400000).toISOString().split('T')[0])
+        const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+        query = query.gte('interview_date', today).lt('interview_date', tomorrow)
       } else if (filterType === 'tomorrow') {
         const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0]
-        query = query.gte('interview_date', tomorrow).lt('interview_date', new Date(Date.now() + 172800000).toISOString().split('T')[0])
+        const dayAfter = new Date(Date.now() + 172800000).toISOString().split('T')[0]
+        query = query.gte('interview_date', tomorrow).lt('interview_date', dayAfter)
       } else if (filterType === 'upcoming') {
         query = query.eq('status', 'scheduled').gte('interview_date', new Date().toISOString())
       }
@@ -80,10 +159,13 @@ export default function SrTLInterviewsPage() {
       const { data, error } = await query
 
       if (error) throw error
-      if (data) setInterviews(data)
+      
+      console.log('✅ Loaded interviews:', data?.length || 0)
+      setInterviews(data || [])
 
     } catch (error) {
-      console.error('Error loading interviews:', error)
+      console.error('❌ Error loading interviews:', error)
+      setInterviews([])
     } finally {
       setLoading(false)
     }
@@ -145,7 +227,9 @@ export default function SrTLInterviewsPage() {
         {/* Header */}
         <div>
           <h2 className="text-2xl font-bold text-gray-900 text-center">Team Interviews</h2>
-          <p className="text-gray-600 text-center">View and manage all team interviews</p>
+          <p className="text-gray-600 text-center">
+            View and manage all team interviews ({teamMembers.length} team members)
+          </p>
         </div>
 
         {/* Stats */}
@@ -221,10 +305,14 @@ export default function SrTLInterviewsPage() {
         {loading ? (
           <div className="card text-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-4 text-gray-600">Loading team interviews...</p>
           </div>
         ) : interviews.length === 0 ? (
           <div className="card text-center py-12">
-            <p className="text-gray-600">No interviews found</p>
+            <p className="text-gray-600 mb-2">No interviews found</p>
+            <p className="text-sm text-gray-500">
+              Team members: {teamMembers.length}
+            </p>
             {filterType !== 'all' && (
               <button
                 onClick={() => setFilterType('all')}
@@ -282,6 +370,12 @@ export default function SrTLInterviewsPage() {
                         </div>
                       </div>
                     </div>
+
+                    {interview.interviewer_name && (
+                      <div className="mt-2 text-sm text-gray-600">
+                        Interviewer: <span className="font-medium">{interview.interviewer_name}</span>
+                      </div>
+                    )}
                   </div>
 
                   <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusBadge(interview.status)}`}>

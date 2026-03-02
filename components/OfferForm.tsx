@@ -27,6 +27,7 @@ interface Candidate {
   job_id?: string
   jobs?: Job
   current_stage?: string
+   assigned_to?: string
 }
 
 interface OfferFormProps {
@@ -160,9 +161,9 @@ export default function OfferForm({
       const offerData = {
         candidate_id: candidateId || existingOffer?.candidate_id,
         job_id: candidate?.job_id,
-        recruiter_id: user.id,
+        recruiter_id: candidate?.assigned_to,
         client_id: candidate?.jobs?.client_id,
-        
+             
         offered_ctc: totalCTC,
         fixed_ctc: fixedCTC,
         variable_ctc: variableCTC,
@@ -216,13 +217,13 @@ export default function OfferForm({
           candidate_id: candidateId,
           activity_type: 'offer_extended',
           activity_title: 'Offer Extended',
-          activity_description: `Offer of Rs.${totalCTC} extended (Fixed: Rs.${fixedCTC}, Variable: Rs.${variableCTC}). Fee: ${feePercentage}%. Expected revenue: Rs.${(expectedRevenue / 100000).toFixed(2)}L. Stage updated to Offer Extended.`,
+          activity_description: `Offer of Rs.${totalCTC} extended (Fixed: Rs.${fixedCTC}, Variable: Rs.${variableCTC}). Fee: ${feePercentage}%. Expected revenue: Rs.${(expectedRevenue).toFixed(2)}. Stage updated to Offer Extended.`,
           metadata: {
             offer_id: newOffer.id,
             total_ctc: totalCTC,
             fixed_ctc: fixedCTC,
             fee_percentage: feePercentage,
-            expected_revenue: expectedRevenue / 100000
+            expected_revenue: expectedRevenue
           },
           performed_by: user.id,
         }])
@@ -374,7 +375,7 @@ export default function OfferForm({
             <div>
               <div className="text-sm text-gray-600">Expected Revenue</div>
               <div className="text-2xl font-bold text-green-600">
-                Rs.{(calculateExpectedRevenue() / 100000).toFixed(2)}L
+                Rs.{calculateExpectedRevenue().toFixed(2)}
               </div>
             </div>
           </div>

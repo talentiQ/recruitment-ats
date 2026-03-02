@@ -1,6 +1,5 @@
 // app/sr-tl/jobs/page.tsx
 'use client'
-
 import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
@@ -19,6 +18,7 @@ interface Job {
   positions: number
   positions_filled: number
   candidate_count: number
+  in_progress_count: number
   status: string
   priority: string
   created_at: string
@@ -54,6 +54,10 @@ export default function SrTLJobsPage() {
           *,
           clients (
             company_name
+          ),
+          candidates (
+            id,
+            current_stage
           )
         `)
         .eq('assigned_team_id', teamId)
@@ -90,12 +94,32 @@ export default function SrTLJobsPage() {
         })
       })
 
+      // ✅ FIX: Updated inProgressStages to cover all mid-funnel stages
+      const inProgressStages = [
+        'shortlisted',
+        'interview_scheduled',
+        'interview_completed',
+        'offer_sent',
+        'negotiation'
+      ]
+
       const jobsWithAllocations =
-        jobsData?.map(job => ({
-          ...job,
-          recruiter_count: assignmentsByJob[job.id]?.length || 0,
-          recruiter_allocations: assignmentsByJob[job.id] || []
-        })) || []
+        jobsData?.map(job => {
+          const candidates = job.candidates || []
+
+          // ✅ FIX: Count of candidates currently in progress
+          const inProgressCount = candidates.filter((c: any) =>
+            inProgressStages.includes(c.current_stage)
+          ).length
+
+          return {
+            ...job,
+            candidate_count: candidates.length,
+            in_progress_count: inProgressCount,
+            recruiter_count: assignmentsByJob[job.id]?.length || 0,
+            recruiter_allocations: assignmentsByJob[job.id] || []
+          }
+        }) || []
 
       setJobs(jobsWithAllocations)
     } catch (error) {
@@ -140,6 +164,7 @@ export default function SrTLJobsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">
@@ -162,18 +187,22 @@ export default function SrTLJobsPage() {
             <div className="kpi-title">Total Jobs</div>
             <div className="kpi-value">{jobs.length}</div>
           </div>
+
           <div className="kpi-card kpi-success">
             <div className="kpi-title">Open</div>
             <div className="kpi-value">
               {jobs.filter(j => j.status === 'open').length}
             </div>
           </div>
+
+          {/* ✅ FIX: Now shows total in-progress candidates across all jobs */}
           <div className="kpi-card kpi-warning">
-            <div className="kpi-title">In Progress</div>
+            <div className="kpi-title">In Progress Candidates</div>
             <div className="kpi-value">
-              {jobs.filter(j => j.status === 'in_progress').length}
+              {jobs.reduce((sum, j) => sum + (j.in_progress_count || 0), 0)}
             </div>
           </div>
+
           <div className="kpi-card">
             <div className="kpi-title">Total Candidates</div>
             <div className="kpi-value">
@@ -226,6 +255,7 @@ export default function SrTLJobsPage() {
                   <th>CTC Range</th>
                   <th>Positions</th>
                   <th>Candidates</th>
+                  <th>In Progress</th>
                   <th>Priority</th>
                   <th>Status</th>
                   <th>Recruiters</th>
@@ -274,6 +304,18 @@ export default function SrTLJobsPage() {
                       >
                         {job.candidate_count || 0}
                       </button>
+                    </td>
+                    {/* ✅ NEW: In Progress column in the table */}
+                    <td>
+                      <span
+                        className={`font-medium ${
+                          job.in_progress_count > 0
+                            ? 'text-yellow-600'
+                            : 'text-gray-400'
+                        }`}
+                      >
+                        {job.in_progress_count || 0}
+                      </span>
                     </td>
                     <td>
                       <span className={getPriorityBadge(job.priority)}>

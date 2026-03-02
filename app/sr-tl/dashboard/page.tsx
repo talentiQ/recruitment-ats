@@ -199,11 +199,11 @@ export default function SrTeamLeaderDashboard() {
             const annualRevenue = annualRevData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
 
             // Get targets from users table
-            const monthlyTarget = member.monthly_target ? Number(member.monthly_target) / 100000 : 
+            const monthlyTarget = member.monthly_target ? Number(member.monthly_target)  : 
                                 (member.role === 'team_leader' ? 5 : 2)
-            const quarterlyTarget = member.quarterly_target ? Number(member.quarterly_target) / 100000 : 
+            const quarterlyTarget = member.quarterly_target ? Number(member.quarterly_target)  : 
                                    (monthlyTarget * 3)
-            const annualTarget = member.annual_target ? Number(member.annual_target) / 100000 : 
+            const annualTarget = member.annual_target ? Number(member.annual_target)  : 
                                 (monthlyTarget * 12)
 
             return {
@@ -237,7 +237,7 @@ export default function SrTeamLeaderDashboard() {
   }
 
   const formatRevenue = (amount: number) => {
-    return `₹${(amount * 100000).toLocaleString('en-IN')}`
+    return `₹${(amount).toLocaleString('en-IN')}`
   }
 
   const getPerformanceBadge = (joinings: number) => {

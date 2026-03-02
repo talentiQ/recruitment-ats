@@ -168,7 +168,7 @@ useEffect(() => {
           .eq('status', 'open')
           .order('created_at', { ascending: false })
         if (error) {
-          console.error('âŒ Jobs query error:', error)
+          console.error('Jobs query error:', error)
         }
 
         if (data) setJobs((data as unknown) as Job[])
@@ -185,13 +185,13 @@ useEffect(() => {
           .eq('status', 'open')
           .order('created_at', { ascending: false })
         if (error) {
-          console.error('âŒ Jobs query error:', error)
+          console.error('Jobs query error:', error)
         }
 
         if (data) setJobs((data as unknown) as Job[])
       }
     } catch (error) {
-      console.error('ðŸ’¥ loadJobs error:', error)
+      console.error('loadJobs error:', error)
       setJobs([])
     }
   }
@@ -315,7 +315,7 @@ useEffect(() => {
         const existing = data[0]
         setDuplicateCandidate(existing)
         setDuplicateWarning(
-          `âš ï¸ DUPLICATE FOUND!\n\n` +
+          `DUPLICATE FOUND!\n\n` +
           `Name: ${existing.full_name}\n` +
           `Phone: ${existing.phone}\n` +
           `Email: ${existing.email || 'N/A'}\n` +
@@ -389,7 +389,7 @@ useEffect(() => {
       const isDuplicate = await checkDuplicate(formData.phone, formData.email)
       if (isDuplicate) {
         const confirm = window.confirm(
-          `âš ï¸ DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`
+          `DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`
         )
         if (!confirm) return
       }
@@ -429,7 +429,7 @@ useEffect(() => {
           performed_by: user.id,
         }])
 
-        alert('âœ… Candidate updated successfully!')
+        alert('Candidate updated successfully!')
         
         if (redirectPath) {
           router.push(redirectPath)
@@ -606,7 +606,7 @@ useEffect(() => {
       {/* Duplicate Warning */}
       {duplicateWarning && !isEditMode && (
         <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 mb-6">
-          <strong className="text-red-900">âš ï¸ DUPLICATE DETECTED!</strong>
+          <strong className="text-red-900">DUPLICATE DETECTED!</strong>
           <pre className="mt-2 text-sm whitespace-pre-wrap font-mono text-red-800">{duplicateWarning}</pre>
           {duplicateCandidate && (
             <button

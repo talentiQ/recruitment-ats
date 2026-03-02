@@ -78,10 +78,10 @@ export default function InterviewScheduler({
         performed_by: userData.id,
       }])
 
-      alert('âœ… Interview scheduled successfully!')
+      alert('Interview scheduled successfully!')
       onScheduled()
     } catch (error: any) {
-      console.error('ðŸ’¥ Full error:', error)
+      console.error('Full error:', error)
       alert('Error scheduling interview: ' + (error.message || 'Unknown error'))
     } finally {
       setScheduling(false)
@@ -105,7 +105,7 @@ export default function InterviewScheduler({
           onClick={() => onCancel && onCancel()}
           className="text-gray-500 hover:text-gray-700 text-2xl"
         >
-          âœ•
+          ✕
         </button>
       </div>
 

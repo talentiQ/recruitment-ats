@@ -283,8 +283,7 @@ export default function TLDashboard() {
         const pendingInterviews = interviewScheduled
         const pendingOffers = offerExtended
         
-        // Target from database (convert from rupees to lakhs)
-        const monthlyTarget = member.monthly_target ? Number(member.monthly_target) / 100000 : 
+        const monthlyTarget = member.monthly_target ? Number(member.monthly_target) : 
                             (['team_leader', 'sr_team_leader'].includes(member.role) ? 5 : 2)
         const monthlyAchievement = monthlyTarget > 0 ? Math.round((monthlyRevenue / monthlyTarget) * 100) : 0
         
@@ -369,7 +368,7 @@ export default function TLDashboard() {
   }
 
   const formatRevenue = (amount: number) => {
-    return `₹${(amount * 100000).toLocaleString('en-IN')}`
+    return `₹${(amount).toLocaleString('en-IN')}`
   }
 
   if (loading || !stats) {

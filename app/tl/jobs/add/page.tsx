@@ -37,7 +37,7 @@ export default function AddJobPage() {
       const parsedUser = JSON.parse(userData)
       setUser(parsedUser)
       loadClients()
-      loadTeamRecruiters(parsedUser.team_id)
+      loadTeamRecruiters(parsedUser)
     }
   }, [])
 
@@ -51,16 +51,38 @@ export default function AddJobPage() {
     if (data) setClients(data)
   }
 
-  const loadTeamRecruiters = async (teamId: string) => {
-    const { data } = await supabase
+const loadTeamRecruiters = async (currentUser: any) => {
+  try {
+    console.log('🔍 Current user ID:', currentUser.id, '| Role:', currentUser.role)
+       // DEBUG: See ALL users to check what's in the table
+    const { data: allUsers } = await supabase
       .from('users')
-      .select('id, full_name, email')
-      .eq('team_id', teamId)
+      .select('id, full_name, role, reports_to')
+    console.log('📋 All users in DB:', allUsers)
+
+    // Actual query
+    const { data: recruiters, error } = await supabase
+      .from('users')
+      .select('id, full_name, email, role, reports_to')
+      .eq('reports_to', currentUser.id)
       .eq('role', 'recruiter')
       .order('full_name')
 
-    if (data) setTeamRecruiters(data)
+    console.log('👥 Recruiters found:', recruiters)
+    console.log('❌ Error (if any):', error)
+
+    if (error) throw error
+
+    const teamMembers = [
+      { id: currentUser.id, full_name: currentUser.full_name + ' (You)', email: currentUser.email, role: 'team_leader' },
+      ...(recruiters || [])
+    ]
+    setTeamRecruiters(teamMembers)
+
+  } catch (err) {
+    console.error(err)
   }
+}
 
   const toggleRecruiter = (recruiterId: string) => {
     setSelectedRecruiters(prev => 
@@ -159,7 +181,7 @@ export default function AddJobPage() {
             onClick={() => router.back()}
             className="text-sm text-gray-600 hover:text-gray-900 mb-2"
           >
-            â† Back to Jobs
+            ← Back to Jobs
           </button>
           <h2 className="text-2xl font-bold text-gray-900">Add New Job</h2>
           <p className="text-gray-600">Create a job opening and assign recruiters</p>
@@ -359,7 +381,7 @@ export default function AddJobPage() {
           {/* RECRUITER ASSIGNMENT (Simplified - No Position Allocation) */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              ðŸ‘¥ Assign Recruiters *
+              Assign Recruiters *
               {selectedRecruiters.length > 0 && (
                 <span className="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">
                   {selectedRecruiters.length} selected
@@ -368,7 +390,7 @@ export default function AddJobPage() {
             </h3>
             
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-              ðŸ’¡ All assigned recruiters can add CVs for this job. Multiple recruiters working = better results!
+             All assigned recruiters can add CVs for this job. Multiple recruiters working = better results!
             </div>
             
             {teamRecruiters.length === 0 ? (
@@ -437,7 +459,7 @@ export default function AddJobPage() {
                   placeholder="e.g., Java, Spring Boot, Microservices, AWS, React"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  ðŸ’¡ These skills will be used for AI-powered candidate matching
+                These skills will be used for AI-powered candidate matching
                 </p>
               </div>
             </div>

@@ -152,7 +152,7 @@ export default function SrTLOffersPage() {
 
   const totalRevenue = offers
     .filter(o => o.status === 'joined')
-    .reduce((sum, o) => sum + ((o.fixed_ctc * (o.revenue_percentage || 8.33) / 100) / 100000), 0)
+    .reduce((sum, o) => sum + ((o.fixed_ctc * (o.revenue_percentage || 8.33) / 100)), 0)
 
   const criticalPlacements = offers.filter(o => o.safetyStatus === 'critical')
   const atRiskPlacements = offers.filter(o => o.safetyStatus === 'at_risk')
@@ -242,7 +242,7 @@ export default function SrTLOffersPage() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="text-center p-4 bg-white rounded-lg">
                 <div className="text-sm text-gray-600 mb-1">Total Revenue</div>
-                <div className="text-2xl font-bold text-blue-900">₹{totalRevenue.toFixed(2)}L</div>
+                <div className="text-2xl font-bold text-blue-900">₹{totalRevenue.toFixed(2)}</div>
                 <div className="text-xs text-gray-500 mt-1">{counts.joined} placements</div>
               </div>
               
@@ -252,7 +252,7 @@ export default function SrTLOffersPage() {
                   {criticalPlacements.length}
                 </div>
                 <div className="text-xs text-red-600 mt-1 font-semibold">
-                  ₹{criticalRevenue.toFixed(2)}L at risk
+                  ₹{criticalRevenue.toFixed(2)} at risk
                 </div>
               </div>
               
@@ -262,7 +262,7 @@ export default function SrTLOffersPage() {
                   {atRiskPlacements.length}
                 </div>
                 <div className="text-xs text-yellow-600 mt-1 font-semibold">
-                  ₹{atRiskRevenue.toFixed(2)}L at risk
+                  ₹{atRiskRevenue.toFixed(2)} at risk
                 </div>
               </div>
               
@@ -272,7 +272,7 @@ export default function SrTLOffersPage() {
                   {monitoringPlacements.length}
                 </div>
                 <div className="text-xs text-blue-600 mt-1 font-semibold">
-                  ₹{monitoringRevenue.toFixed(2)}L provisional
+                  ₹{monitoringRevenue.toFixed(2)} provisional
                 </div>
               </div>
               
@@ -282,7 +282,7 @@ export default function SrTLOffersPage() {
                   {safePlacements.length}
                 </div>
                 <div className="text-xs text-green-600 mt-1 font-semibold">
-                  ₹{safeRevenue.toFixed(2)}L confirmed
+                  ₹{safeRevenue.toFixed(2)} confirmed
                 </div>
               </div>
             </div>
@@ -291,10 +291,10 @@ export default function SrTLOffersPage() {
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-6">
                   <span className="text-gray-700">
-                    <strong>Provisional:</strong> ₹{(criticalRevenue + atRiskRevenue + monitoringRevenue).toFixed(2)}L
+                    <strong>Provisional:</strong> ₹{(criticalRevenue + atRiskRevenue + monitoringRevenue).toFixed(2)}
                   </span>
                   <span className="text-gray-700">
-                    <strong>Confirmed:</strong> ₹{safeRevenue.toFixed(2)}L
+                    <strong>Confirmed:</strong> ₹{safeRevenue.toFixed(2)}
                   </span>
                   <span className="text-gray-700">
                     <strong>Success Rate:</strong> {counts.joined > 0 ? ((safePlacements.length / counts.joined) * 100).toFixed(1) : 0}%
@@ -334,7 +334,7 @@ export default function SrTLOffersPage() {
                     offer.safetyStatus === 'at_risk' ? 'border-2 border-yellow-300 bg-yellow-50' :
                     ''
                   }`}
-                  onClick={() => router.push(`/sr-tl/candidates/${offer.candidate_id}`)}
+                  onClick={() => router.push(`/sr-tl/offers/${offer.id}`)}
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -369,7 +369,7 @@ export default function SrTLOffersPage() {
                         <div>
                           <div className="text-xs text-gray-500">Revenue ({offer.revenue_percentage || 8.33}%)</div>
                           <div className="text-sm font-bold text-green-600">
-                            ₹{((offer.fixed_ctc * (offer.revenue_percentage || 8.33) / 100) / 100000).toFixed(2)}L
+                            ₹{((offer.fixed_ctc * (offer.revenue_percentage || 8.33) / 100)).toFixed(2)}
                           </div>
                         </div>
                         

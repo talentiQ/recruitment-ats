@@ -475,10 +475,19 @@ export default function CandidateDetailView({
     // Check if there's already an active offer
     if (activeOffer) return false
     
-    // TL and Sr.TL can create offers
+    // Get current user
+    const userData = localStorage.getItem('user')
+    const user = userData ? JSON.parse(userData) : null
+    
+    // Recruiter: Can create for own candidates only
+    if (userRole === 'recruiter') {
+      return candidate?.assigned_to === user?.id
+    }
+    
+    // TL and Sr.TL can create offers for any candidate
     return ['team_leader', 'sr_team_leader'].includes(userRole)
   }
-
+  
   const canEditOffer = () => {
     // Only Sr.TL can edit offers
     return userRole === 'sr_team_leader' && activeOffer
@@ -563,13 +572,44 @@ export default function CandidateDetailView({
   }
 
   const handleOfferSuccess = async () => {
+  try {
+    const userData = localStorage.getItem('user')
+    const user = userData ? JSON.parse(userData) : null
+
+    // 1️⃣ Update candidate stage to offer_extended
+    const { error: stageError } = await supabase
+      .from('candidates')
+      .update({
+        current_stage: 'offer_extended',
+        last_activity_date: new Date().toISOString(),
+      })
+      .eq('id', candidateId)
+
+    if (stageError) throw stageError
+
+    // 2️⃣ Add timeline entry
+    await supabase.from('candidate_timeline').insert([{
+      candidate_id: candidateId,
+      activity_type: 'offer_extended',
+      activity_title: 'Offer Extended',
+      activity_description: 'Offer has been successfully created and extended to candidate.',
+      performed_by: user?.id,
+    }])
+
+    // 3️⃣ Close form and reload
     setShowOfferForm(false)
+
     await Promise.all([
       loadCandidate(),
       loadTimeline(),
       loadOffers()
     ])
+
+  } catch (error: any) {
+    console.error('Error updating stage after offer:', error)
+    alert('Offer created but stage update failed.')
   }
+}
 
   const handleViewResume = async () => {
     if (!candidate.resume_url) {

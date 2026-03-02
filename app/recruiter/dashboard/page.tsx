@@ -115,7 +115,7 @@ export default function RecruiterDashboard() {
 
     const monthlyRevenueLakhs = monthlyData?.reduce(
     (sum, c) => sum + (c.revenue_earned || 0),0) || 0
-    const monthlyRevenue = monthlyRevenueLakhs * 100000
+    const monthlyRevenue = monthlyRevenueLakhs
     const monthlyJoinings = monthlyData?.length || 0
     
 
@@ -156,7 +156,7 @@ export default function RecruiterDashboard() {
       .lt('date_joined', `${quarterEndYear}-${String(quarterEndMonth).padStart(2, '0')}-01`)
 
     const quarterlyRevenueLakhs = quarterlyData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
-    const quarterlyRevenue = quarterlyRevenueLakhs * 100000
+    const quarterlyRevenue = quarterlyRevenueLakhs
     
     // Get annual revenue (Apr to Mar fiscal year)
     const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
@@ -170,7 +170,7 @@ export default function RecruiterDashboard() {
       .lt('date_joined', `${fiscalYearStart + 1}-04-01`)
 
     const annualRevenueLakhs = annualData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
-    const annualRevenue = annualRevenueLakhs * 100000
+    const annualRevenue = annualRevenueLakhs
     setRevenueStats({
       monthlyRevenue,
       monthlyTarget: userMonthlyTarget,   // FIX: use the directly passed value

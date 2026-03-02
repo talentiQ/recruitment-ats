@@ -173,7 +173,7 @@ export default function TLOfferDetailPage() {
   }
 
   const feePercentage = offer.revenue_percentage || 8.33
-  const expectedRevenue = ((offer.fixed_ctc * feePercentage / 100) / 100000).toFixed(2)
+  const expectedRevenue = ((offer.fixed_ctc * feePercentage / 100)).toFixed(2)
   const guaranteeDays = offer.candidates?.jobs?.clients?.replacement_guarantee_days || 90
 
   return (
@@ -279,7 +279,7 @@ export default function TLOfferDetailPage() {
             </div>
             <div className="text-center p-4 bg-green-50 rounded-lg">
               <div className="text-sm text-green-600 mb-1">Revenue ({feePercentage}%)</div>
-              <div className="text-2xl font-bold text-green-900">₹{expectedRevenue}L</div>
+              <div className="text-2xl font-bold text-green-900">₹{expectedRevenue}</div>
             </div>
           </div>
         </div>
@@ -349,7 +349,7 @@ export default function TLOfferDetailPage() {
               <p className="text-sm text-yellow-800 mt-1">
                 {offer.candidates?.jobs?.clients?.company_name} has a{' '}
                 <strong>{guaranteeDays} days</strong> guarantee period.
-                Revenue of ₹{expectedRevenue}L will be provisional until guarantee period ends.
+                Revenue of ₹{expectedRevenue} will be provisional until guarantee period ends.
               </p>
             </div>
           </div>
