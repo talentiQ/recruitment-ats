@@ -3,7 +3,7 @@
 
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { parseResume } from '@/lib/resumeParser'
+import { parseResumeWithAI } from '@/lib/resumeExtractor'
 
 interface ResumeUploadProps {
   candidateId: string
@@ -85,7 +85,7 @@ export default function ResumeUpload({
       setProgress(15)
       
       const resumeText = await parseResumeFile(file)
-      const parsed = parseResume(resumeText)
+      const parsed = await parseResumeWithAI(file)
       
       setProgress(30)
       setParsedData(parsed)

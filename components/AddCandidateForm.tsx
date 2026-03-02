@@ -1,10 +1,10 @@
-﻿// components/AddCandidateForm.tsx - COMPLETE WITH AI PARSING + EDIT MODE SUPPORT
+﻿// components/AddCandidateForm.tsx - AI-POWERED RESUME PARSING via Claude
 'use client'
 
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { parseResume } from '@/lib/resumeParser'
+import { parseResumeWithAI } from '../lib/resumeExtractor'
 
 interface Job {
   id: string
@@ -40,11 +40,12 @@ export default function AddCandidateForm({
   const [duplicateWarning, setDuplicateWarning] = useState<string>('')
   const [duplicateCandidate, setDuplicateCandidate] = useState<any>(null)
   
-  // Resume upload state (disabled in edit mode)
+  // Resume upload state
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [parsing, setParsing] = useState(false)
   const [parseConfidence, setParseConfidence] = useState(existingCandidate?.auto_fill_confidence || 0)
   const [autoFilled, setAutoFilled] = useState(existingCandidate?.auto_filled || false)
+  const [parseError, setParseError] = useState<string>('')
 
   // Skills state
   const [skillSuggestions, setSkillSuggestions] = useState<string[]>([])
@@ -54,18 +55,13 @@ export default function AddCandidateForm({
   )
 
   const [formData, setFormData] = useState({
-    // Basic - Auto-fillable
     full_name: existingCandidate?.full_name || '',
     email: existingCandidate?.email || '',
     phone: existingCandidate?.phone || '',
     gender: existingCandidate?.gender || '',
     date_of_birth: existingCandidate?.date_of_birth || '',
     current_location: existingCandidate?.current_location || '',
-    
-    // Job
     job_id: existingCandidate?.job_id || preSelectedJobId || jobFromUrl || '',
-    
-    // Professional - Auto-fillable
     current_company: existingCandidate?.current_company || '',
     current_designation: existingCandidate?.current_designation || '',
     total_experience: existingCandidate?.total_experience?.toString() || '',
@@ -73,122 +69,82 @@ export default function AddCandidateForm({
     current_ctc: existingCandidate?.current_ctc?.toString() || '',
     expected_ctc: existingCandidate?.expected_ctc?.toString() || '',
     notice_period: existingCandidate?.notice_period?.toString() || '',
-    
-    // Education - Auto-fillable
     education_level: existingCandidate?.education_level || '',
     education_degree: existingCandidate?.education_degree || '',
     education_field: existingCandidate?.education_field || '',
     education_institution: existingCandidate?.education_institution || '',
-    
-    // Additional
     source_portal: existingCandidate?.source_portal || 'Naukri',
     notes: existingCandidate?.notes || '',
   })
-useEffect(() => {
 
+  useEffect(() => {
+    if (existingCandidate && isEditMode) {
+      setFormData({
+        full_name: existingCandidate.full_name || '',
+        email: existingCandidate.email || '',
+        phone: existingCandidate.phone || '',
+        gender: existingCandidate.gender || '',
+        date_of_birth: existingCandidate.date_of_birth || '',
+        current_location: existingCandidate.current_location || '',
+        job_id: existingCandidate.job_id || '',
+        current_company: existingCandidate.current_company || '',
+        current_designation: existingCandidate.current_designation || '',
+        total_experience: existingCandidate.total_experience?.toString() || '',
+        relevant_experience: existingCandidate.relevant_experience?.toString() || '',
+        current_ctc: existingCandidate.current_ctc?.toString() || '',
+        expected_ctc: existingCandidate.expected_ctc?.toString() || '',
+        notice_period: existingCandidate.notice_period?.toString() || '',
+        education_level: existingCandidate.education_level || '',
+        education_degree: existingCandidate.education_degree || '',
+        education_field: existingCandidate.education_field || '',
+        education_institution: existingCandidate.education_institution || '',
+        source_portal: existingCandidate.source_portal || 'Naukri',
+        notes: existingCandidate.notes || '',
+      })
+      setSelectedSkills(existingCandidate.key_skills || [])
+      setAutoFilled(existingCandidate.auto_filled || false)
+      setParseConfidence(existingCandidate.auto_fill_confidence || 0)
+    }
+  }, [existingCandidate?.id, isEditMode])
 
-  if (existingCandidate && isEditMode) {
-    setFormData({
-      full_name: existingCandidate.full_name || '',
-      email: existingCandidate.email || '',
-      phone: existingCandidate.phone || '',
-      gender: existingCandidate.gender || '',
-      date_of_birth: existingCandidate.date_of_birth || '',
-      current_location: existingCandidate.current_location || '',
-      job_id: existingCandidate.job_id || '',
-      current_company: existingCandidate.current_company || '',
-      current_designation: existingCandidate.current_designation || '',
-      total_experience: existingCandidate.total_experience?.toString() || '',
-      relevant_experience: existingCandidate.relevant_experience?.toString() || '',
-      current_ctc: existingCandidate.current_ctc?.toString() || '',
-      expected_ctc: existingCandidate.expected_ctc?.toString() || '',
-      notice_period: existingCandidate.notice_period?.toString() || '',
-      education_level: existingCandidate.education_level || '',
-      education_degree: existingCandidate.education_degree || '',
-      education_field: existingCandidate.education_field || '',
-      education_institution: existingCandidate.education_institution || '',
-      source_portal: existingCandidate.source_portal || 'Naukri',
-      notes: existingCandidate.notes || '',
-    })
-    
-    setSelectedSkills(existingCandidate.key_skills || [])
-    setAutoFilled(existingCandidate.auto_filled || false)
-    setParseConfidence(existingCandidate.auto_fill_confidence || 0)
-  } else {
-  }
-}, [existingCandidate?.id, isEditMode])  // â† CHANGED: Use existingCandidate?.id instead
-  // Load jobs
   const loadJobs = async (userId: string, teamId: string, role: string) => {
     try {
       if (role === 'recruiter') {
-        const { data: assignments, error: assignError } = await supabase
+        const { data: assignments } = await supabase
           .from('job_recruiter_assignments')
           .select('job_id')
           .eq('recruiter_id', userId)
           .eq('is_active', true)
 
-        if (assignError) {
-          console.error('âŒ Assignments query error:', assignError)
-          setJobs([])
-          return
-        }
-        if (!assignments || assignments.length === 0) {
-          setJobs([])
-          return
-        }
+        if (!assignments || assignments.length === 0) { setJobs([]); return }
 
-        const jobIds = assignments.map(a => a.job_id)
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from('jobs')
-          .select(`
-            id, 
-            job_title, 
-            job_code,
-            clients(company_name)
-          `)
-          .in('id', jobIds)
+          .select('id, job_title, job_code, clients(company_name)')
+          .in('id', assignments.map(a => a.job_id))
           .eq('status', 'open')
           .order('created_at', { ascending: false })
-        if (error) {
-          console.error('âŒ Jobs query error:', error)
-        }
 
-        if (data) setJobs((data as unknown) as Job[])
+        if (data) setJobs(data as unknown as Job[])
 
       } else if (role === 'team_leader' || role === 'sr_team_leader') {
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from('jobs')
-          .select(`
-            id, 
-            job_title, 
-            job_code,
-            clients(company_name)
-          `)
+          .select('id, job_title, job_code, clients(company_name)')
           .eq('assigned_team_id', teamId)
           .eq('status', 'open')
           .order('created_at', { ascending: false })
-        if (error) {
-          console.error('Jobs query error:', error)
-        }
 
-        if (data) setJobs((data as unknown) as Job[])
+        if (data) setJobs(data as unknown as Job[])
 
-      } else if (role === 'system_admin' || role === 'ceo' || role === 'ops_head') {
-        const { data, error } = await supabase
+      } else {
+        const { data } = await supabase
           .from('jobs')
-          .select(`
-            id, 
-            job_title, 
-            job_code,
-            clients(company_name)
-          `)
+          .select('id, job_title, job_code, clients(company_name)')
           .eq('status', 'open')
           .order('created_at', { ascending: false })
-        if (error) {
-          console.error('Jobs query error:', error)
-        }
 
-        if (data) setJobs((data as unknown) as Job[])
+        if (data) setJobs(data as unknown as Job[])
       }
     } catch (error) {
       console.error('loadJobs error:', error)
@@ -201,20 +157,28 @@ useEffect(() => {
     if (userData) {
       const parsedUser = JSON.parse(userData)
       setUser(parsedUser)
-      
       loadJobs(parsedUser.id, parsedUser.team_id, parsedUser.role || userRole)
     }
   }, [preSelectedJobId, userRole])
 
-  // Resume parsing (only in add mode)
+  // ─────────────────────────────────────────────
+  // AI-POWERED RESUME UPLOAD HANDLER
+  // ─────────────────────────────────────────────
   const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Validate
-    const validTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain']
-    if (!validTypes.includes(file.type)) {
-      alert('Please upload PDF, Word, or Text file only')
+    const validTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+    ]
+    const validExts = ['.pdf', '.doc', '.docx', '.txt']
+    const hasValidExt = validExts.some(ext => file.name.toLowerCase().endsWith(ext))
+
+    if (!validTypes.includes(file.type) && !hasValidExt) {
+      alert('Please upload PDF, Word (.docx), or Text file only')
       return
     }
 
@@ -225,118 +189,93 @@ useEffect(() => {
 
     setResumeFile(file)
     setParsing(true)
+    setParseError('')
+    setAutoFilled(false)
 
     try {
-      const text = await readFileAsText(file)
-      const parsed = parseResume(text)
-      
+      // Call Claude AI to parse the resume
+      const parsed = await parseResumeWithAI(file)
+
+      // Auto-fill form with AI results (only overwrite if AI found something)
       setFormData(prev => ({
         ...prev,
-        full_name: parsed.fullName || prev.full_name,
-        email: parsed.email || prev.email,
-        phone: parsed.phone || prev.phone,
-        gender: parsed.gender || prev.gender,
-        date_of_birth: parsed.dateOfBirth || prev.date_of_birth,
-        current_location: parsed.location || prev.current_location,
-        
-        current_company: parsed.currentCompany || prev.current_company,
-        current_designation: parsed.currentDesignation || prev.current_designation,
-        total_experience: parsed.totalExperience?.toString() || prev.total_experience,
-        current_ctc: parsed.currentCTC?.toString() || prev.current_ctc,
-        expected_ctc: parsed.expectedCTC?.toString() || prev.expected_ctc,
-        
-        education_level: parsed.educationLevel || prev.education_level,
-        education_degree: parsed.educationDegree || prev.education_degree,
-        education_field: parsed.educationField || prev.education_field,
-        education_institution: parsed.educationInstitution || prev.education_institution,
+        full_name:            parsed.full_name            || prev.full_name,
+        email:                parsed.email                || prev.email,
+        phone:                parsed.phone                || prev.phone,
+        gender:               parsed.gender               || prev.gender,
+        date_of_birth:        parsed.date_of_birth        || prev.date_of_birth,
+        current_location:     parsed.current_location     || prev.current_location,
+        current_company:      parsed.current_company      || prev.current_company,
+        current_designation:  parsed.current_designation  || prev.current_designation,
+        total_experience:     parsed.total_experience != null ? parsed.total_experience.toString() : prev.total_experience,
+        current_ctc:          parsed.current_ctc     != null ? parsed.current_ctc.toString()      : prev.current_ctc,
+        expected_ctc:         parsed.expected_ctc    != null ? parsed.expected_ctc.toString()     : prev.expected_ctc,
+        notice_period:        parsed.notice_period   != null ? parsed.notice_period.toString()    : prev.notice_period,
+        education_level:      parsed.education_level      || prev.education_level,
+        education_degree:     parsed.education_degree     || prev.education_degree,
+        education_field:      parsed.education_field      || prev.education_field,
+        education_institution: parsed.education_institution || prev.education_institution,
       }))
 
-      setSelectedSkills(parsed.skills.length > 0 ? parsed.skills : selectedSkills)
-      setParseConfidence(parsed.confidence.overall)
+      if (parsed.skills.length > 0) {
+        setSelectedSkills(parsed.skills)
+      }
+
+      setParseConfidence(parsed.confidence)
       setAutoFilled(true)
-      
-      alert(`✅ Resume parsed successfully!\n\nConfidence: ${(parsed.confidence.overall * 100).toFixed(0)}%\n\nPlease review and complete any missing fields.`)
-      
+
+      // Check for duplicates
       if (parsed.phone || parsed.email) {
         checkDuplicate(parsed.phone || '', parsed.email || '')
       }
-      
-    } catch (error) {
+
+    } catch (error: any) {
       console.error('Parse error:', error)
-      alert('Error parsing resume. Please fill manually.')
+      setParseError(error.message || 'AI parsing failed. Please fill manually.')
     } finally {
       setParsing(false)
     }
   }
 
-  const readFileAsText = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        const text = e.target?.result as string
-        resolve(text)
-      }
-      reader.onerror = () => reject(new Error('Failed to read file'))
-      reader.readAsText(file)
-    })
-  }
-
-  // Duplicate checking (skip in edit mode for same candidate)
   const checkDuplicate = async (phone: string, email: string) => {
     if (!phone && !email) return false
-
     try {
       let query = supabase
         .from('candidates')
-        .select(`
-          id, full_name, phone, email, current_stage, date_sourced,
-          jobs(job_title, clients(company_name)),
-          users:assigned_to(full_name)
-        `)
+        .select('id, full_name, phone, email, current_stage, date_sourced, jobs(job_title, clients(company_name))')
 
       if (phone && email) {
         query = query.or(`phone.eq.${phone},email.eq.${email}`)
       } else if (phone) {
         query = query.eq('phone', phone)
-      } else if (email) {
+      } else {
         query = query.eq('email', email)
       }
 
-      // Skip checking against self in edit mode
       if (isEditMode && existingCandidate) {
         query = query.neq('id', existingCandidate.id)
       }
 
-      const { data, error } = await query
-
-      if (error) throw error
+      const { data } = await query
 
       if (data && data.length > 0) {
         const existing = data[0]
         setDuplicateCandidate(existing)
         setDuplicateWarning(
-          `DUPLICATE FOUND!\n\n` +
-          `Name: ${existing.full_name}\n` +
-          `Phone: ${existing.phone}\n` +
-          `Email: ${existing.email || 'N/A'}\n` +
-          `Stage: ${existing.current_stage}\n` +
-          `Job: ${(existing.jobs as Job[])?.[0]?.job_title || 'N/A'}`
+          `DUPLICATE FOUND!\n\nName: ${existing.full_name}\nPhone: ${existing.phone}\nEmail: ${existing.email || 'N/A'}\nStage: ${existing.current_stage}`
         )
         return true
       }
-
       setDuplicateWarning('')
       setDuplicateCandidate(null)
       return false
-    } catch (error) {
-      console.error('Duplicate check error:', error)
+    } catch {
       return false
     }
   }
 
   useEffect(() => {
-    if (isEditMode) return // Skip duplicate check in edit mode
-    
+    if (isEditMode) return
     const timeoutId = setTimeout(() => {
       if (formData.phone || formData.email) {
         checkDuplicate(formData.phone, formData.email)
@@ -345,22 +284,10 @@ useEffect(() => {
     return () => clearTimeout(timeoutId)
   }, [formData.phone, formData.email, isEditMode])
 
-  // Skills management
   const loadSkillSuggestions = async (partial: string) => {
-    if (partial.length < 2) {
-      setSkillSuggestions([])
-      return
-    }
-
-    const { data, error } = await supabase
-      .rpc('get_skill_suggestions', {
-        partial_skill: partial,
-        limit_count: 10
-      })
-
-    if (data) {
-      setSkillSuggestions(data.map((s: any) => s.skill_name))
-    }
+    if (partial.length < 2) { setSkillSuggestions([]); return }
+    const { data } = await supabase.rpc('get_skill_suggestions', { partial_skill: partial, limit_count: 10 })
+    if (data) setSkillSuggestions(data.map((s: any) => s.skill_name))
   }
 
   const handleAddSkill = (skill: string) => {
@@ -375,7 +302,6 @@ useEffect(() => {
     setSelectedSkills(selectedSkills.filter(s => s !== skillToRemove))
   }
 
-  // Form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -384,13 +310,10 @@ useEffect(() => {
       return
     }
 
-    // Check duplicates (only in add mode)
     if (!isEditMode) {
       const isDuplicate = await checkDuplicate(formData.phone, formData.email)
       if (isDuplicate) {
-        const confirm = window.confirm(
-          `DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`
-        )
+        const confirm = window.confirm(`DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`)
         if (!confirm) return
       }
     }
@@ -410,9 +333,6 @@ useEffect(() => {
       }
 
       if (isEditMode && existingCandidate) {
-        // ========================================
-        // UPDATE EXISTING CANDIDATE
-        // ========================================
         const { error } = await supabase
           .from('candidates')
           .update(candidateData)
@@ -420,7 +340,6 @@ useEffect(() => {
 
         if (error) throw error
 
-        // Add timeline entry
         await supabase.from('candidate_timeline').insert([{
           candidate_id: existingCandidate.id,
           activity_type: 'candidate_updated',
@@ -430,33 +349,20 @@ useEffect(() => {
         }])
 
         alert('Candidate updated successfully!')
-        
-        if (redirectPath) {
-          router.push(redirectPath)
-        } else {
-          router.back()
-        }
+        if (redirectPath) router.push(redirectPath)
+        else router.back()
 
       } else {
-        // ========================================
-        // CREATE NEW CANDIDATE
-        // ========================================
-        
-        // Upload resume first if exists
         let resumeUrl = null
         if (resumeFile) {
           const fileExt = resumeFile.name.split('.').pop()
           const fileName = `${Date.now()}_${formData.full_name.replace(/\s+/g, '_')}.${fileExt}`
-          const filePath = `resumes/${fileName}`
-
           const { error: uploadError } = await supabase.storage
             .from('resumes')
-            .upload(filePath, resumeFile)
+            .upload(`resumes/${fileName}`, resumeFile)
 
           if (!uploadError) {
-            const { data: urlData } = supabase.storage
-              .from('resumes')
-              .getPublicUrl(filePath)
+            const { data: urlData } = supabase.storage.from('resumes').getPublicUrl(`resumes/${fileName}`)
             resumeUrl = urlData.publicUrl
           }
         }
@@ -467,6 +373,7 @@ useEffect(() => {
             ...candidateData,
             assigned_to: user.id,
             team_id: user.team_id,
+            created_by: user.id,
             current_stage: 'sourced',
             date_sourced: new Date().toISOString(),
             resume_url: resumeUrl,
@@ -481,33 +388,23 @@ useEffect(() => {
 
         if (error) throw error
 
-        // Timeline
         await supabase.from('candidate_timeline').insert([{
           candidate_id: data[0].id,
           activity_type: 'candidate_created',
           activity_title: 'Candidate Created',
-          activity_description: autoFilled 
-            ? `Candidate added via AI-parsed resume (${(parseConfidence * 100).toFixed(0)}% confidence)`
+          activity_description: autoFilled
+            ? `Candidate added via Claude AI resume parsing (${(parseConfidence * 100).toFixed(0)}% confidence)`
             : 'Candidate added manually',
-          metadata: {
-            auto_filled: autoFilled,
-            confidence: parseConfidence,
-            skills_count: selectedSkills.length,
-          },
+          metadata: { auto_filled: autoFilled, confidence: parseConfidence, skills_count: selectedSkills.length },
           performed_by: user.id,
         }])
 
         alert('Candidate added successfully!')
-        
-        if (redirectPath) {
-          router.push(redirectPath)
-        } else if (userRole === 'team_leader') {
-          router.push('/tl/candidates')
-        } else if (userRole === 'sr_team_leader') {
-          router.push('/sr-tl/candidates')
-        } else {
-          router.push('/recruiter/dashboard')
-        }
+
+        if (redirectPath) router.push(redirectPath)
+        else if (userRole === 'team_leader') router.push('/tl/candidates')
+        else if (userRole === 'sr_team_leader') router.push('/sr-tl/candidates')
+        else router.push('/recruiter/dashboard')
       }
     } catch (error: any) {
       console.error('Submit error:', error)
@@ -518,10 +415,7 @@ useEffect(() => {
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    })
+    setFormData({ ...formData, [e.target.name]: e.target.value })
   }
 
   return (
@@ -531,23 +425,25 @@ useEffect(() => {
           {isEditMode ? 'Edit Candidate' : 'Add New Candidate'}
         </h2>
         <p className="text-gray-600">
-          {isEditMode 
-            ? 'Update candidate information' 
-            : 'Upload resume for AI-powered auto-fill or enter manually'}
+          {isEditMode
+            ? 'Update candidate information'
+            : 'Upload resume for Claude AI auto-fill or enter manually'}
         </p>
       </div>
 
       {/* Resume Upload - Only in Add Mode */}
       {!isEditMode && (
         <div className="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200">
-          <h3 className="text-lg font-semibold text-blue-900 mb-4">
-            AI-Powered Resume Parser
-          </h3>
-          
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-2xl">🤖</span>
+            <h3 className="text-lg font-semibold text-blue-900">Claude AI Resume Parser</h3>
+            <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">Powered by Claude</span>
+          </div>
+
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Upload Resume (PDF, Word, or Text) - Auto-fills form below
+                Upload Resume (PDF, Word .docx, or Text) — AI extracts all fields automatically
               </label>
               <input
                 type="file"
@@ -565,23 +461,33 @@ useEffect(() => {
             </div>
 
             {parsing && (
-              <div className="flex items-center gap-3 text-blue-700">
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-700"></div>
-                <span className="text-sm font-medium">Parsing resume with AI...</span>
+              <div className="flex items-center gap-3 p-3 bg-blue-100 rounded-lg text-blue-800">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-700 flex-shrink-0"></div>
+                <div>
+                  <p className="text-sm font-medium">Claude AI is reading the resume...</p>
+                  <p className="text-xs text-blue-600 mt-1">Extracting name, contact, experience, skills, education</p>
+                </div>
+              </div>
+            )}
+
+            {parseError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">
+                ⚠️ {parseError}
               </div>
             )}
 
             {autoFilled && !isEditMode && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <div className="flex items-center gap-2 text-green-800 mb-2">
-                  <span className="text-lg">âœ…</span>
-                  <span className="font-semibold">Resume Parsed Successfully!</span>
+                <div className="flex items-center gap-2 text-green-800 mb-1">
+                  <span className="text-lg">✅</span>
+                  <span className="font-semibold">AI Parsing Complete!</span>
                 </div>
-                <p className="text-sm text-green-700">
-                  Confidence Score: <strong>{(parseConfidence * 100).toFixed(0)}%</strong>
-                </p>
-                <p className="text-xs text-green-600 mt-1">
-                  Please review auto-filled fields below and complete any missing information
+                <div className="flex items-center gap-4 text-sm text-green-700">
+                  <span>Confidence: <strong>{(parseConfidence * 100).toFixed(0)}%</strong></span>
+                  <span>Skills found: <strong>{selectedSkills.length}</strong></span>
+                </div>
+                <p className="text-xs text-green-600 mt-2">
+                  Review the auto-filled fields below and complete any missing information
                 </p>
               </div>
             )}
@@ -589,14 +495,15 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Edit Mode - Show Resume was AI-filled */}
+      {/* Edit Mode - AI badge */}
       {isEditMode && existingCandidate?.auto_filled && (
         <div className="card mb-6 bg-green-50 border border-green-200">
           <div className="flex items-center gap-2 text-green-800">
-           
-            <div>              <strong>This candidate was AI-parsed from resume</strong>
+            <span>🤖</span>
+            <div>
+              <strong>Originally parsed by Claude AI</strong>
               <p className="text-sm text-green-700">
-                Original confidence: {(existingCandidate.auto_fill_confidence * 100).toFixed(0)}%
+                Confidence at parse time: {(existingCandidate.auto_fill_confidence * 100).toFixed(0)}%
               </p>
             </div>
           </div>
@@ -606,7 +513,7 @@ useEffect(() => {
       {/* Duplicate Warning */}
       {duplicateWarning && !isEditMode && (
         <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 mb-6">
-          <strong className="text-red-900">DUPLICATE DETECTED!</strong>
+          <strong className="text-red-900">⚠️ DUPLICATE DETECTED!</strong>
           <pre className="mt-2 text-sm whitespace-pre-wrap font-mono text-red-800">{duplicateWarning}</pre>
           {duplicateCandidate && (
             <button
@@ -617,97 +524,50 @@ useEffect(() => {
               }}
               className="mt-3 px-4 py-2 bg-white text-red-700 border border-red-300 rounded-lg text-sm font-medium hover:bg-red-50"
             >
-              View Existing Candidate â†’
+              View Existing Candidate →
             </button>
           )}
         </div>
       )}
 
-      {/* Job Loading Info */}
       {jobs.length === 0 && !loading && !isEditMode && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-          <div className="flex items-start gap-3">
-            <span className="text-2xl"></span>
-            <div>
-              <h3 className="font-semibold text-yellow-900">No Jobs Available</h3>
-              <p className="text-sm text-yellow-800 mt-1">
-                {userRole === 'recruiter' 
-                  ? 'You have no assigned jobs. Please contact your Team Leader to assign you to jobs.'
-                  : 'No open jobs found. Please create a job first before adding candidates.'}
-              </p>
-              {(userRole === 'team_leader' || userRole === 'sr_team_leader') && (
-                <button
-                  onClick={() => router.push(`/${userRole === 'sr_team_leader' ? 'sr-tl' : 'tl'}/jobs`)}
-                  className="mt-3 text-sm bg-yellow-600 text-white px-4 py-2 rounded-lg hover:bg-yellow-700"
-                >
-                  Go to Jobs
-                </button>
-              )}
-            </div>
-          </div>
+          <h3 className="font-semibold text-yellow-900">No Jobs Available</h3>
+          <p className="text-sm text-yellow-800 mt-1">
+            {userRole === 'recruiter'
+              ? 'You have no assigned jobs. Please contact your Team Leader.'
+              : 'No open jobs found. Please create a job first.'}
+          </p>
         </div>
       )}
 
       {/* MAIN FORM */}
       <form onSubmit={handleSubmit} className="card space-y-6">
+
         {/* Basic Information */}
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Basic Information
-            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
+            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">🤖 AI-Filled</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Full Name *
-              </label>
-              <input
-                type="text"
-                name="full_name"
-                value={formData.full_name}
-                onChange={handleChange}
-                className="input"
-                required
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Full Name *</label>
+              <input type="text" name="full_name" value={formData.full_name} onChange={handleChange} className="input" required />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Email
-              </label>
-              <input
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                className={`input ${duplicateWarning && formData.email && !isEditMode ? 'border-red-500 border-2' : ''}`}
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <input type="email" name="email" value={formData.email} onChange={handleChange}
+                className={`input ${duplicateWarning && formData.email && !isEditMode ? 'border-red-500 border-2' : ''}`} />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Phone *
-              </label>
-              <input
-                type="tel"
-                name="phone"
-                value={formData.phone}
-                onChange={handleChange}
-                className={`input ${duplicateWarning && formData.phone && !isEditMode ? 'border-red-500 border-2' : ''}`}
-                required
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Phone *</label>
+              <input type="tel" name="phone" value={formData.phone} onChange={handleChange}
+                className={`input ${duplicateWarning && formData.phone && !isEditMode ? 'border-red-500 border-2' : ''}`} required />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Gender
-              </label>
-              <select
-                name="gender"
-                value={formData.gender}
-                onChange={handleChange}
-                className="input"
-              >
+              <label className="block text-sm font-medium text-gray-700 mb-2">Gender</label>
+              <select name="gender" value={formData.gender} onChange={handleChange} className="input">
                 <option value="">Select Gender</option>
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
@@ -715,33 +575,15 @@ useEffect(() => {
                 <option value="Prefer not to say">Prefer not to say</option>
               </select>
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Date of Birth
-              </label>
-              <input
-                type="date"
-                name="date_of_birth"
-                value={formData.date_of_birth}
-                onChange={handleChange}
-                className="input"
-                max={new Date().toISOString().split('T')[0]}
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Date of Birth</label>
+              <input type="date" name="date_of_birth" value={formData.date_of_birth} onChange={handleChange}
+                className="input" max={new Date().toISOString().split('T')[0]} />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Current Location
-              </label>
-              <input
-                type="text"
-                name="current_location"
-                value={formData.current_location}
-                onChange={handleChange}
-                className="input"
-                placeholder="e.g., Mumbai, Bangalore"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Current Location</label>
+              <input type="text" name="current_location" value={formData.current_location} onChange={handleChange}
+                className="input" placeholder="e.g., Mumbai, Bangalore" />
             </div>
           </div>
         </div>
@@ -750,29 +592,17 @@ useEffect(() => {
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Job Assignment</h3>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Job Role *
-            </label>
-            <select
-              name="job_id"
-              value={formData.job_id}
-              onChange={handleChange}
-              className="input"
-              required
-              disabled={!!preSelectedJobId || !!jobFromUrl}
-            >
+            <label className="block text-sm font-medium text-gray-700 mb-2">Job Role *</label>
+            <select name="job_id" value={formData.job_id} onChange={handleChange} className="input" required
+              disabled={!!preSelectedJobId || !!jobFromUrl}>
               <option value="">Select Job</option>
-              {jobs.map((job) => (
+              {jobs.map(job => (
                 <option key={job.id} value={job.id}>
                   {job.job_code && `${job.job_code} - `}{job.job_title} - {job.clients?.[0]?.company_name}
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">
-              {jobs.length > 0 
-                ? `${jobs.length} job${jobs.length !== 1 ? 's' : ''} available`
-                : 'No jobs available'}
-            </p>
+            <p className="text-xs text-gray-500 mt-1">{jobs.length} job{jobs.length !== 1 ? 's' : ''} available</p>
           </div>
         </div>
 
@@ -780,102 +610,36 @@ useEffect(() => {
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Professional Details
-            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
+            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">🤖 AI-Filled</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Current Company
-              </label>
-              <input
-                type="text"
-                name="current_company"
-                value={formData.current_company}
-                onChange={handleChange}
-                className="input"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Current Company</label>
+              <input type="text" name="current_company" value={formData.current_company} onChange={handleChange} className="input" />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Current Designation
-              </label>
-              <input
-                type="text"
-                name="current_designation"
-                value={formData.current_designation}
-                onChange={handleChange}
-                className="input"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Current Designation</label>
+              <input type="text" name="current_designation" value={formData.current_designation} onChange={handleChange} className="input" />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Total Experience (Years)
-              </label>
-              <input
-                type="number"
-                step="0.5"
-                name="total_experience"
-                value={formData.total_experience}
-                onChange={handleChange}
-                className="input"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Total Experience (Years)</label>
+              <input type="number" step="0.5" name="total_experience" value={formData.total_experience} onChange={handleChange} className="input" />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Relevant Experience (Years)
-              </label>
-              <input
-                type="number"
-                step="0.5"
-                name="relevant_experience"
-                value={formData.relevant_experience}
-                onChange={handleChange}
-                className="input"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Relevant Experience (Years)</label>
+              <input type="number" step="0.5" name="relevant_experience" value={formData.relevant_experience} onChange={handleChange} className="input" />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Current CTC (Lakhs)
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                name="current_ctc"
-                value={formData.current_ctc}
-                onChange={handleChange}
-                className="input"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Current CTC (Lakhs)</label>
+              <input type="number" step="0.1" name="current_ctc" value={formData.current_ctc} onChange={handleChange} className="input" />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Expected CTC (Lakhs)
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                name="expected_ctc"
-                value={formData.expected_ctc}
-                onChange={handleChange}
-                className="input"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Expected CTC (Lakhs)</label>
+              <input type="number" step="0.1" name="expected_ctc" value={formData.expected_ctc} onChange={handleChange} className="input" />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Notice Period (Days)
-              </label>
-              <input
-                type="number"
-                name="notice_period"
-                value={formData.notice_period}
-                onChange={handleChange}
-                className="input"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Notice Period (Days)</label>
+              <input type="number" name="notice_period" value={formData.notice_period} onChange={handleChange} className="input" />
             </div>
           </div>
         </div>
@@ -884,68 +648,34 @@ useEffect(() => {
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Education
-            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
+            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">🤖 AI-Filled</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Education Level
-              </label>
-              <select
-                name="education_level"
-                value={formData.education_level}
-                onChange={handleChange}
-                className="input"
-              >
+              <label className="block text-sm font-medium text-gray-700 mb-2">Education Level</label>
+              <select name="education_level" value={formData.education_level} onChange={handleChange} className="input">
                 <option value="">Select Level</option>
                 <option value="High School">High School</option>
                 <option value="Diploma">Diploma</option>
-                <option value="Bachelor">Bachelor&apos;s</option>
-                <option value="Master">Master&apos;s</option>
+                <option value="Bachelor">Bachelor's</option>
+                <option value="Master">Master's</option>
                 <option value="PhD">PhD</option>
               </select>
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Degree
-              </label>
-              <input
-                type="text"
-                name="education_degree"
-                value={formData.education_degree}
-                onChange={handleChange}
-                className="input"
-                placeholder="e.g., B.Tech, MBA"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Degree</label>
+              <input type="text" name="education_degree" value={formData.education_degree} onChange={handleChange}
+                className="input" placeholder="e.g., B.Tech, MBA" />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Field of Study
-              </label>
-              <input
-                type="text"
-                name="education_field"
-                value={formData.education_field}
-                onChange={handleChange}
-                className="input"
-                placeholder="e.g., Computer Science"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Field of Study</label>
+              <input type="text" name="education_field" value={formData.education_field} onChange={handleChange}
+                className="input" placeholder="e.g., Computer Science" />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Institution
-              </label>
-              <input
-                type="text"
-                name="education_institution"
-                value={formData.education_institution}
-                onChange={handleChange}
-                className="input"
-                placeholder="e.g., IIT Delhi, Mumbai University"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Institution</label>
+              <input type="text" name="education_institution" value={formData.education_institution} onChange={handleChange}
+                className="input" placeholder="e.g., IIT Delhi, Mumbai University" />
             </div>
           </div>
         </div>
@@ -954,70 +684,40 @@ useEffect(() => {
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Key Skills
-            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">AI-Filled</span>}
+            {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">🤖 AI-Filled</span>}
           </h3>
-          
           <div className="space-y-4">
-            {/* Current Skills */}
             {selectedSkills.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {selectedSkills.map((skill, index) => (
-                  <span
-                    key={index}
-                    className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium flex items-center gap-2"
-                  >
+                  <span key={index} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium flex items-center gap-2">
                     {skill}
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveSkill(skill)}
-                      className="text-blue-600 hover:text-blue-900 font-bold"
-                    >
-                      Ã—
-                    </button>
+                    <button type="button" onClick={() => handleRemoveSkill(skill)} className="text-blue-600 hover:text-blue-900 font-bold">×</button>
                   </span>
                 ))}
               </div>
             )}
-
-            {/* Add Skill Input */}
             <div className="relative">
               <input
                 type="text"
                 value={skillInput}
-                onChange={(e) => {
-                  setSkillInput(e.target.value)
-                  loadSkillSuggestions(e.target.value)
-                }}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    handleAddSkill(skillInput)
-                  }
-                }}
+                onChange={(e) => { setSkillInput(e.target.value); loadSkillSuggestions(e.target.value) }}
+                onKeyPress={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddSkill(skillInput) } }}
                 className="input"
-                placeholder="Type skill name and press Enter (e.g., React, Python, AWS)"
+                placeholder="Type skill and press Enter (e.g., React, Python, AWS)"
               />
-
-              {/* Suggestions Dropdown */}
               {skillSuggestions.length > 0 && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
                   {skillSuggestions.map((suggestion, index) => (
-                    <button
-                      key={index}
-                      type="button"
-                      onClick={() => handleAddSkill(suggestion)}
-                      className="w-full text-left px-4 py-2 hover:bg-blue-50 text-sm"
-                    >
+                    <button key={index} type="button" onClick={() => handleAddSkill(suggestion)}
+                      className="w-full text-left px-4 py-2 hover:bg-blue-50 text-sm">
                       {suggestion}
                     </button>
                   ))}
                 </div>
               )}
             </div>
-
-            <p className="text-xs text-gray-500">
-              Type to see AI-powered suggestions or press Enter to add custom skills
-            </p>
+            <p className="text-xs text-gray-500">Type to see suggestions or press Enter to add custom skills</p>
           </div>
         </div>
 
@@ -1026,15 +726,8 @@ useEffect(() => {
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Additional Details</h3>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Source Portal
-              </label>
-              <select
-                name="source_portal"
-                value={formData.source_portal}
-                onChange={handleChange}
-                className="input"
-              >
+              <label className="block text-sm font-medium text-gray-700 mb-2">Source Portal</label>
+              <select name="source_portal" value={formData.source_portal} onChange={handleChange} className="input">
                 <option value="Naukri">Naukri</option>
                 <option value="LinkedIn">LinkedIn</option>
                 <option value="Indeed">Indeed</option>
@@ -1044,19 +737,10 @@ useEffect(() => {
                 <option value="Other">Other</option>
               </select>
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Notes
-              </label>
-              <textarea
-                name="notes"
-                value={formData.notes}
-                onChange={handleChange}
-                rows={3}
-                className="input"
-                placeholder="Any additional notes..."
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
+              <textarea name="notes" value={formData.notes} onChange={handleChange} rows={3} className="input"
+                placeholder="Any additional notes..." />
             </div>
           </div>
         </div>
@@ -1068,21 +752,18 @@ useEffect(() => {
             disabled={loading || (!isEditMode && jobs.length === 0)}
             className={`btn-primary ${duplicateWarning && !isEditMode ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
           >
-            {loading 
-              ? (isEditMode ? 'Updating...' : 'Adding...') 
-              : isEditMode 
-                ? 'Update Candidate' 
-                : duplicateWarning 
-                  ? 'Add Anyway' 
-                  : autoFilled 
-                    ? 'Save AI-Parsed Candidate' 
+            {loading
+              ? (isEditMode ? 'Updating...' : 'Adding...')
+              : isEditMode
+                ? 'Update Candidate'
+                : duplicateWarning
+                  ? 'Add Anyway'
+                  : autoFilled
+                    ? '💾 Save AI-Parsed Candidate'
                     : 'Add Candidate'}
           </button>
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="bg-white border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-medium hover:border-gray-400"
-          >
+          <button type="button" onClick={() => router.back()}
+            className="bg-white border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-medium hover:border-gray-400">
             Cancel
           </button>
         </div>

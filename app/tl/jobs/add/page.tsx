@@ -1,4 +1,4 @@
-﻿// app/tl/jobs/add/page.tsx - SIMPLIFIED: Multiple recruiters per job, no position limits
+﻿// app/tl/jobs/add/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -51,41 +51,38 @@ export default function AddJobPage() {
     if (data) setClients(data)
   }
 
-const loadTeamRecruiters = async (currentUser: any) => {
-  try {
-    console.log('🔍 Current user ID:', currentUser.id, '| Role:', currentUser.role)
-       // DEBUG: See ALL users to check what's in the table
-    const { data: allUsers } = await supabase
-      .from('users')
-      .select('id, full_name, role, reports_to')
-    console.log('📋 All users in DB:', allUsers)
+  const loadTeamRecruiters = async (currentUser: any) => {
+    try {
+      const { data: recruiters, error } = await supabase
+        .from('users')
+        .select('id, full_name, email, role')
+        .eq('reports_to', currentUser.id)
+        .eq('role', 'recruiter')
+        .order('full_name')
 
-    // Actual query
-    const { data: recruiters, error } = await supabase
-      .from('users')
-      .select('id, full_name, email, role, reports_to')
-      .eq('reports_to', currentUser.id)
-      .eq('role', 'recruiter')
-      .order('full_name')
+      if (error) {
+        console.error('Error loading recruiters:', error)
+        return
+      }
 
-    console.log('👥 Recruiters found:', recruiters)
-    console.log('❌ Error (if any):', error)
+      const teamMembers = [
+        {
+          id: currentUser.id,
+          full_name: currentUser.full_name + ' (You)',
+          email: currentUser.email,
+          role: 'team_leader',
+        },
+        ...(recruiters || []),
+      ]
 
-    if (error) throw error
-
-    const teamMembers = [
-      { id: currentUser.id, full_name: currentUser.full_name + ' (You)', email: currentUser.email, role: 'team_leader' },
-      ...(recruiters || [])
-    ]
-    setTeamRecruiters(teamMembers)
-
-  } catch (err) {
-    console.error(err)
+      setTeamRecruiters(teamMembers)
+    } catch (err) {
+      console.error(err)
+    }
   }
-}
 
   const toggleRecruiter = (recruiterId: string) => {
-    setSelectedRecruiters(prev => 
+    setSelectedRecruiters(prev =>
       prev.includes(recruiterId)
         ? prev.filter(id => id !== recruiterId)
         : [...prev, recruiterId]
@@ -94,7 +91,7 @@ const loadTeamRecruiters = async (currentUser: any) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (selectedRecruiters.length === 0) {
       alert('Please assign at least one recruiter to this job')
       return
@@ -103,6 +100,21 @@ const loadTeamRecruiters = async (currentUser: any) => {
     setLoading(true)
 
     try {
+      // ✅ FIX: Get fresh team_id from DB before saving
+      const { data: freshUser, error: userError } = await supabase
+        .from('users')
+        .select('team_id')
+        .eq('id', user.id)
+        .single()
+
+      if (userError || !freshUser?.team_id) {
+        alert('Error: Could not determine your team. Please re-login and try again.')
+        setLoading(false)
+        return
+      }
+
+      const teamId = freshUser.team_id
+      console.log('✅ Saving job with team_id:', teamId)
 
       // Step 1: Insert job
       const { data: jobData, error: jobError } = await supabase
@@ -122,7 +134,7 @@ const loadTeamRecruiters = async (currentUser: any) => {
           key_skills: formData.key_skills,
           priority: formData.priority,
           target_close_date: formData.target_close_date || null,
-          assigned_team_id: user.team_id,
+          assigned_team_id: teamId, // ✅ fresh from DB
           status: 'open',
           created_by: user.id,
         }])
@@ -132,18 +144,19 @@ const loadTeamRecruiters = async (currentUser: any) => {
         console.error('Job insert error:', jobError)
         throw jobError
       }
+
       const jobId = jobData[0].id
       const jobCode = jobData[0].job_code
 
       // Step 2: Insert recruiter assignments
-      // All recruiters can work on all positions (no allocation limit)
       const assignments = selectedRecruiters.map(recruiterId => ({
         job_id: jobId,
         recruiter_id: recruiterId,
         assigned_by: user.id,
         is_active: true,
-        positions_allocated: parseInt(formData.positions) || 1, // Each recruiter works on all positions
+        positions_allocated: parseInt(formData.positions) || 1,
       }))
+
       const { error: assignError } = await supabase
         .from('job_recruiter_assignments')
         .insert(assignments)
@@ -152,14 +165,15 @@ const loadTeamRecruiters = async (currentUser: any) => {
         console.error('Assignment insert error:', assignError)
         throw assignError
       }
+
       alert(
-        `âœ… Job created successfully!\n\n` +
+        `✅ Job created successfully!\n\n` +
         `Job Code: ${jobCode}\n` +
         `Positions: ${formData.positions}\n` +
         `Assigned to ${selectedRecruiters.length} recruiter(s)\n\n` +
         `All recruiters can add CVs for this job!`
       )
-      
+
       router.push('/tl/jobs')
     } catch (error: any) {
       console.error('Error creating job:', error)
@@ -188,19 +202,18 @@ const loadTeamRecruiters = async (currentUser: any) => {
         </div>
 
         <form onSubmit={handleSubmit} className="card space-y-6">
+
           {/* Basic Info */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Basic Information</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Client *
-                </label>
-                <select 
-                  name="client_id" 
-                  value={formData.client_id} 
-                  onChange={handleChange} 
-                  className="input" 
+                <label className="block text-sm font-medium text-gray-700 mb-2">Client *</label>
+                <select
+                  name="client_id"
+                  value={formData.client_id}
+                  onChange={handleChange}
+                  className="input"
                   required
                 >
                   <option value="">Select Client</option>
@@ -211,59 +224,46 @@ const loadTeamRecruiters = async (currentUser: any) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Job Title *
-                </label>
-                <input 
-                  type="text" 
-                  name="job_title" 
-                  value={formData.job_title} 
-                  onChange={handleChange} 
-                  className="input" 
+                <label className="block text-sm font-medium text-gray-700 mb-2">Job Title *</label>
+                <input
+                  type="text"
+                  name="job_title"
+                  value={formData.job_title}
+                  onChange={handleChange}
+                  className="input"
                   placeholder="e.g., Senior Java Developer"
-                  required 
+                  required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Department
-                </label>
-                <input 
-                  type="text" 
-                  name="department" 
-                  value={formData.department} 
-                  onChange={handleChange} 
-                  className="input" 
+                <label className="block text-sm font-medium text-gray-700 mb-2">Department</label>
+                <input
+                  type="text"
+                  name="department"
+                  value={formData.department}
+                  onChange={handleChange}
+                  className="input"
                   placeholder="e.g., Engineering"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Location *
-                </label>
-                <input 
-                  type="text" 
-                  name="location" 
-                  value={formData.location} 
-                  onChange={handleChange} 
-                  className="input" 
+                <label className="block text-sm font-medium text-gray-700 mb-2">Location *</label>
+                <input
+                  type="text"
+                  name="location"
+                  value={formData.location}
+                  onChange={handleChange}
+                  className="input"
                   placeholder="e.g., Bangalore, Mumbai"
-                  required 
+                  required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Job Type
-                </label>
-                <select 
-                  name="job_type" 
-                  value={formData.job_type} 
-                  onChange={handleChange} 
-                  className="input"
-                >
+                <label className="block text-sm font-medium text-gray-700 mb-2">Job Type</label>
+                <select name="job_type" value={formData.job_type} onChange={handleChange} className="input">
                   <option value="Full-time">Full-time</option>
                   <option value="Contract">Contract</option>
                   <option value="Part-time">Part-time</option>
@@ -271,15 +271,13 @@ const loadTeamRecruiters = async (currentUser: any) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Number of Positions
-                </label>
-                <input 
-                  type="number" 
-                  name="positions" 
-                  value={formData.positions} 
-                  onChange={handleChange} 
-                  className="input" 
+                <label className="block text-sm font-medium text-gray-700 mb-2">Number of Positions</label>
+                <input
+                  type="number"
+                  name="positions"
+                  value={formData.positions}
+                  onChange={handleChange}
+                  className="input"
                   min="1"
                 />
               </div>
@@ -291,94 +289,44 @@ const loadTeamRecruiters = async (currentUser: any) => {
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Requirements</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Min Experience (Years)
-                </label>
-                <input 
-                  type="number" 
-                  name="experience_min" 
-                  value={formData.experience_min} 
-                  onChange={handleChange} 
-                  className="input" 
-                  min="0"
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-2">Min Experience (Years)</label>
+                <input type="number" name="experience_min" value={formData.experience_min} onChange={handleChange} className="input" min="0" />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Max Experience (Years)
-                </label>
-                <input 
-                  type="number" 
-                  name="experience_max" 
-                  value={formData.experience_max} 
-                  onChange={handleChange} 
-                  className="input" 
-                  min="0"
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-2">Max Experience (Years)</label>
+                <input type="number" name="experience_max" value={formData.experience_max} onChange={handleChange} className="input" min="0" />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Min CTC (Lakhs)
-                </label>
-                <input 
-                  type="number" 
-                  step="0.1" 
-                  name="min_ctc" 
-                  value={formData.min_ctc} 
-                  onChange={handleChange} 
-                  className="input" 
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-2">Min CTC (Lakhs)</label>
+                <input type="number" step="0.1" name="min_ctc" value={formData.min_ctc} onChange={handleChange} className="input" />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Max CTC (Lakhs)
-                </label>
-                <input 
-                  type="number" 
-                  step="0.1" 
-                  name="max_ctc" 
-                  value={formData.max_ctc} 
-                  onChange={handleChange} 
-                  className="input" 
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-2">Max CTC (Lakhs)</label>
+                <input type="number" step="0.1" name="max_ctc" value={formData.max_ctc} onChange={handleChange} className="input" />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Priority
-                </label>
-                <select 
-                  name="priority" 
-                  value={formData.priority} 
-                  onChange={handleChange} 
-                  className="input"
-                >
+                <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                <select name="priority" value={formData.priority} onChange={handleChange} className="input">
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
                 </select>
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Target Close Date
-                </label>
-                <input 
-                  type="date" 
-                  name="target_close_date" 
-                  value={formData.target_close_date} 
-                  onChange={handleChange} 
-                  className="input" 
+                <label className="block text-sm font-medium text-gray-700 mb-2">Target Close Date</label>
+                <input
+                  type="date"
+                  name="target_close_date"
+                  value={formData.target_close_date}
+                  onChange={handleChange}
+                  className="input"
                   min={new Date().toISOString().split('T')[0]}
                 />
               </div>
             </div>
           </div>
 
-          {/* RECRUITER ASSIGNMENT (Simplified - No Position Allocation) */}
+          {/* Recruiter Assignment */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
               Assign Recruiters *
@@ -388,11 +336,11 @@ const loadTeamRecruiters = async (currentUser: any) => {
                 </span>
               )}
             </h3>
-            
+
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-             All assigned recruiters can add CVs for this job. Multiple recruiters working = better results!
+              All assigned recruiters can add CVs for this job. Multiple recruiters working = better results!
             </div>
-            
+
             {teamRecruiters.length === 0 ? (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
                 No recruiters available in your team. Please add recruiters first.
@@ -415,12 +363,8 @@ const loadTeamRecruiters = async (currentUser: any) => {
                       className="w-5 h-5 text-blue-600 rounded"
                     />
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900">
-                        {recruiter.full_name}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {recruiter.email}
-                      </div>
+                      <div className="font-medium text-gray-900">{recruiter.full_name}</div>
+                      <div className="text-sm text-gray-500">{recruiter.email}</div>
                     </div>
                   </label>
                 ))}
@@ -433,33 +377,28 @@ const loadTeamRecruiters = async (currentUser: any) => {
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Job Details</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Job Description
-                </label>
-                <textarea 
-                  name="job_description" 
-                  value={formData.job_description} 
-                  onChange={handleChange} 
-                  rows={5} 
+                <label className="block text-sm font-medium text-gray-700 mb-2">Job Description</label>
+                <textarea
+                  name="job_description"
+                  value={formData.job_description}
+                  onChange={handleChange}
+                  rows={5}
                   className="input"
                   placeholder="Describe the role, responsibilities, and what the ideal candidate looks like..."
                 />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Key Skills Required
-                </label>
-                <textarea 
-                  name="key_skills" 
-                  value={formData.key_skills} 
-                  onChange={handleChange} 
-                  rows={3} 
-                  className="input" 
+                <label className="block text-sm font-medium text-gray-700 mb-2">Key Skills Required</label>
+                <textarea
+                  name="key_skills"
+                  value={formData.key_skills}
+                  onChange={handleChange}
+                  rows={3}
+                  className="input"
                   placeholder="e.g., Java, Spring Boot, Microservices, AWS, React"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                These skills will be used for AI-powered candidate matching
+                  These skills will be used for AI-powered candidate matching
                 </p>
               </div>
             </div>
@@ -467,16 +406,16 @@ const loadTeamRecruiters = async (currentUser: any) => {
 
           {/* Actions */}
           <div className="flex gap-4 pt-4 border-t border-gray-200">
-            <button 
-              type="submit" 
-              disabled={loading || selectedRecruiters.length === 0} 
+            <button
+              type="submit"
+              disabled={loading || selectedRecruiters.length === 0}
               className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Creating...' : 'Create Job & Assign Recruiters'}
             </button>
-            <button 
-              type="button" 
-              onClick={() => router.back()} 
+            <button
+              type="button"
+              onClick={() => router.back()}
               className="bg-white border border-gray-300 px-6 py-2 rounded-lg hover:border-gray-400"
             >
               Cancel

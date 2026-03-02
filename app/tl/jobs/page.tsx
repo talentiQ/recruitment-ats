@@ -1,4 +1,4 @@
-// app/tl/jobs/page.tsx - COMPLETE WITH CANDIDATE COUNTS & ACTIONS
+// app/tl/jobs/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -25,8 +25,6 @@ interface Job {
   clients: {
     company_name: string
   }
-  assigned_recruiters: string[]
-  full_name: string
   recruiter_count: number
   recruiter_allocations: { id: string; name: string; positions: number }[]
 }
@@ -43,83 +41,100 @@ export default function TLJobsPage() {
     if (userData) {
       const parsedUser = JSON.parse(userData)
       setUser(parsedUser)
-      loadJobs(parsedUser.team_id)
+      loadJobs(parsedUser)
     }
   }, [])
 
-  const loadJobs = async (teamId: string) => {
-    setLoading(true)
-    try {
-      const { data: jobsData, error: jobsError } = await supabase
-        .from('jobs')
-        .select(`
-          *,
-          clients (
-            company_name
-          )
-        `)
-        .eq('assigned_team_id', teamId)
-        .order('created_at', { ascending: false })
+  const loadJobs = async (userFromStorage: any) => {
+  setLoading(true)
+  try {
+    // Step 1: Get Renu's direct recruiters only
+    const { data: recruiters } = await supabase
+      .from('users')
+      .select('id')
+      .eq('reports_to', userFromStorage.id)
+      .eq('role', 'recruiter')
 
-      if (jobsError) throw jobsError
+    const myTeamMemberIds = [
+      userFromStorage.id,
+      ...(recruiters?.map((r: any) => r.id) || [])
+    ]
 
-      const jobIds = jobsData?.map(j => j.id) || []
+    console.log('✅ Loading jobs for team members:', myTeamMemberIds)
 
-      const { data: assignments } = await supabase
-        .from('job_recruiter_assignments')
-        .select(`
-          job_id,
-          positions_allocated,
-          users:recruiter_id (
-            id,
-            full_name
-          )
-        `)
-        .in('job_id', jobIds)
-        .eq('is_active', true)
+    // Step 2: Get jobs created by TL or her direct recruiters only
+    const { data: jobsData, error: jobsError } = await supabase
+      .from('jobs')
+      .select(`
+        *,
+        clients (
+          company_name
+        )
+      `)
+      .in('created_by', myTeamMemberIds)   // ← KEY CHANGE
+      .order('created_at', { ascending: false })
 
-      const assignmentsByJob: { [key: string]: any[] } = {}
+    if (jobsError) throw jobsError
 
-      assignments?.forEach(a => {
-        if (!assignmentsByJob[a.job_id]) {
-          assignmentsByJob[a.job_id] = []
-        }
-        const user = Array.isArray(a.users) ? a.users[0] : a.users
-        assignmentsByJob[a.job_id].push({
-          id: user.id,
-          name: user.full_name,
-          positions: a.positions_allocated
-        })
-      })
+    console.log('✅ Jobs found:', jobsData?.length)
 
-      const jobsWithAllocations =
-        jobsData?.map(job => ({
-          ...job,
-          recruiter_count: assignmentsByJob[job.id]?.length || 0,
-          recruiter_allocations: assignmentsByJob[job.id] || []
-        })) || []
-
-      setJobs(jobsWithAllocations)
-    } catch (error) {
-      console.error('Error loading jobs:', error)
-    } finally {
+    const jobIds = jobsData?.map(j => j.id) || []
+    if (jobIds.length === 0) {
+      setJobs([])
       setLoading(false)
+      return
     }
+
+    // Step 3: Load recruiter assignments (unchanged)
+    const { data: assignments } = await supabase
+      .from('job_recruiter_assignments')
+      .select(`
+        job_id,
+        positions_allocated,
+        users:recruiter_id (
+          id,
+          full_name
+        )
+      `)
+      .in('job_id', jobIds)
+      .eq('is_active', true)
+
+    const assignmentsByJob: { [key: string]: any[] } = {}
+    assignments?.forEach(a => {
+      if (!assignmentsByJob[a.job_id]) assignmentsByJob[a.job_id] = []
+      const u = Array.isArray(a.users) ? a.users[0] : a.users
+      if (u) {
+        assignmentsByJob[a.job_id].push({
+          id: u.id,
+          name: u.full_name,
+          positions: a.positions_allocated,
+        })
+      }
+    })
+
+    const jobsWithAllocations = jobsData?.map(job => ({
+      ...job,
+      recruiter_count: assignmentsByJob[job.id]?.length || 0,
+      recruiter_allocations: assignmentsByJob[job.id] || [],
+    })) || []
+
+    setJobs(jobsWithAllocations)
+  } catch (error) {
+    console.error('Error loading jobs:', error)
+  } finally {
+    setLoading(false)
   }
+}
 
   const filteredJobs =
-    statusFilter === 'all'
-      ? jobs
-      : jobs.filter(j => j.status === statusFilter)
+    statusFilter === 'all' ? jobs : jobs.filter(j => j.status === statusFilter)
 
   const getStatusBadge = (status: string) => {
     const badges: { [key: string]: string } = {
       open: 'badge-success',
       in_progress: 'badge-warning',
-      on_hold:
-        'bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-xs font-semibold',
-      closed:
-        'bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-semibold'
+      on_hold: 'bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-xs font-semibold',
+      closed: 'bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-semibold',
     }
     return badges[status] || 'badge-success'
   }
@@ -128,40 +143,26 @@ export default function TLJobsPage() {
     const badges: { [key: string]: string } = {
       high: 'badge-danger',
       medium: 'badge-warning',
-      low:
-        'bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-xs font-semibold'
+      low: 'bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-xs font-semibold',
     }
     return badges[priority] || 'badge-warning'
-  }
-
-  const handleViewCandidates = (jobId: string) => {
-    router.push(`/tl/jobs/${jobId}/candidates`)
-  }
-
-  const handleAddCandidate = (jobId: string) => {
-    router.push(`/tl/jobs/${jobId}/add-candidate`)
   }
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {/* Header */}
         <div className="flex justify-between items-center">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">
-              Jobs Management
-            </h2>
-            <p className="text-gray-600">
-              Manage team job assignments and track progress
-            </p>
+            <h2 className="text-2xl font-bold text-gray-900">Jobs Management</h2>
+            <p className="text-gray-600">Manage team job assignments and track progress</p>
           </div>
-          <button
-            onClick={() => router.push('/tl/jobs/add')}
-            className="btn-primary"
-          >
+          <button onClick={() => router.push('/tl/jobs/add')} className="btn-primary">
             + Add New Job
           </button>
         </div>
 
+        {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="kpi-card">
             <div className="kpi-title">Total Jobs</div>
@@ -169,15 +170,11 @@ export default function TLJobsPage() {
           </div>
           <div className="kpi-card kpi-success">
             <div className="kpi-title">Open</div>
-            <div className="kpi-value">
-              {jobs.filter(j => j.status === 'open').length}
-            </div>
+            <div className="kpi-value">{jobs.filter(j => j.status === 'open').length}</div>
           </div>
           <div className="kpi-card kpi-warning">
             <div className="kpi-title">In Progress</div>
-            <div className="kpi-value">
-              {jobs.filter(j => j.status === 'in_progress').length}
-            </div>
+            <div className="kpi-value">{jobs.filter(j => j.status === 'in_progress').length}</div>
           </div>
           <div className="kpi-card">
             <div className="kpi-title">Total Candidates</div>
@@ -187,10 +184,9 @@ export default function TLJobsPage() {
           </div>
         </div>
 
+        {/* Filter */}
         <div className="card">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Filter by Status
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Status</label>
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}
@@ -204,6 +200,7 @@ export default function TLJobsPage() {
           </select>
         </div>
 
+        {/* Jobs Table */}
         {loading ? (
           <div className="card text-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
@@ -233,7 +230,7 @@ export default function TLJobsPage() {
                   <th>Candidates</th>
                   <th>Priority</th>
                   <th>Status</th>
-                  <th>Recruiter Assigned</th>
+                  <th>Recruiters</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -241,36 +238,22 @@ export default function TLJobsPage() {
                 {filteredJobs.map(job => (
                   <tr key={job.id}>
                     <td>
-                      <span className="font-mono font-bold text-blue-600">
-                        {job.job_code}
-                      </span>
+                      <span className="font-mono font-bold text-blue-600">{job.job_code}</span>
                     </td>
                     <td>
-                      <div className="font-medium text-gray-900">
-                        {job.job_title}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {job.department}
-                      </div>
+                      <div className="font-medium text-gray-900">{job.job_title}</div>
+                      <div className="text-sm text-gray-500">{job.department}</div>
                     </td>
-                    <td className="text-sm">
-                      {job.clients?.company_name}
-                    </td>
+                    <td className="text-sm">{job.clients?.company_name}</td>
                     <td className="text-sm">{job.location}</td>
-                    <td className="text-sm">
-                      {job.experience_min}-{job.experience_max} yrs
-                    </td>
-                    <td className="text-sm">
-                      ₹{job.min_ctc}-{job.max_ctc}L
-                    </td>
+                    <td className="text-sm">{job.experience_min}-{job.experience_max} yrs</td>
+                    <td className="text-sm">₹{job.min_ctc}-{job.max_ctc}L</td>
                     <td>
-                      <span className="font-medium">
-                        {job.positions_filled}/{job.positions}
-                      </span>
+                      <span className="font-medium">{job.positions_filled || 0}/{job.positions}</span>
                     </td>
                     <td>
                       <button
-                        onClick={() => handleViewCandidates(job.id)}
+                        onClick={() => router.push(`/tl/jobs/${job.id}/candidates`)}
                         className={`font-bold text-lg ${
                           job.candidate_count > 0
                             ? 'text-blue-600 hover:text-blue-800 hover:underline'
@@ -291,19 +274,19 @@ export default function TLJobsPage() {
                       </span>
                     </td>
                     <td>
-  <div className="space-y-1">
-    <span className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-semibold">
-      👥 {job.recruiter_count || 0} recruiter{job.recruiter_count !== 1 ? 's' : ''}
-    </span>
-    {job.recruiter_allocations && (
-      <div className="text-xs text-gray-500">
-        {job.recruiter_allocations.map((alloc: any) => (
-          <div key={alloc.id}>{alloc.name}: {alloc.positions}</div>
-        ))}
-      </div>
-    )}
-  </div>
-</td>
+                      <div className="space-y-1">
+                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-semibold">
+                          👥 {job.recruiter_count || 0} recruiter{job.recruiter_count !== 1 ? 's' : ''}
+                        </span>
+                        {job.recruiter_allocations?.length > 0 && (
+                          <div className="text-xs text-gray-500">
+                            {job.recruiter_allocations.map((alloc: any) => (
+                              <div key={alloc.id}>{alloc.name}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </td>
                     <td>
                       <div className="flex gap-2">
                         <button
@@ -313,7 +296,7 @@ export default function TLJobsPage() {
                           View
                         </button>
                         <button
-                          onClick={() => handleAddCandidate(job.id)}
+                          onClick={() => router.push(`/tl/jobs/${job.id}/add-candidate`)}
                           className="text-green-600 hover:text-green-900 font-medium text-sm"
                         >
                           + Add
