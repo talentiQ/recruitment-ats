@@ -3,7 +3,7 @@
 
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { parseResumeWithAI } from '@/lib/resumeExtractor'
+import { parseResumeWithAI } from '@/lib/localResumeParser'
 
 interface ResumeUploadProps {
   candidateId: string

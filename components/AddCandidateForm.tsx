@@ -1,11 +1,10 @@
-﻿// components/AddCandidateForm.tsx - AI-POWERED RESUME PARSING via Claude
+﻿// components/AddCandidateForm.tsx - AI-POWERED RESUME PARSING via Talent IQ
 'use client'
 
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { parseResumeWithAI } from '../lib/resumeExtractor'
-
+import { parseResumeWithAI } from '@/lib/resumeExtractor'
 interface Job {
   id: string
   job_title: string
@@ -193,8 +192,7 @@ export default function AddCandidateForm({
     setAutoFilled(false)
 
     try {
-      // Call Claude AI to parse the resume
-      const parsed = await parseResumeWithAI(file)
+            const parsed = await parseResumeWithAI(file)
 
       // Auto-fill form with AI results (only overwrite if AI found something)
       setFormData(prev => ({
@@ -393,7 +391,7 @@ export default function AddCandidateForm({
           activity_type: 'candidate_created',
           activity_title: 'Candidate Created',
           activity_description: autoFilled
-            ? `Candidate added via Claude AI resume parsing (${(parseConfidence * 100).toFixed(0)}% confidence)`
+            ? `Candidate added via Talent IQ resume parsing (${(parseConfidence * 100).toFixed(0)}% confidence)`
             : 'Candidate added manually',
           metadata: { auto_filled: autoFilled, confidence: parseConfidence, skills_count: selectedSkills.length },
           performed_by: user.id,
@@ -427,7 +425,7 @@ export default function AddCandidateForm({
         <p className="text-gray-600">
           {isEditMode
             ? 'Update candidate information'
-            : 'Upload resume for Claude AI auto-fill or enter manually'}
+            : 'Upload resume for Talent IQ auto-fill or enter manually'}
         </p>
       </div>
 
@@ -436,8 +434,8 @@ export default function AddCandidateForm({
         <div className="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200">
           <div className="flex items-center gap-2 mb-4">
             <span className="text-2xl">🤖</span>
-            <h3 className="text-lg font-semibold text-blue-900">Claude AI Resume Parser</h3>
-            <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">Powered by Claude</span>
+            <h3 className="text-lg font-semibold text-blue-900">Talent IQ Resume Parser</h3>
+            <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">Powered by Talent IQ</span>
           </div>
 
           <div className="space-y-4">
@@ -464,7 +462,7 @@ export default function AddCandidateForm({
               <div className="flex items-center gap-3 p-3 bg-blue-100 rounded-lg text-blue-800">
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-700 flex-shrink-0"></div>
                 <div>
-                  <p className="text-sm font-medium">Claude AI is reading the resume...</p>
+                  <p className="text-sm font-medium">Talent IQ is reading the resume...</p>
                   <p className="text-xs text-blue-600 mt-1">Extracting name, contact, experience, skills, education</p>
                 </div>
               </div>
@@ -501,7 +499,7 @@ export default function AddCandidateForm({
           <div className="flex items-center gap-2 text-green-800">
             <span>🤖</span>
             <div>
-              <strong>Originally parsed by Claude AI</strong>
+              <strong>Originally parsed by Talent IQ</strong>
               <p className="text-sm text-green-700">
                 Confidence at parse time: {(existingCandidate.auto_fill_confidence * 100).toFixed(0)}%
               </p>
