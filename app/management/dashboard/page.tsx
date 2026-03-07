@@ -1,6 +1,6 @@
 // app/management/dashboard/page.tsx - COMPLETE FIXED VERSION
 'use client'
-
+export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
