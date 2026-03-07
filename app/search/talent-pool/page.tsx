@@ -1,6 +1,7 @@
-// app/search/talent-pool/page.tsx - COMPLETE WITH DETAILED RESULTS + ADD TO JOB
+// app/search/talent-pool/page.tsx
 'use client'
 export const dynamic = 'force-dynamic'
+
 import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
@@ -8,17 +9,15 @@ import { supabase } from '@/lib/supabase'
 import { createClient } from '@supabase/supabase-js'
 import { normalizeSkills } from '@/lib/skillNormalization'
 
-// Admin client for search ONLY
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-)
+// ── Admin client for search ONLY — graceful fallback for build time ──────────
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseServiceKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
+
+const supabaseAdmin = supabaseUrl && supabaseServiceKey
+  ? createClient(supabaseUrl, supabaseServiceKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    })
+  : createClient('https://placeholder.supabase.co', 'placeholder-key-for-build-time-only')
 
 interface SearchResult {
   source_type: 'candidate' | 'resume_bank'
@@ -54,14 +53,14 @@ export default function TalentPoolSearchPage() {
   const [loading, setLoading] = useState(false)
   const [user, setUser] = useState<any>(null)
   const [results, setResults] = useState<SearchResult[]>([])
-  
+
   // Add to Job Modal
   const [showAddToJobModal, setShowAddToJobModal] = useState(false)
   const [selectedCandidate, setSelectedCandidate] = useState<SearchResult | null>(null)
   const [myJobs, setMyJobs] = useState<any[]>([])
   const [selectedJobId, setSelectedJobId] = useState('')
   const [addingToJob, setAddingToJob] = useState(false)
-  
+
   // Filter states
   const [quickSearch, setQuickSearch] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(true)
@@ -76,7 +75,7 @@ export default function TalentPoolSearchPage() {
   const [showValidated, setShowValidated] = useState(true)
   const [showResumeBank, setShowResumeBank] = useState(true)
   const [ownershipFilter, setOwnershipFilter] = useState('all')
-  
+
   const [stats, setStats] = useState({
     total: 0,
     validated: 0,
@@ -97,7 +96,6 @@ export default function TalentPoolSearchPage() {
 
   const loadMyJobs = async (currentUser: any) => {
     try {
-      // Get jobs where user is assigned
       const { data: assignments } = await supabase
         .from('job_recruiter_assignments')
         .select(`
@@ -116,8 +114,8 @@ export default function TalentPoolSearchPage() {
 
       if (assignments) {
         const jobs = assignments
-          .map(a => a.jobs)
-          .filter(j => j !== null)
+          .map((a: any) => a.jobs)
+          .filter((j: any) => j !== null)
         setMyJobs(jobs)
       }
     } catch (error) {
@@ -142,7 +140,6 @@ export default function TalentPoolSearchPage() {
 
     setAddingToJob(true)
     try {
-      // Check if already assigned to this job
       const { data: existing } = await supabase
         .from('job_recruiter_assignments')
         .select('id')
@@ -151,7 +148,6 @@ export default function TalentPoolSearchPage() {
         .single()
 
       if (!existing) {
-        // Create assignment
         const { error: assignError } = await supabase
           .from('job_recruiter_assignments')
           .insert({
@@ -161,11 +157,9 @@ export default function TalentPoolSearchPage() {
             is_active: true,
             positions_allocated: 1
           })
-
         if (assignError) throw assignError
       }
 
-      // Create a timeline entry
       await supabase
         .from('candidate_timeline')
         .insert({
@@ -177,267 +171,208 @@ export default function TalentPoolSearchPage() {
         })
 
       alert(`✅ Success! ${selectedCandidate.full_name} added to your job. You can now work on this candidate.`)
-      
       setShowAddToJobModal(false)
       setSelectedJobId('')
       setSelectedCandidate(null)
-
     } catch (error: any) {
       console.error('Error adding to job:', error)
       alert('Error: ' + (error.message || 'Could not add to job'))
     } finally {
       setAddingToJob(false)
     }
-    let searchSkills = selectedSkills
-    if (selectedSkills.length > 0) {
-    const normalized = await normalizeSkills(selectedSkills)
-    searchSkills = normalized.normalized
-    }
   }
 
- // COMPLETE CORRECTED handleSearch FUNCTION
-// Copy this entire function to replace your existing handleSearch in app/search/talent-pool/page.tsx
+  const handleSearch = async () => {
+    setLoading(true)
+    try {
+      let allResults: SearchResult[] = []
+      const now = new Date()
 
-const handleSearch = async () => {
-  setLoading(true)
-  try {
-    let allResults: SearchResult[] = []
-    const now = new Date()
-    
-    // Normalize search skills
-    let searchSkills = selectedSkills
-    if (selectedSkills.length > 0) {
-      const normalized = await normalizeSkills(selectedSkills)
-      searchSkills = normalized.normalized
-    }
-
-    // Search ALL candidates (using admin client)
-    if (showValidated) {
-      let candidateQuery = supabaseAdmin
-        .from('candidates')
-        .select(`
-          id, full_name, phone, email,
-          current_company, current_designation,
-          total_experience, current_location,
-          expected_ctc, key_skills, notice_period,
-          current_stage, job_id,
-          last_activity_date, created_at,
-          jobs (job_title, job_code),
-          assigned_user:assigned_to (full_name),
-          resume_url
-        `)
-        .neq('current_stage', 'joined')
-
-      // Quick search filter
-      if (quickSearch.trim()) {
-        candidateQuery = candidateQuery.or(
-          `full_name.ilike.%${quickSearch}%,phone.ilike.%${quickSearch}%,email.ilike.%${quickSearch}%`
-        )
+      // Normalize search skills
+      let searchSkills = selectedSkills
+      if (selectedSkills.length > 0) {
+        const normalized = await normalizeSkills(selectedSkills)
+        searchSkills = normalized.normalized
       }
 
-      // Skills filter - use normalized searchSkills
-      if (searchSkills.length > 0) {
-        candidateQuery = candidateQuery.overlaps('key_skills', searchSkills)
-      }
+      // ── Search candidates ──────────────────────────────────────────────────
+      if (showValidated) {
+        let candidateQuery = supabaseAdmin
+          .from('candidates')
+          .select(`
+            id, full_name, phone, email,
+            current_company, current_designation,
+            total_experience, current_location,
+            expected_ctc, key_skills, notice_period,
+            current_stage, job_id,
+            last_activity_date, created_at,
+            jobs (job_title, job_code),
+            assigned_user:assigned_to (full_name),
+            resume_url
+          `)
+          .neq('current_stage', 'joined')
 
-      // Location filter
-      if (location) {
-        candidateQuery = candidateQuery.ilike('current_location', `%${location}%`)
-      }
-
-      // Experience filters
-      if (expMin) {
-        candidateQuery = candidateQuery.gte('total_experience', parseFloat(expMin))
-      }
-      if (expMax) {
-        candidateQuery = candidateQuery.lte('total_experience', parseFloat(expMax))
-      }
-
-      // CTC filters
-      if (ctcMin) {
-        candidateQuery = candidateQuery.gte('expected_ctc', parseFloat(ctcMin))
-      }
-      if (ctcMax) {
-        candidateQuery = candidateQuery.lte('expected_ctc', parseFloat(ctcMax))
-      }
-
-      // Notice period filter
-      if (noticePeriod !== 'all') {
-        const [min, max] = noticePeriod.split('-').map(Number)
-        if (max) {
-          candidateQuery = candidateQuery.gte('notice_period', min).lte('notice_period', max)
-        } else {
-          candidateQuery = candidateQuery.gte('notice_period', min)
+        if (quickSearch.trim()) {
+          candidateQuery = candidateQuery.or(
+            `full_name.ilike.%${quickSearch}%,phone.ilike.%${quickSearch}%,email.ilike.%${quickSearch}%`
+          )
         }
-      }
-
-      const { data: candidates } = await candidateQuery
-
-      if (candidates) {
-        const processedCandidates = candidates.map((c: any) => {
-          const lastActivity = c.last_activity_date ? new Date(c.last_activity_date) : new Date(c.created_at)
-          const daysSince = Math.floor((now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24))
-          const isOwned = daysSince <= 90
-          const isAvailable = daysSince > 90
-
-          return {
-            source_type: 'candidate' as const,
-            id: c.id,
-            full_name: c.full_name,
-            phone: c.phone,
-            email: c.email,
-            current_company: c.current_company,
-            current_designation: c.current_designation,
-            total_experience: c.total_experience,
-            current_location: c.current_location,
-            expected_ctc: c.expected_ctc,
-            key_skills: c.key_skills || [],
-            current_stage: c.current_stage,
-            job_id: c.job_id,
-            job_title: c.jobs?.job_title,
-            assigned_to: c.assigned_to,
-            assigned_to_name: c.assigned_user?.full_name,
-            last_activity_date: c.last_activity_date,
-            resume_url: c.resume_url,
-            days_since_activity: daysSince,
-            is_owned: isOwned,
-            is_available: isAvailable,
-            match_score: calculateMatchScore(c, searchSkills, location, expMin, expMax, ctcMin, ctcMax)
+        if (searchSkills.length > 0) {
+          candidateQuery = candidateQuery.overlaps('key_skills', searchSkills)
+        }
+        if (location) {
+          candidateQuery = candidateQuery.ilike('current_location', `%${location}%`)
+        }
+        if (expMin) candidateQuery = candidateQuery.gte('total_experience', parseFloat(expMin))
+        if (expMax) candidateQuery = candidateQuery.lte('total_experience', parseFloat(expMax))
+        if (ctcMin) candidateQuery = candidateQuery.gte('expected_ctc', parseFloat(ctcMin))
+        if (ctcMax) candidateQuery = candidateQuery.lte('expected_ctc', parseFloat(ctcMax))
+        if (noticePeriod !== 'all') {
+          const [min, max] = noticePeriod.split('-').map(Number)
+          if (max) {
+            candidateQuery = candidateQuery.gte('notice_period', min).lte('notice_period', max)
+          } else {
+            candidateQuery = candidateQuery.gte('notice_period', min)
           }
-        })
-
-        // Apply ownership filter
-        let filteredCandidates = processedCandidates
-        if (ownershipFilter === 'owned') {
-          filteredCandidates = processedCandidates.filter(c => c.is_owned)
-        } else if (ownershipFilter === 'available') {
-          filteredCandidates = processedCandidates.filter(c => c.is_available)
         }
 
-        allResults = allResults.concat(filteredCandidates)
+        const { data: candidates } = await candidateQuery
+
+        if (candidates) {
+          const processedCandidates = candidates.map((c: any) => {
+            const lastActivity = c.last_activity_date ? new Date(c.last_activity_date) : new Date(c.created_at)
+            const daysSince = Math.floor((now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24))
+            const isOwned = daysSince <= 90
+            const isAvailable = daysSince > 90
+
+            return {
+              source_type: 'candidate' as const,
+              id: c.id,
+              full_name: c.full_name,
+              phone: c.phone,
+              email: c.email,
+              current_company: c.current_company,
+              current_designation: c.current_designation,
+              total_experience: c.total_experience,
+              current_location: c.current_location,
+              expected_ctc: c.expected_ctc,
+              key_skills: c.key_skills || [],
+              current_stage: c.current_stage,
+              job_id: c.job_id,
+              job_title: c.jobs?.job_title,
+              assigned_to: c.assigned_to,
+              assigned_to_name: c.assigned_user?.full_name,
+              last_activity_date: c.last_activity_date,
+              resume_url: c.resume_url,
+              days_since_activity: daysSince,
+              is_owned: isOwned,
+              is_available: isAvailable,
+              match_score: calculateMatchScore(c, searchSkills, location, expMin, expMax, ctcMin, ctcMax)
+            }
+          })
+
+          let filteredCandidates = processedCandidates
+          if (ownershipFilter === 'owned') {
+            filteredCandidates = processedCandidates.filter(c => c.is_owned)
+          } else if (ownershipFilter === 'available') {
+            filteredCandidates = processedCandidates.filter(c => c.is_available)
+          }
+
+          allResults = allResults.concat(filteredCandidates)
+        }
       }
+
+      // ── Search resume bank ─────────────────────────────────────────────────
+      if (showResumeBank) {
+        let resumeQuery = supabaseAdmin
+          .from('resume_bank')
+          .select(`
+            id, full_name, phone, email,
+            current_company, current_designation,
+            total_experience, current_location,
+            expected_ctc, key_skills, notice_period,
+            status, uploaded_by, uploaded_at,
+            resume_url,
+            uploader:uploaded_by (full_name)
+          `)
+          .eq('status', 'available')
+
+        if (quickSearch.trim()) {
+          resumeQuery = resumeQuery.or(
+            `full_name.ilike.%${quickSearch}%,phone.ilike.%${quickSearch}%,email.ilike.%${quickSearch}%`
+          )
+        }
+        if (searchSkills.length > 0) {
+          resumeQuery = resumeQuery.overlaps('key_skills', searchSkills)
+        }
+        if (location) resumeQuery = resumeQuery.ilike('current_location', `%${location}%`)
+        if (expMin) resumeQuery = resumeQuery.gte('total_experience', parseFloat(expMin))
+        if (expMax) resumeQuery = resumeQuery.lte('total_experience', parseFloat(expMax))
+        if (ctcMin) resumeQuery = resumeQuery.gte('expected_ctc', parseFloat(ctcMin))
+        if (ctcMax) resumeQuery = resumeQuery.lte('expected_ctc', parseFloat(ctcMax))
+        if (noticePeriod !== 'all') {
+          const [min, max] = noticePeriod.split('-').map(Number)
+          if (max) {
+            resumeQuery = resumeQuery.gte('notice_period', min).lte('notice_period', max)
+          } else {
+            resumeQuery = resumeQuery.gte('notice_period', min)
+          }
+        }
+
+        const { data: resumes } = await resumeQuery
+
+        if (resumes) {
+          const processedResumes = resumes.map((r: any) => ({
+            source_type: 'resume_bank' as const,
+            id: r.id,
+            full_name: r.full_name,
+            phone: r.phone,
+            email: r.email,
+            current_company: r.current_company,
+            current_designation: r.current_designation,
+            total_experience: r.total_experience,
+            current_location: r.current_location,
+            expected_ctc: r.expected_ctc,
+            key_skills: r.key_skills || [],
+            resume_bank_status: r.status,
+            uploaded_by: r.uploaded_by,
+            uploaded_by_name: r.uploader?.full_name,
+            uploaded_at: r.uploaded_at,
+            resume_url: r.resume_url,
+            days_since_activity: 0,
+            is_owned: false,
+            is_available: true,
+            match_score: calculateMatchScore(r, searchSkills, location, expMin, expMax, ctcMin, ctcMax)
+          }))
+
+          if (ownershipFilter === 'available' || ownershipFilter === 'all') {
+            allResults = allResults.concat(processedResumes)
+          }
+        }
+      }
+
+      // Sort by match score
+      allResults.sort((a, b) => b.match_score - a.match_score)
+
+      const validated  = allResults.filter(r => r.source_type === 'candidate').length
+      const resumeBank = allResults.filter(r => r.source_type === 'resume_bank').length
+      const owned      = allResults.filter(r => r.is_owned).length
+      const available  = allResults.filter(r => r.is_available).length
+      const avgMatch   = allResults.length > 0
+        ? Math.round(allResults.reduce((sum, r) => sum + r.match_score, 0) / allResults.length)
+        : 0
+
+      setStats({ total: allResults.length, validated, resumeBank, owned, available, avgMatch })
+      setResults(allResults)
+
+    } catch (error) {
+      console.error('Search error:', error)
+      alert('Error searching. Please try again.')
+    } finally {
+      setLoading(false)
     }
-
-    // Search ALL resume bank (using admin client)
-    if (showResumeBank) {
-      let resumeQuery = supabaseAdmin
-        .from('resume_bank')
-        .select(`
-          id, full_name, phone, email,
-          current_company, current_designation,
-          total_experience, current_location,
-          expected_ctc, key_skills, notice_period,
-          status, uploaded_by, uploaded_at,
-          resume_url,
-          uploader:uploaded_by (full_name)
-        `)
-        .eq('status', 'available')
-
-      // Quick search filter
-      if (quickSearch.trim()) {
-        resumeQuery = resumeQuery.or(
-          `full_name.ilike.%${quickSearch}%,phone.ilike.%${quickSearch}%,email.ilike.%${quickSearch}%`
-        )
-      }
-
-      // Skills filter - use normalized searchSkills
-      if (searchSkills.length > 0) {
-        resumeQuery = resumeQuery.overlaps('key_skills', searchSkills)
-      }
-
-      // Location filter
-      if (location) {
-        resumeQuery = resumeQuery.ilike('current_location', `%${location}%`)
-      }
-
-      // Experience filters
-      if (expMin) {
-        resumeQuery = resumeQuery.gte('total_experience', parseFloat(expMin))
-      }
-      if (expMax) {
-        resumeQuery = resumeQuery.lte('total_experience', parseFloat(expMax))
-      }
-
-      // CTC filters
-      if (ctcMin) {
-        resumeQuery = resumeQuery.gte('expected_ctc', parseFloat(ctcMin))
-      }
-      if (ctcMax) {
-        resumeQuery = resumeQuery.lte('expected_ctc', parseFloat(ctcMax))
-      }
-
-      // Notice period filter
-      if (noticePeriod !== 'all') {
-        const [min, max] = noticePeriod.split('-').map(Number)
-        if (max) {
-          resumeQuery = resumeQuery.gte('notice_period', min).lte('notice_period', max)
-        } else {
-          resumeQuery = resumeQuery.gte('notice_period', min)
-        }
-      }
-
-      const { data: resumes } = await resumeQuery
-
-      if (resumes) {
-        const processedResumes = resumes.map((r: any) => ({
-          source_type: 'resume_bank' as const,
-          id: r.id,
-          full_name: r.full_name,
-          phone: r.phone,
-          email: r.email,
-          current_company: r.current_company,
-          current_designation: r.current_designation,
-          total_experience: r.total_experience,
-          current_location: r.current_location,
-          expected_ctc: r.expected_ctc,
-          key_skills: r.key_skills || [],
-          resume_bank_status: r.status,
-          uploaded_by: r.uploaded_by,
-          uploaded_by_name: r.uploader?.full_name,
-          uploaded_at: r.uploaded_at,
-          resume_url: r.resume_url,
-          days_since_activity: 0,
-          is_owned: false,
-          is_available: true,
-          match_score: calculateMatchScore(r, searchSkills, location, expMin, expMax, ctcMin, ctcMax)
-        }))
-
-        if (ownershipFilter === 'available' || ownershipFilter === 'all') {
-          allResults = allResults.concat(processedResumes)
-        }
-      }
-    }
-
-    // Sort by match score
-    allResults.sort((a, b) => b.match_score - a.match_score)
-
-    // Calculate stats
-    const validated = allResults.filter(r => r.source_type === 'candidate').length
-    const resumeBank = allResults.filter(r => r.source_type === 'resume_bank').length
-    const owned = allResults.filter(r => r.is_owned).length
-    const available = allResults.filter(r => r.is_available).length
-    const avgMatch = allResults.length > 0 
-      ? Math.round(allResults.reduce((sum, r) => sum + r.match_score, 0) / allResults.length)
-      : 0
-
-    setStats({
-      total: allResults.length,
-      validated,
-      resumeBank,
-      owned,
-      available,
-      avgMatch
-    })
-
-    setResults(allResults)
-
-  } catch (error) {
-    console.error('Search error:', error)
-    alert('Error searching. Please try again.')
-  } finally {
-    setLoading(false)
   }
-}
+
   const calculateMatchScore = (
     candidate: any,
     skills: string[],
@@ -449,7 +384,7 @@ const handleSearch = async () => {
   ): number => {
     let score = 0
     if (skills.length > 0 && candidate.key_skills) {
-      const matchedSkills = skills.filter(s => 
+      const matchedSkills = skills.filter(s =>
         candidate.key_skills.some((cs: string) => cs.toLowerCase() === s.toLowerCase())
       )
       score += Math.round((matchedSkills.length / skills.length) * 40)
@@ -509,10 +444,7 @@ const handleSearch = async () => {
   }
 
   const handleViewResume = async (resumeUrl: string) => {
-    if (!resumeUrl) {
-      alert('No resume available')
-      return
-    }
+    if (!resumeUrl) { alert('No resume available'); return }
     window.open(resumeUrl, '_blank')
   }
 
@@ -554,6 +486,7 @@ const handleSearch = async () => {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
+
         {/* Header */}
         <div className="text-center">
           <h2 className="text-3xl font-bold text-gray-900">🔍 Organization-Wide Talent Pool</h2>
@@ -575,7 +508,7 @@ const handleSearch = async () => {
           />
         </div>
 
-        {/* Advanced Filters - Collapsed for brevity, same as before */}
+        {/* Advanced Filters */}
         <div className="card">
           <button
             onClick={() => setShowAdvanced(!showAdvanced)}
@@ -665,7 +598,6 @@ const handleSearch = async () => {
                     </label>
                   </div>
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Ownership Status:</label>
                   <select value={ownershipFilter} onChange={(e) => setOwnershipFilter(e.target.value)} className="input">
@@ -722,7 +654,7 @@ const handleSearch = async () => {
           </div>
         )}
 
-        {/* Results - DETAILED VERSION */}
+        {/* Results */}
         {loading ? (
           <div className="card text-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
@@ -739,14 +671,14 @@ const handleSearch = async () => {
               <div
                 key={`${result.source_type}-${result.id}`}
                 className={`card hover:shadow-lg transition ${
-                  result.is_available && result.source_type === 'candidate' 
-                    ? 'border-2 border-green-300 bg-green-50' 
+                  result.is_available && result.source_type === 'candidate'
+                    ? 'border-2 border-green-300 bg-green-50'
                     : ''
                 }`}
               >
                 {/* Header */}
                 <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     <span className="text-2xl font-bold text-gray-400">#{index + 1}</span>
                     <h3 className="font-bold text-lg text-gray-900">{result.full_name}</h3>
                     {getOwnershipBadge(result)}
@@ -929,7 +861,7 @@ const handleSearch = async () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
             <h3 className="text-xl font-bold mb-4">Add to My Job</h3>
-            
+
             <div className="mb-4">
               <p className="text-sm text-gray-600 mb-2">Adding:</p>
               <p className="font-medium">{selectedCandidate.full_name}</p>
@@ -937,16 +869,10 @@ const handleSearch = async () => {
             </div>
 
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select Your Job:
-              </label>
-              <select
-                value={selectedJobId}
-                onChange={(e) => setSelectedJobId(e.target.value)}
-                className="input"
-              >
+              <label className="block text-sm font-medium text-gray-700 mb-2">Select Your Job:</label>
+              <select value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)} className="input">
                 <option value="">-- Select a Job --</option>
-                {myJobs.map(job => (
+                {myJobs.map((job: any) => (
                   <option key={job.id} value={job.id}>
                     {job.job_code} - {job.job_title} ({job.clients?.company_name})
                   </option>
