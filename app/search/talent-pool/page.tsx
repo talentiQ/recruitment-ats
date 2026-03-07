@@ -1,6 +1,6 @@
 // app/search/talent-pool/page.tsx - COMPLETE WITH DETAILED RESULTS + ADD TO JOB
 'use client'
-
+export const dynamic = 'force-dynamic'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
