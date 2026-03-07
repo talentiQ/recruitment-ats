@@ -5,6 +5,8 @@ import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { parseResumeWithAI } from '@/lib/resumeExtractor'
+import { normalizeSkills } from '@/lib/skillNormalization'
+
 interface Job {
   id: string
   job_title: string
@@ -249,11 +251,13 @@ export default function AddCandidateForm({
       } else {
         query = query.eq('email', email)
       }
+      
 
       if (isEditMode && existingCandidate) {
         query = query.neq('id', existingCandidate.id)
       }
-
+      
+      
       const { data } = await query
 
       if (data && data.length > 0) {
@@ -301,116 +305,123 @@ export default function AddCandidateForm({
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  e.preventDefault()
 
-    if (!formData.full_name || !formData.phone || !formData.job_id) {
-      alert('Please fill all required fields (Name, Phone, Job)')
-      return
-    }
+  if (!formData.full_name || !formData.phone || !formData.job_id) {
+    alert('Please fill all required fields (Name, Phone, Job)')
+    return
+  }
 
-    if (!isEditMode) {
-      const isDuplicate = await checkDuplicate(formData.phone, formData.email)
-      if (isDuplicate) {
-        const confirm = window.confirm(`DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`)
-        if (!confirm) return
-      }
-    }
-
-    setLoading(true)
-
-    try {
-      const candidateData = {
-        ...formData,
-        total_experience: parseFloat(formData.total_experience) || 0,
-        relevant_experience: parseFloat(formData.relevant_experience) || 0,
-        current_ctc: parseFloat(formData.current_ctc) || 0,
-        expected_ctc: parseFloat(formData.expected_ctc) || 0,
-        notice_period: parseInt(formData.notice_period) || 0,
-        key_skills: selectedSkills,
-        last_activity_date: new Date().toISOString(),
-      }
-
-      if (isEditMode && existingCandidate) {
-        const { error } = await supabase
-          .from('candidates')
-          .update(candidateData)
-          .eq('id', existingCandidate.id)
-
-        if (error) throw error
-
-        await supabase.from('candidate_timeline').insert([{
-          candidate_id: existingCandidate.id,
-          activity_type: 'candidate_updated',
-          activity_title: 'Candidate Updated',
-          activity_description: 'Candidate information was updated',
-          performed_by: user.id,
-        }])
-
-        alert('Candidate updated successfully!')
-        if (redirectPath) router.push(redirectPath)
-        else router.back()
-
-      } else {
-        let resumeUrl = null
-        if (resumeFile) {
-          const fileExt = resumeFile.name.split('.').pop()
-          const fileName = `${Date.now()}_${formData.full_name.replace(/\s+/g, '_')}.${fileExt}`
-          const { error: uploadError } = await supabase.storage
-            .from('resumes')
-            .upload(`resumes/${fileName}`, resumeFile)
-
-          if (!uploadError) {
-            const { data: urlData } = supabase.storage.from('resumes').getPublicUrl(`resumes/${fileName}`)
-            resumeUrl = urlData.publicUrl
-          }
-        }
-
-        const { data, error } = await supabase
-          .from('candidates')
-          .insert([{
-            ...candidateData,
-            assigned_to: user.id,
-            team_id: user.team_id,
-            created_by: user.id,
-            current_stage: 'sourced',
-            date_sourced: new Date().toISOString(),
-            resume_url: resumeUrl,
-            resume_file_name: resumeFile?.name,
-            resume_file_size: resumeFile?.size,
-            resume_uploaded_at: resumeUrl ? new Date().toISOString() : null,
-            resume_parsed: autoFilled,
-            auto_filled: autoFilled,
-            auto_fill_confidence: parseConfidence,
-          }])
-          .select()
-
-        if (error) throw error
-
-        await supabase.from('candidate_timeline').insert([{
-          candidate_id: data[0].id,
-          activity_type: 'candidate_created',
-          activity_title: 'Candidate Created',
-          activity_description: autoFilled
-            ? `Candidate added via Talent IQ resume parsing (${(parseConfidence * 100).toFixed(0)}% confidence)`
-            : 'Candidate added manually',
-          metadata: { auto_filled: autoFilled, confidence: parseConfidence, skills_count: selectedSkills.length },
-          performed_by: user.id,
-        }])
-
-        alert('Candidate added successfully!')
-
-        if (redirectPath) router.push(redirectPath)
-        else if (userRole === 'team_leader') router.push('/tl/candidates')
-        else if (userRole === 'sr_team_leader') router.push('/sr-tl/candidates')
-        else router.push('/recruiter/dashboard')
-      }
-    } catch (error: any) {
-      console.error('Submit error:', error)
-      alert('Error: ' + error.message)
-    } finally {
-      setLoading(false)
+  if (!isEditMode) {
+    const isDuplicate = await checkDuplicate(formData.phone, formData.email)
+    if (isDuplicate) {
+      const confirm = window.confirm(`DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`)
+      if (!confirm) return
     }
   }
+
+  setLoading(true)
+
+  try {
+    // Normalize skills before creating candidateData
+    let normalizedSkills = selectedSkills
+    if (selectedSkills.length > 0) {
+      const normalized = await normalizeSkills(selectedSkills)
+      normalizedSkills = normalized.normalized
+    }
+
+    const candidateData = {
+      ...formData,
+      total_experience: parseFloat(formData.total_experience) || 0,
+      relevant_experience: parseFloat(formData.relevant_experience) || 0,
+      current_ctc: parseFloat(formData.current_ctc) || 0,
+      expected_ctc: parseFloat(formData.expected_ctc) || 0,
+      notice_period: parseInt(formData.notice_period) || 0,
+      key_skills: normalizedSkills,
+      last_activity_date: new Date().toISOString(),
+    }
+
+    if (isEditMode && existingCandidate) {
+      const { error } = await supabase
+        .from('candidates')
+        .update(candidateData)
+        .eq('id', existingCandidate.id)
+
+      if (error) throw error
+
+      await supabase.from('candidate_timeline').insert([{
+        candidate_id: existingCandidate.id,
+        activity_type: 'candidate_updated',
+        activity_title: 'Candidate Updated',
+        activity_description: 'Candidate information was updated',
+        performed_by: user.id,
+      }])
+
+      alert('Candidate updated successfully!')
+      if (redirectPath) router.push(redirectPath)
+      else router.back()
+
+    } else {
+      let resumeUrl = null
+      if (resumeFile) {
+        const fileExt = resumeFile.name.split('.').pop()
+        const fileName = `${Date.now()}_${formData.full_name.replace(/\s+/g, '_')}.${fileExt}`
+        const { error: uploadError } = await supabase.storage
+          .from('resumes')
+          .upload(`resumes/${fileName}`, resumeFile)
+
+        if (!uploadError) {
+          const { data: urlData } = supabase.storage.from('resumes').getPublicUrl(`resumes/${fileName}`)
+          resumeUrl = urlData.publicUrl
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('candidates')
+        .insert([{
+          ...candidateData,
+          assigned_to: user.id,
+          team_id: user.team_id,
+          created_by: user.id,
+          current_stage: 'sourced',
+          date_sourced: new Date().toISOString(),
+          resume_url: resumeUrl,
+          resume_file_name: resumeFile?.name,
+          resume_file_size: resumeFile?.size,
+          resume_uploaded_at: resumeUrl ? new Date().toISOString() : null,
+          resume_parsed: autoFilled,
+          auto_filled: autoFilled,
+          auto_fill_confidence: parseConfidence,
+        }])
+        .select()
+
+      if (error) throw error
+
+      await supabase.from('candidate_timeline').insert([{
+        candidate_id: data[0].id,
+        activity_type: 'candidate_created',
+        activity_title: 'Candidate Created',
+        activity_description: autoFilled
+          ? `Candidate added via Talent IQ resume parsing (${(parseConfidence * 100).toFixed(0)}% confidence)`
+          : 'Candidate added manually',
+        metadata: { auto_filled: autoFilled, confidence: parseConfidence, skills_count: normalizedSkills.length },
+        performed_by: user.id,
+      }])
+
+      alert('Candidate added successfully!')
+
+      if (redirectPath) router.push(redirectPath)
+      else if (userRole === 'team_leader') router.push('/tl/candidates')
+      else if (userRole === 'sr_team_leader') router.push('/sr-tl/candidates')
+      else router.push('/recruiter/dashboard')
+    }
+  } catch (error: any) {
+    console.error('Submit error:', error)
+    alert('Error: ' + error.message)
+  } finally {
+    setLoading(false)
+  }
+}
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })

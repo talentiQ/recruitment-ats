@@ -386,7 +386,7 @@ export default function TLDashboard() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">JTeam Leader Dashboard</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Team Leader Dashboard</h2>
           <p className="text-gray-600">Detailed team performance monitoring & oversight</p>
         </div>
 

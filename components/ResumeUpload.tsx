@@ -1,76 +1,67 @@
-// components/ResumeUpload.tsx - ENHANCED VERSION
 'use client'
 
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { parseResumeWithAI } from '@/lib/localResumeParser'
+import { parseResumeLocally, LocalParsedResume } from '@/lib/localResumeParser'
+import mammoth from 'mammoth'
 
 interface ResumeUploadProps {
   candidateId: string
   candidateName: string
   currentCandidateData: any
-  onUploadComplete: (parsedData: any) => void
+  onUploadComplete: (parsedData: LocalParsedResume) => void
 }
 
-export default function ResumeUpload({ 
-  candidateId, 
-  candidateName, 
-  currentCandidateData,
-  onUploadComplete 
-}: ResumeUploadProps) {
-  const [uploading, setUploading] = useState(false)
-  const [parsing, setParsing] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [parsedData, setParsedData] = useState<any>(null)
-  const [showParsedData, setShowParsedData] = useState(false)
+// ─── Text extraction ──────────────────────────────────────────────────────────
 
-  const parseResumeFile = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      
-      reader.onload = async (e) => {
-        try {
-          const text = e.target?.result as string
-          
-          // For PDFs and Word docs, we'd use proper libraries
-          // For now, handle text extraction based on file type
-          if (file.type === 'application/pdf') {
-            // Would use pdf.js here
-            resolve(text) // Placeholder
-          } else if (file.type.includes('word')) {
-            // Would use mammoth.js here
-            resolve(text) // Placeholder
-          } else {
-            resolve(text)
-          }
-        } catch (error) {
-          reject(error)
-        }
-      }
-      
-      reader.onerror = () => reject(new Error('Failed to read file'))
-      reader.readAsText(file)
-    })
+async function extractTextFromFile(file: File): Promise<string> {
+  // DOCX → mammoth
+  if (
+    file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    file.name.endsWith('.docx')
+  ) {
+    const arrayBuffer = await file.arrayBuffer()
+    const result = await mammoth.extractRawText({ arrayBuffer })
+    return result.value
   }
+
+  // PDF / TXT → plain text read
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => resolve((e.target?.result as string) ?? '')
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsText(file)
+  })
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export default function ResumeUpload({
+  candidateId,
+  candidateName,
+  currentCandidateData,
+  onUploadComplete,
+}: ResumeUploadProps) {
+  const [uploading, setUploading]       = useState(false)
+  const [parsing, setParsing]           = useState(false)
+  const [progress, setProgress]         = useState(0)
+  const [parsedData, setParsedData]     = useState<LocalParsedResume | null>(null)
+  const [showParsedData, setShowParsedData] = useState(false)
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Validate file type
     const validTypes = [
-      'application/pdf', 
-      'application/msword', 
+      'application/pdf',
+      'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'text/plain'
+      'text/plain',
     ]
-    
     if (!validTypes.includes(file.type)) {
       alert('Please upload only PDF, Word, or Text documents')
       return
     }
-
-    // Validate file size (max 10MB)
     if (file.size > 10 * 1024 * 1024) {
       alert('File size must be less than 10MB')
       return
@@ -80,18 +71,19 @@ export default function ResumeUpload({
     setProgress(5)
 
     try {
-      // Step 1: Parse resume content
+      // ── Step 1: Extract text then parse ─────────────────────────────────────
       setParsing(true)
       setProgress(15)
-      
-      const resumeText = await parseResumeFile(file)
-      const parsed = await parseResumeWithAI(file)
-      
+
+      const resumeText = await extractTextFromFile(file)   // FIX: extract first
+      const parsed = parseResumeLocally(resumeText)        // FIX: correct fn name + pass string
+
       setProgress(30)
       setParsedData(parsed)
-      
-      // Step 2: Upload to Supabase Storage
-      const fileExt = file.name.split('.').pop()
+      setParsing(false)
+
+      // ── Step 2: Upload to Supabase Storage ───────────────────────────────────
+      const fileExt  = file.name.split('.').pop()
       const fileName = `${candidateId}_${Date.now()}.${fileExt}`
       const filePath = `resumes/${fileName}`
 
@@ -100,75 +92,82 @@ export default function ResumeUpload({
       const { error: uploadError } = await supabase.storage
         .from('resumes')
         .upload(filePath, file)
-
       if (uploadError) throw uploadError
 
       setProgress(70)
 
-      // Get public URL
       const { data: urlData } = supabase.storage
         .from('resumes')
         .getPublicUrl(filePath)
 
       setProgress(80)
 
-      // Step 3: Update candidate with resume URL and parsed data
-      const updateData = {
-        resume_url: urlData.publicUrl,
-        resume_file_name: file.name,
-        resume_file_size: file.size,
-        resume_uploaded_at: new Date().toISOString(),
-        resume_parsed: true,
-        resume_parse_date: new Date().toISOString(),
-        parsed_skills: parsed.skills,
-        parsed_education: parsed.education,
-        parsed_certifications: parsed.certifications,
-        linkedin_url: parsed.linkedIn,
-        github_url: parsed.github,
-        languages_known: parsed.languages,
-        last_activity_date: new Date().toISOString(),
-        
-        // Auto-fill if not already present
-        ...(parsed.email && !currentCandidateData.email && { email: parsed.email }),
-        ...(parsed.phone && !currentCandidateData.phone && { phone: parsed.phone }),
-        ...(parsed.location && !currentCandidateData.current_location && { current_location: parsed.location }),
-        ...(parsed.dateOfBirth && !currentCandidateData.date_of_birth && { date_of_birth: parsed.dateOfBirth }),
+      // ── Step 3: Update candidate record ──────────────────────────────────────
+      const updateData: Record<string, any> = {
+        resume_url:          urlData.publicUrl,
+        resume_file_name:    file.name,
+        resume_file_size:    file.size,
+        resume_uploaded_at:  new Date().toISOString(),
+        resume_parsed:       true,
+        resume_parse_date:   new Date().toISOString(),
+        last_activity_date:  new Date().toISOString(),
+
+        // FIX: use correct field names from LocalParsedResume
+        parsed_skills:       parsed.skills,
+        education_level:     parsed.education_level,
+        education_degree:    parsed.education_degree,
+        education_field:     parsed.education_field,
+        education_institution: parsed.education_institution,
+        sector:              parsed.sector,
+
+        // Auto-fill only if not already present on the candidate record
+        ...(parsed.email        && !currentCandidateData.email             && { email: parsed.email }),
+        ...(parsed.phone        && !currentCandidateData.phone             && { phone: parsed.phone }),
+        ...(parsed.current_location && !currentCandidateData.current_location && { current_location: parsed.current_location }), // FIX: was parsed.location
+        ...(parsed.date_of_birth && !currentCandidateData.date_of_birth   && { date_of_birth: parsed.date_of_birth }),           // FIX: was parsed.dateOfBirth
+        ...(parsed.gender       && !currentCandidateData.gender            && { gender: parsed.gender }),
+        ...(parsed.current_company && !currentCandidateData.current_company && { current_company: parsed.current_company }),
+        ...(parsed.current_designation && !currentCandidateData.current_designation && { current_designation: parsed.current_designation }),
+        ...(parsed.total_experience !== null && !currentCandidateData.total_experience && { total_experience: parsed.total_experience }),
+        ...(parsed.notice_period !== null    && !currentCandidateData.notice_period    && { notice_period: parsed.notice_period }),
+        ...(parsed.current_ctc  !== null && !currentCandidateData.current_ctc  && { current_ctc: parsed.current_ctc }),
+        ...(parsed.expected_ctc !== null && !currentCandidateData.expected_ctc && { expected_ctc: parsed.expected_ctc }),
       }
 
       const { error: updateError } = await supabase
         .from('candidates')
         .update(updateData)
         .eq('id', candidateId)
-
       if (updateError) throw updateError
 
       setProgress(90)
 
-      // Step 4: Add to timeline
+      // ── Step 4: Timeline entry ────────────────────────────────────────────────
       const userData = JSON.parse(localStorage.getItem('user') || '{}')
-      
+
       await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidateId,
-        activity_type: 'resume_uploaded',
-        activity_title: 'Resume Uploaded',
+        candidate_id:         candidateId,
+        activity_type:        'resume_uploaded',
+        activity_title:       'Resume Uploaded',
         activity_description: `Resume "${file.name}" uploaded and parsed successfully`,
         metadata: {
-          file_name: file.name,
-          file_size: file.size,
-          skills_found: parsed.skills.length,
-          parsed_fields: Object.keys(parsed).filter(k => parsed[k as keyof typeof parsed])
+          file_name:     file.name,
+          file_size:     file.size,
+          skills_found:  parsed.skills.length,
+          confidence:    parsed.confidence,
+          sector:        parsed.sector,
         },
-        performed_by: userData.id
+        performed_by: userData.id,
       }])
 
       setProgress(100)
       setShowParsedData(true)
-      
+
       setTimeout(() => {
         alert('✅ Resume uploaded and parsed successfully!')
         onUploadComplete(parsed)
       }, 500)
-      
+
     } catch (error: any) {
       console.error('Upload error:', error)
       alert('Error uploading resume: ' + error.message)
@@ -203,9 +202,7 @@ export default function ResumeUpload({
       {uploading && (
         <div className="space-y-2">
           <div className="flex justify-between text-sm text-gray-600">
-            <span>
-              {parsing ? '📄 Parsing resume...' : '📤 Uploading...'}
-            </span>
+            <span>{parsing ? '📄 Parsing resume...' : '📤 Uploading...'}</span>
             <span>{progress}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2">
@@ -217,18 +214,21 @@ export default function ResumeUpload({
         </div>
       )}
 
-      {/* Show parsed data preview */}
       {showParsedData && parsedData && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <h4 className="font-semibold text-green-900 mb-3">
             ✅ Parsed Information from Resume
+            <span className="ml-2 text-xs font-normal text-green-700">
+              ({Math.round(parsedData.confidence * 100)}% confidence)
+            </span>
           </h4>
           <div className="space-y-2 text-sm">
+
             {parsedData.skills.length > 0 && (
               <div>
                 <span className="font-medium text-gray-700">Skills Found:</span>
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {parsedData.skills.slice(0, 10).map((skill: string, i: number) => (
+                  {parsedData.skills.slice(0, 10).map((skill, i) => (
                     <span key={i} className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
                       {skill}
                     </span>
@@ -241,32 +241,34 @@ export default function ResumeUpload({
                 </div>
               </div>
             )}
+
             {parsedData.email && (
-              <div>
-                <span className="font-medium text-gray-700">Email:</span>{' '}
-                <span className="text-gray-900">{parsedData.email}</span>
-              </div>
+              <div><span className="font-medium text-gray-700">Email:</span>{' '}{parsedData.email}</div>
             )}
             {parsedData.phone && (
+              <div><span className="font-medium text-gray-700">Phone:</span>{' '}{parsedData.phone}</div>
+            )}
+            {/* FIX: was parsed.location → parsed.current_location */}
+            {parsedData.current_location && (
+              <div><span className="font-medium text-gray-700">Location:</span>{' '}{parsedData.current_location}</div>
+            )}
+            {parsedData.current_company && (
+              <div><span className="font-medium text-gray-700">Company:</span>{' '}{parsedData.current_company}</div>
+            )}
+            {parsedData.current_designation && (
+              <div><span className="font-medium text-gray-700">Designation:</span>{' '}{parsedData.current_designation}</div>
+            )}
+            {parsedData.total_experience !== null && (
+              <div><span className="font-medium text-gray-700">Experience:</span>{' '}{parsedData.total_experience} yrs</div>
+            )}
+            {parsedData.education_degree && (
               <div>
-                <span className="font-medium text-gray-700">Phone:</span>{' '}
-                <span className="text-gray-900">{parsedData.phone}</span>
+                <span className="font-medium text-gray-700">Education:</span>{' '}
+                {[parsedData.education_degree, parsedData.education_field, parsedData.education_institution]
+                  .filter(Boolean).join(' — ')}
               </div>
             )}
-            {parsedData.location && (
-              <div>
-                <span className="font-medium text-gray-700">Location:</span>{' '}
-                <span className="text-gray-900">{parsedData.location}</span>
-              </div>
-            )}
-            {parsedData.linkedIn && (
-              <div>
-                <span className="font-medium text-gray-700">LinkedIn:</span>{' '}
-                <a href={parsedData.linkedIn} target="_blank" className="text-blue-600 hover:underline">
-                  {parsedData.linkedIn}
-                </a>
-              </div>
-            )}
+            {/* NOTE: linkedIn / github / languages are NOT in localResumeParser v4 */}
           </div>
         </div>
       )}
