@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import DashboardLayout from '@/components/DashboardLayout'
 import * as XLSX from 'xlsx'
+console.log('SERVICE KEY PRESENT:', !!process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY)
+console.log('SERVICE KEY VALUE:', process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY?.slice(0, 20))
 
 interface RecruiterProgress {
   recruiter_id: string
