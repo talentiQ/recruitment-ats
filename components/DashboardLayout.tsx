@@ -176,7 +176,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
     if (user.role === 'team_leader' || user.role === 'sr_team_leader') {
       baseNavigation.push({
-        name: 'Team',
+        name: 'Team Pipeline Analytics',
         href: `/${rolePrefix}/team`,
         icon: '👨‍💼',
         description: 'Team members'
