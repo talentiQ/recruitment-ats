@@ -3,7 +3,7 @@
 export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import { supabase as supabaseAdmin } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
 import * as XLSX from 'xlsx'
 console.log('SERVICE KEY PRESENT:', !!process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY)

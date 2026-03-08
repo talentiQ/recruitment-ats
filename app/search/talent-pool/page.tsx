@@ -6,18 +6,10 @@ import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { createClient } from '@supabase/supabase-js'
 import { normalizeSkills } from '@/lib/skillNormalization'
 
-// ── Admin client for search ONLY — graceful fallback for build time ──────────
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseServiceKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
-
-const supabaseAdmin = supabaseUrl && supabaseServiceKey
-  ? createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
-    })
-  : createClient('https://placeholder.supabase.co', 'placeholder-key-for-build-time-only')
+// Use regular supabase client — RLS policies handle access control
+const supabaseAdmin = supabase
 
 interface SearchResult {
   source_type: 'candidate' | 'resume_bank'
