@@ -111,6 +111,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           description: 'Offer Management'
         },
         {
+          name: 'Billing & Invoices',
+          href: '/management/billing',
+          icon: '💰',
+          description: 'Billing & Invoices'
+        },
+        {
           name: 'Talent Pool Search',
           href: '/search/talent-pool',
           icon: '🔍',
