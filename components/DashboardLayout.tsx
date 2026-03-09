@@ -105,10 +105,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           description: 'All teams & performance'
         },
         {
-          name: 'Revenue Reports',
-          href: '/management/revenue',
+          name: 'Offers Control',
+          href: '/management/Offers',
           icon: '💰',
-          description: 'Financial analytics'
+          description: 'Offer Management'
         },
         {
           name: 'Talent Pool Search',
