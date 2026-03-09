@@ -277,9 +277,9 @@ export default function CandidateDetailView({
       `Mark ${candidate.full_name} as joined?\n\n` +
       `Joining Date: ${new Date(joiningDate).toLocaleDateString()}\n` +
       `Client: ${candidate.jobs?.clients?.company_name}\n` +
-      `Billable CTC: Rs. ${(activeOffer.billable_ctc / 100000).toFixed(2)}L\n` +
+      `Billable CTC: Rs. ${(activeOffer.billable_ctc).toFixed(2)}L\n` +
       `Fee: ${activeOffer.revenue_percentage || 8.33}%\n` +
-      `Revenue: Rs. ${((activeOffer.billable_ctc * (activeOffer.revenue_percentage || 8.33) / 100) / 100000).toFixed(2)}L`
+      `Revenue: Rs. ${((activeOffer.billable_ctc * (activeOffer.revenue_percentage || 8.33) / 100)).toFixed(2)}L`
     )
     
     if (!confirmed) return
@@ -292,7 +292,7 @@ export default function CandidateDetailView({
       
       // Use offer's revenue percentage or default to 8.33%
       const feePercentage = activeOffer.revenue_percentage || 8.33
-      const revenue = (activeOffer.billable_ctc * feePercentage) / 100 / 100000
+      const revenue = (activeOffer.billable_ctc * feePercentage) / 100
       const revenueMonth = joiningDate.slice(0, 7)
       const revenueYear = parseInt(joiningDate.slice(0, 4))
       
