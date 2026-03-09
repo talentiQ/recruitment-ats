@@ -106,7 +106,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         },
         {
           name: 'Offers Control',
-          href: '/management/Offers',
+          href: '/management/offers',
           icon: '💰',
           description: 'Offer Management'
         },
