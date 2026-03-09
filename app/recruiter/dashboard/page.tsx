@@ -5,6 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import StaleCandidatesBanner from '@/components/StaleCandidatesBanner'
 
 export default function RecruiterDashboard() {
   const router = useRouter()
@@ -309,6 +310,9 @@ export default function RecruiterDashboard() {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
+       {/* ✅ STALE CANDIDATES BANNER — shows automatically if any candidate is 7+ days stale */}
+        <StaleCandidatesBanner userId={user?.id} userRole={user?.role} />
+
         {/* Welcome Section with Featured Achievement */}
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">

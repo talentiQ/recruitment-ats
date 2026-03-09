@@ -4,6 +4,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { runStaleCheck } from '@/lib/staleChecker'
+
 
 export default function LoginPage() {
   const router = useRouter()
@@ -47,6 +49,11 @@ export default function LoginPage() {
       // 3. Store user data
       localStorage.setItem('user', JSON.stringify(userData))
 
+ // 4. Run stale check BEFORE redirect — uses userData (not parsedUser)
+      // Fire and forget — don't await so login isn't slowed down
+      runStaleCheck(userData).catch(err => console.error('Stale check error:', err))
+
+
       // 4. Redirect based on role
       if (userData.role === 'recruiter') {
         window.location.href = '/recruiter/dashboard'
@@ -62,12 +69,14 @@ export default function LoginPage() {
         setError('Invalid user role: ' + userData.role)
         setLoading(false)
       }
+     
 
     } catch (error: any) {
       console.error('Login error:', error)
       setError('An error occurred. Please try again.')
       setLoading(false)
     }
+    
   }
 
   return (

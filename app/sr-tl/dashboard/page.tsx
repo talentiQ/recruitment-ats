@@ -1,9 +1,11 @@
 //app/sr-tl/dashboard/page.tsx
 'use client'
 import DashboardLayout from '@/components/DashboardLayout'
+import StaleCandidatesBanner from '@/components/StaleCandidatesBanner'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+
 export default function SrTeamLeaderDashboard() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -272,6 +274,8 @@ export default function SrTeamLeaderDashboard() {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
+        {/* ✅ STALE CANDIDATES BANNER — shows automatically if any candidate is 7+ days stale */}
+                <StaleCandidatesBanner userId={user?.id} userRole={user?.role} />
         {/* Welcome Header */}
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg p-6 text-white">
           <h1 className="text-3xl font-bold mb-2">

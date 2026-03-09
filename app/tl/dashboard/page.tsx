@@ -5,6 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import StaleCandidatesBanner from '@/components/StaleCandidatesBanner'
 
 interface RecruiterDetail {
   id: string
@@ -385,6 +386,7 @@ export default function TLDashboard() {
     <DashboardLayout>
       <div className="space-y-6">
         {/* Header */}
+        <StaleCandidatesBanner userId={user?.id} userRole={user?.role} />
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Team Leader Dashboard</h2>
           <p className="text-gray-600">Detailed team performance monitoring & oversight</p>
