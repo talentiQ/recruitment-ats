@@ -1,13 +1,13 @@
+// app/layout.tsx  — add suppressHydrationWarning to <html>
+// This suppresses hydration mismatches caused by browser extensions
+// (e.g. QuickBooks, Grammarly, etc.) that inject attributes into <html>
+
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
 import './globals.css'
 
-const inter = Inter({ subsets: ['latin'] })
-
 export const metadata: Metadata = {
-  title: 'Talent IQ - The Smart Hiring Engine',
-  description: 'AI-powered recruitment platform',
-  // Remove charset - it's not valid here
+  title: 'Talent IQ',
+  description: 'Your Smart Hiring Engine',
 }
 
 export default function RootLayout({
@@ -16,13 +16,11 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Add charset meta tag directly */}
         <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
       </head>
-      <body className={inter.className}>{children}</body>
+      <body>{children}</body>
     </html>
   )
 }

@@ -742,7 +742,7 @@ export default function ManagementDashboard() {
           <div className="bg-white rounded-lg p-6 shadow">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Expected Revenue</div>
             <div className="text-3xl font-bold text-gray-900">{formatCurrency(stats.expectedRevenue)}</div>
-            <div className="text-sm text-blue-600 mt-2">Offers pending</div>
+            <div className="text-sm text-blue-600 mt-2">Offers Accepted</div>
           </div>
 
           <div className="bg-white rounded-lg p-6 shadow">
