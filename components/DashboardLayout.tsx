@@ -124,6 +124,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           icon: '📤',
           description: 'Bulk upload to resume bank'
         }
+        ,
       ]
     }
 
@@ -141,12 +142,20 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         icon: '📊',
         description: 'Overview & KPIs'
       },
+      
       {
         name: 'Candidates',
         href: `/${rolePrefix}/candidates`,
         icon: '👥',
         description: 'Manage candidates'
       },
+      {
+        name: 'Clients',
+        href: `/${rolePrefix}/clients`,
+        icon: '👥',
+        description: 'Manage clients'
+      },
+
       {
         name: 'Jobs',
         href: `/${rolePrefix}/jobs`,
