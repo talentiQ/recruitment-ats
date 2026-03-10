@@ -105,6 +105,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           description: 'All teams & performance'
         },
         {
+          name: 'Interviews Overview',
+          href: '/management/interviews',
+          icon: '📅',
+          description: 'All interviews & scheduling'
+        },
+        {
           name: 'Offers Control',
           href: '/management/offers',
           icon: '💰',

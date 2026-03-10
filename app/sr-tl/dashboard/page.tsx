@@ -287,34 +287,34 @@ export default function SrTeamLeaderDashboard() {
         {/* Team Statistics */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <div className="card bg-white hover:shadow-lg transition">
-            <div className="text-sm text-gray-600 mb-1">TEAM LEADERS</div>
-            <div className="text-3xl font-bold text-gray-900">{teamStats.total_tls || 0}</div>
+            <div className="text-center text-sm text-gray-600 mb-1">TEAM LEADERS</div>
+            <div className="text-center text-3xl font-bold text-gray-900">{teamStats.total_tls || 0}</div>
           </div>
 
           <div className="card bg-white hover:shadow-lg transition">
-            <div className="text-sm text-gray-600 mb-1">RECRUITERS</div>
-            <div className="text-3xl font-bold text-gray-900">{teamStats.total_recruiters || 0}</div>
+            <div className="text-center text-sm text-gray-600 mb-1">RECRUITERS</div>
+            <div className="text-center text-3xl font-bold text-gray-900">{teamStats.total_recruiters || 0}</div>
           </div>
 
           <div className="card bg-white hover:shadow-lg transition">
-            <div className="text-sm text-gray-600 mb-1">Total Candidates</div>
-            <div className="text-3xl font-bold text-blue-600">{teamStats.total_candidates || 0}</div>
+            <div className="text-center text-sm text-gray-600 mb-1">Total Candidates</div>
+            <div className="text-center text-3xl font-bold text-blue-600">{teamStats.total_candidates || 0}</div>
           </div>
 
           <div className="card bg-green-50 hover:shadow-lg transition border-2 border-green-200">
-            <div className="text-sm text-green-700 mb-1 font-semibold">THIS MONTH JOININGS</div>
-            <div className="text-3xl font-bold text-green-600">{teamStats.month_joinings || 0}</div>
+            <div className="text-center text-sm text-green-700 mb-1 font-semibold">THIS MONTH JOININGS</div>
+            <div className="text-center text-3xl font-bold text-green-600">{teamStats.month_joinings || 0}</div>
           </div>
 
           <div className="card bg-white hover:shadow-lg transition">
-            <div className="text-sm text-gray-600 mb-1">Active Jobs</div>
-            <div className="text-3xl font-bold text-orange-600">{teamStats.active_jobs || 0}</div>
-            <div className="text-xs text-gray-500 mt-1">of {teamStats.total_jobs || 0} total</div>
+            <div className="text-center text-sm text-gray-600 mb-1">Active Jobs</div>
+            <div className="text-center text-3xl font-bold text-orange-600">{teamStats.active_jobs || 0}</div>
+            <div className="text-center text-xs text-gray-500 mt-1">of {teamStats.total_jobs || 0} total</div>
           </div>
 
           <div className="card bg-white hover:shadow-lg transition">
-            <div className="text-sm text-gray-600 mb-1">Team Size</div>
-            <div className="text-3xl font-bold text-purple-600">{teamStats.total_team_members || 0}</div>
+            <div className="text-center text-sm text-gray-600 mb-1">Team Size</div>
+            <div className="text-center text-3xl font-bold text-purple-600">{teamStats.total_team_members || 0}</div>
           </div>
         </div>
 

@@ -50,7 +50,7 @@ export default function InterviewScheduler({
       }]).select()
 
       if (error) {
-        console.error('âŒ Interview insert error:', error)
+        console.error('Interview insert error:', error)
         throw error
       }
       // Update candidate stage
@@ -214,7 +214,7 @@ export default function InterviewScheduler({
                 Scheduling...
               </span>
             ) : (
-              'ðŸ“… Schedule Interview'
+              'Schedule Interview'
             )}
           </button>
           <button
