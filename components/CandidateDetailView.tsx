@@ -277,7 +277,7 @@ export default function CandidateDetailView({
       `Mark ${candidate.full_name} as joined?\n\n` +
       `Joining Date: ${new Date(joiningDate).toLocaleDateString()}\n` +
       `Client: ${candidate.jobs?.clients?.company_name}\n` +
-      `Billable CTC: Rs. ${(activeOffer.billable_ctc).toFixed(2)}L\n` +
+      `Billable CTC: Rs. ${(activeOffer.billable_ctc).toFixed(2)}\n` +
       `Fee: ${activeOffer.revenue_percentage || 8.33}%\n` +
       `Revenue: Rs. ${((activeOffer.billable_ctc * (activeOffer.revenue_percentage || 8.33) / 100)).toFixed(2)}L`
     )
@@ -891,11 +891,11 @@ export default function CandidateDetailView({
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="text-sm text-gray-500">Current CTC</label>
-            <p className="font-medium text-blue-600 text-xl">Rs.{candidate.current_ctc || 0}L</p>
+            <p className="font-medium text-blue-600 text-xl">Rs.{candidate.current_ctc || 0}</p>
           </div>
           <div>
             <label className="text-sm text-gray-500">Expected CTC</label>
-            <p className="font-medium text-green-600 text-xl">Rs.{candidate.expected_ctc || 0}L</p>
+            <p className="font-medium text-green-600 text-xl">Rs.{candidate.expected_ctc || 0}</p>
           </div>
           <div>
             <label className="text-sm text-gray-500">Notice Period</label>

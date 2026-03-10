@@ -258,7 +258,7 @@ export default function RecruiterCandidatesPage() {
                           {candidate.current_stage?.replace(/_/g, ' ').toUpperCase()}
                         </span>
                       </td>
-                      <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}L</td>
+                      <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}</td>
                       <td className="text-sm">
                         {isOwnCandidate ? (
                           <span className="font-semibold text-green-600">You</span>

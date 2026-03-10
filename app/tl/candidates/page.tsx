@@ -232,7 +232,7 @@ export default function TLCandidatesPage() {
                         {candidate.current_stage?.replace(/_/g, ' ').toUpperCase()}
                       </span>
                     </td>
-                    <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}L</td>
+                    <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}</td>
                     <td className="text-sm">{candidate.users?.full_name || 'Unknown'}</td>
                     <td className="text-sm">
                       {Math.floor((new Date().getTime() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24))} days

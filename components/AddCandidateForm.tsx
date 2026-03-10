@@ -639,11 +639,11 @@ export default function AddCandidateForm({
               <input type="number" step="0.5" name="relevant_experience" value={formData.relevant_experience} onChange={handleChange} className="input" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Current CTC (Lakhs)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Current CTC (INR)</label>
               <input type="number" step="0.1" name="current_ctc" value={formData.current_ctc} onChange={handleChange} className="input" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Expected CTC (Lakhs)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Expected CTC (INR)</label>
               <input type="number" step="0.1" name="expected_ctc" value={formData.expected_ctc} onChange={handleChange} className="input" />
             </div>
             <div>

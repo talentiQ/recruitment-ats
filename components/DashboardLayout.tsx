@@ -105,7 +105,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           description: 'All teams & performance'
         },
         {
-          name: 'Interviews Overview',
+          name: 'Candidates Management',
+          href: '/management/candidates',
+          icon: '👤',
+          description: 'Manage all candidates'
+        },
+        { name: 'Interviews Overview',
           href: '/management/interviews',
           icon: '📅',
           description: 'All interviews & scheduling'

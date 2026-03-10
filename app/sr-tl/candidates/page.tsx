@@ -339,7 +339,7 @@ function CandidatesTable() {
                       {candidate.current_stage?.replace(/_/g, ' ').toUpperCase()}
                     </span>
                   </td>
-                  <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}L</td>
+                  <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}</td>
                   <td>
                     <div className="text-sm font-medium">{candidate.users?.full_name || 'Unknown'}</div>
                     <div className="text-xs text-gray-500">{candidate.users?.role}</div>
