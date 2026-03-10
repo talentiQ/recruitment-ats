@@ -1,76 +1,55 @@
-// app/management/offers/[id]/page.tsx
+// app/sr-tl/offers/[id]/page.tsx
 'use client'
 export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { supabase as supabaseAdmin } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
 
-export default function ManagementOfferDetailPage() {
-  const params   = useParams()
-  const router   = useRouter()
-  const offerId  = Array.isArray(params.id) ? params.id[0] : params.id
+export default function SrTLOfferDetailPage() {
+  const params  = useParams()
+  const router  = useRouter()
+  const offerId = Array.isArray(params.id) ? params.id[0] : params.id
 
   const [loading, setLoading] = useState(true)
   const [offer,   setOffer]   = useState<any>(null)
 
-  // ── Auth ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     const userData = localStorage.getItem('user')
     if (!userData) { router.push('/'); return }
     const parsedUser = JSON.parse(userData)
-    if (!['ceo', 'ops_head', 'finance_head', 'system_admin'].includes(parsedUser.role)) {
-      alert('Access denied.')
-      router.push('/')
-      return
+    if (parsedUser.role !== 'sr_team_leader') {
+      alert('Access denied.'); router.push('/'); return
     }
-    loadOffer()
+    loadOffer(parsedUser)
   }, [offerId])
 
-  // ── Team head resolver (same logic as list page + analytics pages) ─────────
-  const resolveTeamHead = (
-    userId: string,
-    userMap: Record<string, any>
-  ): { teamName: string; tlName: string | null } => {
-    const visited = new Set<string>()
-    const walk = (uid: string): { teamName: string; tlName: string | null } => {
-      if (visited.has(uid)) return { teamName: '—', tlName: null }
-      visited.add(uid)
-      const u = userMap[uid]
-      if (!u) return { teamName: '—', tlName: null }
-      if (u.role === 'sr_team_leader' || !u.reports_to) {
-        return { teamName: u.full_name, tlName: null }
-      }
-      const parent = userMap[u.reports_to]
-      if (!parent) return { teamName: u.full_name, tlName: null }
-      if (parent.role === 'sr_team_leader' || !parent.reports_to) {
-        return { teamName: parent.full_name, tlName: u.full_name }
-      }
-      const higher = walk(u.reports_to)
-      return { teamName: higher.teamName, tlName: u.full_name }
-    }
-    return walk(userId)
-  }
-
-  // ── Data loader ────────────────────────────────────────────────────────────
-  const loadOffer = async () => {
+  const loadOffer = async (srTl: any) => {
     try {
-      // 1. All users for hierarchy map (same as other management pages)
-      const { data: allUsers } = await supabaseAdmin
-        .from('users')
-        .select('id, full_name, role, reports_to')
-        .in('role', ['sr_team_leader', 'team_leader', 'recruiter'])
-        .eq('is_active', true)
+      // ── Resolve full team hierarchy (same as analytics page) ──────────────
+      const { data: directReports } = await supabase
+        .from('users').select('id, full_name, role, reports_to')
+        .eq('reports_to', srTl.id).eq('is_active', true)
 
-      const userMap: Record<string, any> = {}
-      ;(allUsers || []).forEach((u: any) => { userMap[u.id] = u })
+      const tlIds = (directReports || [])
+        .filter((m: any) => m.role === 'team_leader').map((m: any) => m.id)
 
-      // 2. Get all recruiter IDs from users table — same pattern as teams page
-      const allRecruiterIds = Object.keys(userMap)
-      if (allRecruiterIds.length === 0) { setLoading(false); return }
+      let indirectRecruiters: any[] = []
+      if (tlIds.length > 0) {
+        const { data: recs } = await supabase
+          .from('users').select('id, full_name, role, reports_to')
+          .in('reports_to', tlIds).eq('role', 'recruiter').eq('is_active', true)
+        indirectRecruiters = recs || []
+      }
 
-      // 3. Fetch offer scoped by recruiter_id — bypasses team-scoped RLS on offers
-      const { data, error } = await supabaseAdmin
+      const allMembers   = [...(directReports || []), ...indirectRecruiters]
+      const allMemberIds = allMembers.map((m: any) => m.id)
+
+      const memberMap: Record<string, any> = {}
+      allMembers.forEach((m: any) => { memberMap[m.id] = m })
+
+      // ── Fetch offer ───────────────────────────────────────────────────────
+      const { data, error } = await supabase
         .from('offers')
         .select(`
           *,
@@ -80,28 +59,36 @@ export default function ManagementOfferDetailPage() {
             date_joined, guarantee_period_ends, revenue_earned,
             placement_status,
             jobs (
-              id, job_title, job_code, client_id,
+              id, job_title, job_code,
               clients ( id, company_name, replacement_guarantee_days )
             )
           )
         `)
-        .in('recruiter_id', allRecruiterIds)
         .eq('id', offerId)
         .single()
 
       if (error) throw error
 
-      // 3. Resolve team
-      const recruiterName = userMap[data.recruiter_id]?.full_name || '—'
-      const { teamName, tlName } = data.recruiter_id
-        ? resolveTeamHead(data.recruiter_id, userMap)
-        : { teamName: '—', tlName: null }
+      // Guard: offer must belong to this Sr-TL's team
+      if (!allMemberIds.includes(data.recruiter_id)) {
+        alert('Access denied — this offer does not belong to your team.')
+        router.push('/sr-tl/offers'); return
+      }
 
-      data._recruiterName = recruiterName
-      data._teamName      = teamName
-      data._tlName        = tlName
+      // Resolve recruiter + TL names
+      const recruiter = memberMap[data.recruiter_id]
+      data._recruiterName = recruiter?.full_name || '—'
 
-      // 4. Safety status
+      let tlName: string | null = null
+      if (recruiter?.role === 'team_leader') {
+        tlName = recruiter.full_name
+      } else if (recruiter?.reports_to && memberMap[recruiter.reports_to]) {
+        const parent = memberMap[recruiter.reports_to]
+        if (parent.role === 'team_leader') tlName = parent.full_name
+      }
+      data._tlName = tlName
+
+      // Safety status
       if (data.status === 'joined' && data.candidates?.guarantee_period_ends) {
         const daysRemaining = Math.max(0, Math.floor(
           (new Date(data.candidates.guarantee_period_ends).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
@@ -123,40 +110,33 @@ export default function ManagementOfferDetailPage() {
 
   const getStatusBadge = (status: string) => {
     const map: Record<string, string> = {
-      extended: 'bg-blue-100 text-blue-800',
-      accepted: 'bg-green-100 text-green-800',
-      rejected: 'bg-red-100 text-red-800',
-      expired:  'bg-gray-100 text-gray-800',
-      joined:   'bg-purple-100 text-purple-800',
-      renege:   'bg-orange-100 text-orange-800',
+      extended: 'bg-blue-100 text-blue-800',   accepted: 'bg-green-100 text-green-800',
+      rejected: 'bg-red-100 text-red-800',     expired:  'bg-gray-100 text-gray-800',
+      joined:   'bg-purple-100 text-purple-800', renege: 'bg-orange-100 text-orange-800',
     }
     return map[status] || 'bg-gray-100 text-gray-800'
   }
 
-  if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        </div>
-      </DashboardLayout>
-    )
-  }
+  if (loading) return (
+    <DashboardLayout>
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    </DashboardLayout>
+  )
 
-  if (!offer) {
-    return (
-      <DashboardLayout>
-        <div className="text-center py-12">
-          <p className="text-gray-600">Offer not found</p>
-          <button onClick={() => router.back()} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg">Go Back</button>
-        </div>
-      </DashboardLayout>
-    )
-  }
+  if (!offer) return (
+    <DashboardLayout>
+      <div className="text-center py-12">
+        <p className="text-gray-600">Offer not found</p>
+        <button onClick={() => router.back()} className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg">Go Back</button>
+      </div>
+    </DashboardLayout>
+  )
 
-  const feePercentage  = offer.revenue_percentage || 8.33
+  const feePercentage   = offer.revenue_percentage || 8.33
   const expectedRevenue = ((offer.fixed_ctc || 0) * feePercentage / 100).toFixed(2)
-  const guaranteeDays  = offer.candidates?.jobs?.clients?.replacement_guarantee_days || 90
+  const guaranteeDays   = offer.candidates?.jobs?.clients?.replacement_guarantee_days || 90
 
   return (
     <DashboardLayout>
@@ -174,7 +154,6 @@ export default function ManagementOfferDetailPage() {
               <div className="flex flex-wrap gap-3 mt-1 text-sm text-gray-500">
                 <span>👤 <strong>{offer._recruiterName}</strong></span>
                 {offer._tlName && <span>· TL: <strong>{offer._tlName}</strong></span>}
-                <span>· Team: <strong>{offer._teamName}</strong></span>
               </div>
             </div>
           </div>
@@ -224,7 +203,7 @@ export default function ManagementOfferDetailPage() {
         {/* ── Read-Only Notice ── */}
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800 flex items-center gap-2">
           <span>👁️</span>
-          <span>Management view — read only. Offer actions are managed by the recruiter or team leader.</span>
+          <span>Sr. Team Leader view — read only. Offer actions are managed by the recruiter or team leader.</span>
         </div>
 
         {/* ── CTC Details ── */}
@@ -254,35 +233,18 @@ export default function ManagementOfferDetailPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">📅 Important Dates</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-            <div>
-              <div className="text-gray-500">Offer Date</div>
-              <div className="font-semibold">{offer.offer_date ? new Date(offer.offer_date).toLocaleDateString() : 'N/A'}</div>
-            </div>
-            <div>
-              <div className="text-gray-500">Valid Until</div>
-              <div className="font-semibold">{offer.offer_valid_until ? new Date(offer.offer_valid_until).toLocaleDateString() : 'N/A'}</div>
-            </div>
-            <div>
-              <div className="text-gray-500">Expected Joining</div>
-              <div className="font-semibold text-blue-600">{offer.expected_joining_date ? new Date(offer.expected_joining_date).toLocaleDateString() : 'N/A'}</div>
-            </div>
+            <div><div className="text-gray-500">Offer Date</div><div className="font-semibold">{offer.offer_date ? new Date(offer.offer_date).toLocaleDateString() : 'N/A'}</div></div>
+            <div><div className="text-gray-500">Valid Until</div><div className="font-semibold">{offer.offer_valid_until ? new Date(offer.offer_valid_until).toLocaleDateString() : 'N/A'}</div></div>
+            <div><div className="text-gray-500">Expected Joining</div><div className="font-semibold text-blue-600">{offer.expected_joining_date ? new Date(offer.expected_joining_date).toLocaleDateString() : 'N/A'}</div></div>
             {offer.actual_joining_date && (
-              <div>
-                <div className="text-gray-500">Actual Joining</div>
-                <div className="font-semibold text-green-600">{new Date(offer.actual_joining_date).toLocaleDateString()}</div>
-              </div>
+              <div><div className="text-gray-500">Actual Joining</div><div className="font-semibold text-green-600">{new Date(offer.actual_joining_date).toLocaleDateString()}</div></div>
             )}
             {offer.candidates?.guarantee_period_ends && (
               <div>
                 <div className="text-gray-500">Guarantee Ends</div>
-                <div className={`font-semibold ${
-                  offer._safetyStatus === 'critical' ? 'text-red-600' :
-                  offer._safetyStatus === 'safe'     ? 'text-green-600' : 'text-gray-900'
-                }`}>
+                <div className={`font-semibold ${offer._safetyStatus === 'critical' ? 'text-red-600' : offer._safetyStatus === 'safe' ? 'text-green-600' : 'text-gray-900'}`}>
                   {new Date(offer.candidates.guarantee_period_ends).toLocaleDateString()}
-                  {offer._daysRemaining !== undefined && (
-                    <span className="ml-2 text-xs text-gray-400">({offer._daysRemaining}d left)</span>
-                  )}
+                  {offer._daysRemaining !== undefined && <span className="ml-2 text-xs text-gray-400">({offer._daysRemaining}d left)</span>}
                 </div>
               </div>
             )}
@@ -306,7 +268,7 @@ export default function ManagementOfferDetailPage() {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
             <div><div className="text-gray-500">Recruiter</div><div className="font-semibold">{offer._recruiterName}</div></div>
             {offer._tlName && <div><div className="text-gray-500">Team Leader</div><div className="font-semibold">{offer._tlName}</div></div>}
-            <div><div className="text-gray-500">Team Head</div><div className="font-semibold">{offer._teamName}</div></div>
+            <div><div className="text-gray-500">Sr. Team Leader</div><div className="font-semibold text-indigo-700">You</div></div>
           </div>
         </div>
 
@@ -324,7 +286,6 @@ export default function ManagementOfferDetailPage() {
           </div>
         </div>
 
-        {/* ── Notes ── */}
         {offer.notes && (
           <div className="bg-white rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-2">📝 Notes</h3>

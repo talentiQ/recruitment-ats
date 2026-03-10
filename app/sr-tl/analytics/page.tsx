@@ -6,12 +6,11 @@ import { supabase } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
 import * as XLSX from 'xlsx'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 interface MemberProgress {
   member_id: string
   member_name: string
   role: 'team_leader' | 'recruiter'
-  reports_to_name: string   // TL name for recruiters, "Direct" for TLs
+  reports_to_name: string
   jobs_assigned: number
   cv_submitted: number
   interview_scheduled: number
@@ -67,7 +66,6 @@ interface CandidateHighlight {
   days_in_stage: number
 }
 
-// ─── Consistent column definition (same as management page) ──────────────────
 const PIPELINE_COLS = [
   { key: 'cv_submitted',        label: 'CV Submitted',        color: 'text-blue-600',   bg: 'bg-blue-100',   text: 'text-blue-800'   },
   { key: 'interview_scheduled', label: 'Interview Scheduled', color: 'text-indigo-600', bg: 'bg-indigo-100', text: 'text-indigo-800' },
@@ -79,6 +77,41 @@ const PIPELINE_COLS = [
   { key: 'renege_dropped',      label: 'Renege/Dropped',      color: 'text-yellow-600', bg: 'bg-yellow-100', text: 'text-yellow-800' },
 ]
 
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW DATA LOGIC — source: candidates table, no timeline, no duplicates
+//
+// cv_submitted  = candidate created_at falls in date range
+// other stages  = candidate last_activity_date falls in range AND current_stage matches
+// ─────────────────────────────────────────────────────────────────────────────
+function countFromCandidates(candidates: any[], start: string, end: string) {
+  const startTs = new Date(start).getTime()
+  const endTs   = new Date(end).getTime()
+
+  let cv_submitted = 0, interview_scheduled = 0, interview_completed = 0
+  let rejected = 0, offer_extended = 0, offer_accepted = 0
+  let joined = 0, renege_dropped = 0
+
+  candidates.forEach((c: any) => {
+    const createdTs      = c.created_at         ? new Date(c.created_at).getTime()         : 0
+    const lastActivityTs = c.last_activity_date  ? new Date(c.last_activity_date).getTime() : 0
+    const stage          = c.current_stage || ''
+
+    if (createdTs >= startTs && createdTs <= endTs) cv_submitted++
+
+    if (lastActivityTs >= startTs && lastActivityTs <= endTs) {
+      if (stage === 'interview_scheduled')                    interview_scheduled++
+      if (stage === 'interview_completed')                    interview_completed++
+      if (stage === 'rejected')                               rejected++
+      if (stage === 'offer_extended')                         offer_extended++
+      if (stage === 'offer_accepted')                         offer_accepted++
+      if (stage === 'joined')                                 joined++
+      if (stage === 'renege_dropped' || stage === 'dropped')  renege_dropped++
+    }
+  })
+
+  return { cv_submitted, interview_scheduled, interview_completed, rejected, offer_extended, offer_accepted, joined, renege_dropped }
+}
+
 export default function SrTLAnalytics() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
@@ -89,81 +122,51 @@ export default function SrTLAnalytics() {
   const [customEndDate, setCustomEndDate] = useState('')
   const [activeTab, setActiveTab] = useState<'member' | 'client' | 'job'>('member')
 
-  const [memberProgress, setMemberProgress]   = useState<MemberProgress[]>([])
-  const [clientProgress, setClientProgress]   = useState<ClientProgress[]>([])
-  const [jobProgress, setJobProgress]         = useState<JobProgress[]>([])
-  const [highlights, setHighlights]           = useState<CandidateHighlight[]>([])
-
-  // All member IDs under this Sr-TL (used across queries)
-  const [teamMemberIds, setTeamMemberIds] = useState<string[]>([])
-  // Map of userId → name (for recruiter "reports to" display)
-  const [userNameMap, setUserNameMap] = useState<Record<string, string>>({})
+  const [memberProgress, setMemberProgress] = useState<MemberProgress[]>([])
+  const [clientProgress, setClientProgress] = useState<ClientProgress[]>([])
+  const [jobProgress, setJobProgress]       = useState<JobProgress[]>([])
+  const [highlights, setHighlights]         = useState<CandidateHighlight[]>([])
 
   const [totals, setTotals] = useState({
-    total_cv_submitted: 0,
-    total_interview_scheduled: 0,
-    total_interview_completed: 0,
-    total_rejected: 0,
-    total_offer_extended: 0,
-    total_offer_accepted: 0,
-    total_joined: 0,
-    total_renege_dropped: 0,
-    overall_conversion: 0,
+    total_cv_submitted: 0, total_interview_scheduled: 0, total_interview_completed: 0,
+    total_rejected: 0, total_offer_extended: 0, total_offer_accepted: 0,
+    total_joined: 0, total_renege_dropped: 0, overall_conversion: 0,
   })
 
-  // ── Auth + bootstrap ────────────────────────────────────────────────────────
   useEffect(() => {
     const userData = localStorage.getItem('user')
     if (!userData) { router.push('/'); return }
     const parsedUser = JSON.parse(userData)
     if (parsedUser.role !== 'sr_team_leader') {
-      alert('Access denied. Sr. Team Leader only.')
-      router.push('/')
-      return
+      alert('Access denied. Sr. Team Leader only.'); router.push('/'); return
     }
     setUser(parsedUser)
   }, [])
 
-  // Re-run data fetch whenever user, period, or custom dates change
   useEffect(() => {
     if (!user) return
-    const range = getDateRange()
-    bootstrapTeam(user, range)
+    bootstrapTeam(user, getDateRange())
   }, [user, selectedPeriod, customStartDate, customEndDate])
 
-  // ── Date range helpers ──────────────────────────────────────────────────────
   const getDateRange = () => {
     const now = new Date()
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-
     if (selectedPeriod === 'custom' && customStartDate && customEndDate) {
-      return {
-        start: new Date(customStartDate).toISOString(),
-        end: new Date(customEndDate + 'T23:59:59').toISOString(),
-      }
+      return { start: new Date(customStartDate).toISOString(), end: new Date(customEndDate + 'T23:59:59').toISOString() }
     }
     if (selectedPeriod === 'previous_day') {
-      const yesterday = new Date(today)
-      yesterday.setDate(yesterday.getDate() - 1)
-      return {
-        start: yesterday.toISOString(),
-        end: new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59).toISOString(),
-      }
+      const y = new Date(today); y.setDate(y.getDate() - 1)
+      return { start: y.toISOString(), end: new Date(y.getFullYear(), y.getMonth(), y.getDate(), 23, 59, 59).toISOString() }
     }
     if (selectedPeriod === 'today') {
-      return {
-        start: today.toISOString(),
-        end: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).toISOString(),
-      }
+      return { start: today.toISOString(), end: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).toISOString() }
     }
     if (selectedPeriod === 'week') {
-      const weekStart = new Date(today)
-      weekStart.setDate(weekStart.getDate() - 7)
-      return { start: weekStart.toISOString(), end: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).toISOString() }
+      const ws = new Date(today); ws.setDate(ws.getDate() - 7)
+      return { start: ws.toISOString(), end: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).toISOString() }
     }
     if (selectedPeriod === 'month') {
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-      return { start: monthStart.toISOString(), end: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString() }
+      return { start: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), end: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString() }
     }
     return { start: today.toISOString(), end: new Date().toISOString() }
   }
@@ -171,101 +174,56 @@ export default function SrTLAnalytics() {
   const getPeriodLabel = () => {
     if (selectedPeriod === 'custom' && customStartDate && customEndDate) return `${customStartDate} to ${customEndDate}`
     if (selectedPeriod === 'previous_day') return 'Previous Day'
-    if (selectedPeriod === 'today') return 'Today'
-    if (selectedPeriod === 'week') return 'Last 7 Days'
-    if (selectedPeriod === 'month') return 'This Month'
+    if (selectedPeriod === 'today')        return 'Today'
+    if (selectedPeriod === 'week')         return 'Last 7 Days'
+    if (selectedPeriod === 'month')        return 'This Month'
     return ''
   }
 
-  // ── Stage parser (identical to management page) ─────────────────────────────
-  const getStageFromTimeline = (activityType: string, metadata: any, activityDescription?: string): string | null => {
-    switch (activityType) {
-      case 'candidate_created':   return 'sourced'
-      case 'interview_scheduled': return 'interview_scheduled'
-      case 'offer_extended':      return 'offer_extended'
-      case 'offer_accepted':      return 'offer_accepted'
-      case 'candidate_joined':    return 'joined'
-      case 'renege':              return 'renege_dropped'
-    }
-    if (activityType === 'stage_change' || activityType === 'status_change') {
-      const metaStage = metadata?.new_stage || metadata?.to_stage || metadata?.stage
-      if (metaStage) return metaStage.toLowerCase().replace(/\s+/g, '_')
-      if (activityDescription) {
-        const match = activityDescription.match(/stage changed to:\s*(.+)/i)
-        if (match?.[1]) return match[1].trim().toLowerCase().replace(/\s+/g, '_')
-      }
-    }
-    return null
-  }
-
-  const countStages = (timelineData: any[]) => {
-    let cv_submitted = 0, interview_scheduled = 0, interview_completed = 0
-    let rejected = 0, offer_extended = 0, offer_accepted = 0, joined = 0, renege_dropped = 0
-    timelineData.forEach((a: any) => {
-      const stage = getStageFromTimeline(a.activity_type, a.metadata, a.activity_description)
-      if (stage === 'sourced')              cv_submitted++
-      if (stage === 'interview_scheduled')  interview_scheduled++
-      if (stage === 'interview_completed')  interview_completed++
-      if (stage === 'rejected')             rejected++
-      if (stage === 'offer_extended')       offer_extended++
-      if (stage === 'offer_accepted')       offer_accepted++
-      if (stage === 'joined')               joined++
-      if (stage === 'renege_dropped')       renege_dropped++
-    })
-    return { cv_submitted, interview_scheduled, interview_completed, rejected, offer_extended, offer_accepted, joined, renege_dropped }
-  }
-
   // ── STEP 1: Resolve team hierarchy ─────────────────────────────────────────
-  // This runs once per user/period change and feeds all other loaders.
-  //
-  // HIERARCHY LOGIC:
-  //   Query 1: users WHERE reports_to = srTlId
-  //            → gives TLs + any direct recruiters
-  //   Query 2: users WHERE reports_to IN [tlIds] AND role = recruiter
-  //            → gives recruiters under each TL
-  //   Combined: directReports + indirectRecruiters = full team
   const bootstrapTeam = async (srTl: any, range: { start: string; end: string }) => {
     setLoading(true)
     try {
-      // Direct reports (TLs + direct recruiters)
       const { data: directReports } = await supabase
-        .from('users')
-        .select('id, full_name, role, reports_to')
-        .eq('reports_to', srTl.id)
-        .eq('is_active', true)
+        .from('users').select('id, full_name, role, reports_to')
+        .eq('reports_to', srTl.id).eq('is_active', true)
 
       const tlIds = (directReports || []).filter((m: any) => m.role === 'team_leader').map((m: any) => m.id)
 
-      // Recruiters under those TLs (indirect reports)
       let indirectRecruiters: any[] = []
       if (tlIds.length > 0) {
         const { data: recs } = await supabase
-          .from('users')
-          .select('id, full_name, role, reports_to')
-          .in('reports_to', tlIds)
-          .eq('role', 'recruiter')
-          .eq('is_active', true)
+          .from('users').select('id, full_name, role, reports_to')
+          .in('reports_to', tlIds).eq('role', 'recruiter').eq('is_active', true)
         indirectRecruiters = recs || []
       }
 
-      const allMembers = [...(directReports || []), ...indirectRecruiters]
+      const allMembers   = [...(directReports || []), ...indirectRecruiters]
       const allMemberIds = allMembers.map((m: any) => m.id)
 
-      // Build id→name map for "reports to" display
       const nameMap: Record<string, string> = {}
       allMembers.forEach((m: any) => { nameMap[m.id] = m.full_name })
-      nameMap[srTl.id] = 'Direct'  // Sr-TL's own direct reports show "Direct"
+      nameMap[srTl.id] = 'Direct'
 
-      setTeamMemberIds(allMemberIds)
-      setUserNameMap(nameMap)
+      // ── Single master fetch — all candidates active in range for this team ──
+      const { data: allCandidates } = await supabase
+        .from('candidates')
+        .select(`
+          id, assigned_to, job_id, current_stage, created_at, last_activity_date,
+          jobs ( id, job_code, job_title, positions, client_id, clients ( id, company_name ) ),
+          users:assigned_to ( full_name )
+        `)
+        .in('assigned_to', allMemberIds)
+        .or(`and(created_at.gte.${range.start},created_at.lte.${range.end}),and(last_activity_date.gte.${range.start},last_activity_date.lte.${range.end})`)
 
-      // Run all data loaders in parallel
+      const candidates = allCandidates || []
+
       await Promise.all([
-        loadMemberProgress(allMembers, nameMap, srTl.id, range),
-        loadClientProgress(allMemberIds, srTl.id, range),
-        loadJobProgress(allMemberIds, srTl.team_id, range),
+        computeTotals(candidates, range),
+        computeMemberProgress(allMembers, nameMap, candidates, range),
+        computeClientProgress(candidates, range),
+        computeJobProgress(allMemberIds, srTl.team_id, candidates, range),
         loadHighlights(allMemberIds),
-        loadTotals(allMemberIds, range),
       ])
     } catch (err) {
       console.error('Bootstrap error:', err)
@@ -274,217 +232,9 @@ export default function SrTLAnalytics() {
     }
   }
 
-  // ── STEP 2: Per-member pipeline stats ──────────────────────────────────────
-  // For each team member:
-  //   - Get their assigned candidate IDs
-  //   - Query candidate_timeline scoped to those candidate IDs + date range
-  //   - Count stages
-  const loadMemberProgress = async (
-    allMembers: any[],
-    nameMap: Record<string, string>,
-    srTlId: string,
-    range: { start: string; end: string }
-  ) => {
-    const { start, end } = range
-
-    const progress = await Promise.all(
-      allMembers.map(async (member: any) => {
-        // Jobs assigned to this member
-        const { count: jobs_assigned } = await supabase
-          .from('job_recruiter_assignments')
-          .select('*', { count: 'exact', head: true })
-          .eq('recruiter_id', member.id)
-
-        // All candidate IDs assigned to this member
-        const { data: candidateIds } = await supabase
-          .from('candidates').select('id').eq('assigned_to', member.id)
-
-        const candidateIdList = candidateIds?.map((c: any) => c.id) || []
-
-        const empty = {
-          member_id: member.id, member_name: member.full_name, role: member.role,
-          reports_to_name: nameMap[member.reports_to] || 'Direct',
-          jobs_assigned: jobs_assigned || 0,
-          cv_submitted: 0, interview_scheduled: 0, interview_completed: 0,
-          rejected: 0, offer_extended: 0, offer_accepted: 0,
-          joined: 0, renege_dropped: 0, conversion_rate: 0,
-        }
-
-        if (candidateIdList.length === 0) return empty
-
-        // Timeline scoped to this member's candidates + selected period
-        const { data: timelineData } = await supabase
-          .from('candidate_timeline')
-          .select('activity_type, metadata, activity_description, created_at')
-          .in('candidate_id', candidateIdList)
-          .gte('created_at', start)
-          .lte('created_at', end)
-
-        const counts = countStages(timelineData || [])
-        return {
-          member_id: member.id, member_name: member.full_name, role: member.role,
-          reports_to_name: nameMap[member.reports_to] || 'Direct',
-          jobs_assigned: jobs_assigned || 0,
-          ...counts,
-          conversion_rate: counts.cv_submitted > 0 ? Math.round((counts.joined / counts.cv_submitted) * 100) : 0,
-        }
-      })
-    )
-
-    // Sort: TLs first, then recruiters, within each group by cv_submitted desc
-    setMemberProgress(
-      progress.sort((a: any, b: any) => {
-        if (a.role === b.role) return b.cv_submitted - a.cv_submitted
-        return a.role === 'team_leader' ? -1 : 1
-      })
-    )
-  }
-
-  // ── STEP 3: Client-level pipeline stats ────────────────────────────────────
-  // Only show clients that have jobs worked on by this Sr-TL's team.
-  // Scoped by: candidate assigned_to IN [teamMemberIds]
-  const loadClientProgress = async (
-    allMemberIds: string[],
-    srTlId: string,
-    range: { start: string; end: string }
-  ) => {
-    if (allMemberIds.length === 0) { setClientProgress([]); return }
-    const { start, end } = range
-
-    // Get all candidates assigned to this team
-    const { data: teamCandidates } = await supabase
-      .from('candidates')
-      .select('id, job_id')
-      .in('assigned_to', allMemberIds)
-
-    if (!teamCandidates || teamCandidates.length === 0) { setClientProgress([]); return }
-
-    // Get unique job IDs worked by this team
-    const teamJobIds = [...new Set(teamCandidates.map((c: any) => c.job_id).filter(Boolean))]
-
-    // Get clients from those jobs
-    const { data: jobs } = await supabase
-      .from('jobs')
-      .select('id, client_id, clients!inner(id, company_name)')
-      .in('id', teamJobIds)
-
-    if (!jobs) { setClientProgress([]); return }
-
-    // Unique clients
-    const clientMap = new Map<string, string>()
-    jobs.forEach((j: any) => clientMap.set(j.clients.id, j.clients.company_name))
-
-    const progress = await Promise.all(
-      Array.from(clientMap.entries()).map(async ([clientId, clientName]) => {
-        // Jobs this client has that are worked by this team
-        const clientJobIds = jobs.filter((j: any) => j.clients.id === clientId).map((j: any) => j.id)
-
-        // New jobs added in period
-        const { count: new_jobs_added } = await supabase
-          .from('jobs').select('*', { count: 'exact', head: true })
-          .eq('client_id', clientId).gte('created_at', start).lte('created_at', end)
-
-        // Candidates from this team on this client's jobs
-        const teamCandidateIds = teamCandidates
-          .filter((c: any) => clientJobIds.includes(c.job_id))
-          .map((c: any) => c.id)
-
-        if (teamCandidateIds.length === 0) {
-          return { client_id: clientId, client_name: clientName, new_jobs_added: new_jobs_added || 0, cv_submitted: 0, interview_scheduled: 0, interview_completed: 0, rejected: 0, offer_extended: 0, offer_accepted: 0, joined: 0, renege_dropped: 0, conversion_rate: 0 }
-        }
-
-        const { data: timelineData } = await supabase
-          .from('candidate_timeline')
-          .select('activity_type, metadata, activity_description, created_at')
-          .in('candidate_id', teamCandidateIds)
-          .gte('created_at', start).lte('created_at', end)
-
-        const counts = countStages(timelineData || [])
-        return {
-          client_id: clientId, client_name: clientName, new_jobs_added: new_jobs_added || 0,
-          ...counts,
-          conversion_rate: counts.cv_submitted > 0 ? Math.round((counts.joined / counts.cv_submitted) * 100) : 0,
-        }
-      })
-    )
-
-    setClientProgress(progress.sort((a: any, b: any) => b.cv_submitted - a.cv_submitted))
-  }
-
-  // ── STEP 4: Job-level pipeline stats ───────────────────────────────────────
-  // Only show jobs that have at least one candidate from this Sr-TL's team.
-  // This is different from management page which shows all open jobs —
-  // here we scope to jobs relevant to this team.
-  const loadJobProgress = async (
-    allMemberIds: string[],
-    teamId: string,
-    range: { start: string; end: string }
-  ) => {
-    if (allMemberIds.length === 0) { setJobProgress([]); return }
-    const { start, end } = range
-
-    // Get job IDs assigned to this team OR worked by this team's members
-    const { data: assignedJobs } = await supabase
-      .from('jobs')
-      .select('id, job_code, job_title, positions, clients!inner(company_name)')
-      .eq('assigned_team_id', teamId)
-      .eq('status', 'open')
-
-    if (!assignedJobs || assignedJobs.length === 0) { setJobProgress([]); return }
-
-    const progress = await Promise.all(
-      assignedJobs.map(async (job: any) => {
-        // Only count candidates from THIS team on this job
-        const { data: candidateIds } = await supabase
-          .from('candidates').select('id')
-          .eq('job_id', job.id)
-          .in('assigned_to', allMemberIds)
-
-        const candidateIdList = candidateIds?.map((c: any) => c.id) || []
-        const empty = { job_id: job.id, job_code: job.job_code, job_title: job.job_title, client_name: job.clients.company_name, positions: job.positions, cv_submitted: 0, interview_scheduled: 0, interview_completed: 0, rejected: 0, offer_extended: 0, offer_accepted: 0, joined: 0, renege_dropped: 0, filled_rate: 0 }
-        if (candidateIdList.length === 0) return empty
-
-        const { data: timelineData } = await supabase
-          .from('candidate_timeline')
-          .select('activity_type, metadata, activity_description, created_at')
-          .in('candidate_id', candidateIdList)
-          .gte('created_at', start).lte('created_at', end)
-
-        const counts = countStages(timelineData || [])
-        return {
-          job_id: job.id, job_code: job.job_code, job_title: job.job_title,
-          client_name: job.clients.company_name, positions: job.positions, ...counts,
-          filled_rate: job.positions > 0 ? Math.round((counts.joined / job.positions) * 100) : 0,
-        }
-      })
-    )
-
-    setJobProgress(progress.sort((a: any, b: any) => b.cv_submitted - a.cv_submitted))
-  }
-
-  // ── STEP 5: Overall totals ──────────────────────────────────────────────────
-  // Get ALL timeline entries for ALL team candidates in the period.
-  // This is the aggregate across the whole team.
-  const loadTotals = async (allMemberIds: string[], range: { start: string; end: string }) => {
-    if (allMemberIds.length === 0) return
-    const { start, end } = range
-
-    const { data: candidateIds } = await supabase
-      .from('candidates').select('id').in('assigned_to', allMemberIds)
-
-    const candidateIdList = candidateIds?.map((c: any) => c.id) || []
-    if (candidateIdList.length === 0) return
-
-    const { data: timelineData } = await supabase
-      .from('candidate_timeline')
-      .select('activity_type, metadata, activity_description, created_at')
-      .in('candidate_id', candidateIdList)
-      .gte('created_at', start).lte('created_at', end)
-
-    const counts = countStages(timelineData || [])
-    const overall_conversion = counts.cv_submitted > 0
-      ? Math.round((counts.joined / counts.cv_submitted) * 100) : 0
-
+  // ── Totals ─────────────────────────────────────────────────────────────────
+  const computeTotals = async (candidates: any[], range: { start: string; end: string }) => {
+    const counts = countFromCandidates(candidates, range.start, range.end)
     setTotals({
       total_cv_submitted:        counts.cv_submitted,
       total_interview_scheduled: counts.interview_scheduled,
@@ -494,112 +244,143 @@ export default function SrTLAnalytics() {
       total_offer_accepted:      counts.offer_accepted,
       total_joined:              counts.joined,
       total_renege_dropped:      counts.renege_dropped,
-      overall_conversion,
+      overall_conversion: counts.cv_submitted > 0 ? Math.round((counts.joined / counts.cv_submitted) * 100) : 0,
     })
   }
 
-  // ── STEP 6: Active candidate highlights ────────────────────────────────────
+  // ── Per-member pipeline stats ──────────────────────────────────────────────
+  const computeMemberProgress = async (
+    allMembers: any[],
+    nameMap: Record<string, string>,
+    allCandidates: any[],
+    range: { start: string; end: string }
+  ) => {
+    const progress = await Promise.all(allMembers.map(async (member: any) => {
+      const mine = allCandidates.filter((c: any) => c.assigned_to === member.id)
+      const { count: jobs_assigned } = await supabase
+        .from('job_recruiter_assignments').select('*', { count: 'exact', head: true }).eq('recruiter_id', member.id)
+      const counts = countFromCandidates(mine, range.start, range.end)
+      return {
+        member_id: member.id, member_name: member.full_name, role: member.role,
+        reports_to_name: nameMap[member.reports_to] || 'Direct',
+        jobs_assigned: jobs_assigned || 0, ...counts,
+        conversion_rate: counts.cv_submitted > 0 ? Math.round((counts.joined / counts.cv_submitted) * 100) : 0,
+      }
+    }))
+
+    setMemberProgress(
+      progress.sort((a: any, b: any) => {
+        if (a.role === b.role) return b.cv_submitted - a.cv_submitted
+        return a.role === 'team_leader' ? -1 : 1
+      })
+    )
+  }
+
+  // ── Client-level pipeline stats ────────────────────────────────────────────
+  const computeClientProgress = async (allCandidates: any[], range: { start: string; end: string }) => {
+    const clientMap = new Map<string, string>()
+    allCandidates.forEach((c: any) => {
+      if (c.jobs?.clients?.id) clientMap.set(c.jobs.clients.id, c.jobs.clients.company_name)
+    })
+
+    if (clientMap.size === 0) { setClientProgress([]); return }
+
+    const progress = await Promise.all(
+      Array.from(clientMap.entries()).map(async ([clientId, clientName]) => {
+        const mine = allCandidates.filter((c: any) => c.jobs?.clients?.id === clientId)
+        const { count: new_jobs_added } = await supabase
+          .from('jobs').select('*', { count: 'exact', head: true })
+          .eq('client_id', clientId).gte('created_at', range.start).lte('created_at', range.end)
+        const counts = countFromCandidates(mine, range.start, range.end)
+        return { client_id: clientId, client_name: clientName, new_jobs_added: new_jobs_added || 0, ...counts,
+          conversion_rate: counts.cv_submitted > 0 ? Math.round((counts.joined / counts.cv_submitted) * 100) : 0 }
+      })
+    )
+    setClientProgress(
+      progress.filter((c: any) => c.new_jobs_added + c.cv_submitted + c.interview_scheduled + c.joined > 0)
+        .sort((a: any, b: any) => b.cv_submitted - a.cv_submitted)
+    )
+  }
+
+  // ── Job-level pipeline stats ───────────────────────────────────────────────
+  const computeJobProgress = async (
+    allMemberIds: string[],
+    teamId: string,
+    allCandidates: any[],
+    range: { start: string; end: string }
+  ) => {
+    const { data: assignedJobs } = await supabase
+      .from('jobs').select('id, job_code, job_title, positions, clients!inner(company_name)')
+      .eq('assigned_team_id', teamId).eq('status', 'open')
+
+    if (!assignedJobs || assignedJobs.length === 0) { setJobProgress([]); return }
+
+    const progress = assignedJobs.map((job: any) => {
+      const mine = allCandidates.filter((c: any) => c.job_id === job.id)
+      const counts = countFromCandidates(mine, range.start, range.end)
+      return {
+        job_id: job.id, job_code: job.job_code, job_title: job.job_title,
+        client_name: job.clients.company_name, positions: job.positions, ...counts,
+        filled_rate: job.positions > 0 ? Math.round((counts.joined / job.positions) * 100) : 0,
+      }
+    })
+
+    setJobProgress(
+      progress.filter((j: any) => j.cv_submitted + j.interview_scheduled + j.joined > 0)
+        .sort((a: any, b: any) => b.cv_submitted - a.cv_submitted)
+    )
+  }
+
+  // ── Active candidate highlights (not date-filtered) ────────────────────────
   const loadHighlights = async (allMemberIds: string[]) => {
     if (allMemberIds.length === 0) return
     const { data } = await supabase
       .from('candidates')
-      .select(`id, full_name, current_stage, last_activity_date, jobs!inner(job_title, clients!inner(company_name)), assigned_user:assigned_to(full_name)`)
+      .select(`id, full_name, current_stage, last_activity_date,
+        jobs!inner(job_title, clients!inner(company_name)),
+        assigned_user:assigned_to(full_name)`)
       .in('assigned_to', allMemberIds)
       .in('current_stage', ['interview_scheduled', 'interview_completed', 'offer_extended', 'offer_accepted', 'joined'])
-      .order('last_activity_date', { ascending: false })
-      .limit(50)
-
+      .order('last_activity_date', { ascending: false }).limit(50)
     if (!data) return
     const now = new Date()
     setHighlights(data.map((c: any) => ({
       id: c.id, full_name: c.full_name, current_stage: c.current_stage,
-      job_title: c.jobs?.job_title || 'N/A',
-      client_name: c.jobs?.clients?.company_name || 'N/A',
-      recruiter_name: c.assigned_user?.full_name || 'N/A',
-      last_activity_date: c.last_activity_date,
-      days_in_stage: Math.floor((now.getTime() - new Date(c.last_activity_date).getTime()) / (1000 * 60 * 60 * 24)),
+      job_title: c.jobs?.job_title || 'N/A', client_name: c.jobs?.clients?.company_name || 'N/A',
+      recruiter_name: c.assigned_user?.full_name || 'N/A', last_activity_date: c.last_activity_date,
+      days_in_stage: Math.floor((now.getTime() - new Date(c.last_activity_date).getTime()) / 86400000),
     })))
   }
 
   // ── Totals row reducers ────────────────────────────────────────────────────
-  const memberTotals = memberProgress.reduce(
-    (acc, m) => ({ jobs_assigned: acc.jobs_assigned + m.jobs_assigned, cv_submitted: acc.cv_submitted + m.cv_submitted, interview_scheduled: acc.interview_scheduled + m.interview_scheduled, interview_completed: acc.interview_completed + m.interview_completed, rejected: acc.rejected + m.rejected, offer_extended: acc.offer_extended + m.offer_extended, offer_accepted: acc.offer_accepted + m.offer_accepted, joined: acc.joined + m.joined, renege_dropped: acc.renege_dropped + m.renege_dropped }),
-    { jobs_assigned: 0, cv_submitted: 0, interview_scheduled: 0, interview_completed: 0, rejected: 0, offer_extended: 0, offer_accepted: 0, joined: 0, renege_dropped: 0 }
-  )
-
-  const clientTotals = clientProgress.reduce(
-    (acc, c) => ({ new_jobs_added: acc.new_jobs_added + c.new_jobs_added, cv_submitted: acc.cv_submitted + c.cv_submitted, interview_scheduled: acc.interview_scheduled + c.interview_scheduled, interview_completed: acc.interview_completed + c.interview_completed, rejected: acc.rejected + c.rejected, offer_extended: acc.offer_extended + c.offer_extended, offer_accepted: acc.offer_accepted + c.offer_accepted, joined: acc.joined + c.joined, renege_dropped: acc.renege_dropped + c.renege_dropped }),
-    { new_jobs_added: 0, cv_submitted: 0, interview_scheduled: 0, interview_completed: 0, rejected: 0, offer_extended: 0, offer_accepted: 0, joined: 0, renege_dropped: 0 }
-  )
-
-  const jobTotals = jobProgress.reduce(
-    (acc, j) => ({ positions: acc.positions + j.positions, cv_submitted: acc.cv_submitted + j.cv_submitted, interview_scheduled: acc.interview_scheduled + j.interview_scheduled, interview_completed: acc.interview_completed + j.interview_completed, rejected: acc.rejected + j.rejected, offer_extended: acc.offer_extended + j.offer_extended, offer_accepted: acc.offer_accepted + j.offer_accepted, joined: acc.joined + j.joined, renege_dropped: acc.renege_dropped + j.renege_dropped }),
-    { positions: 0, cv_submitted: 0, interview_scheduled: 0, interview_completed: 0, rejected: 0, offer_extended: 0, offer_accepted: 0, joined: 0, renege_dropped: 0 }
-  )
+  const memberTotals  = memberProgress.reduce((a,m)=>({jobs_assigned:a.jobs_assigned+m.jobs_assigned,cv_submitted:a.cv_submitted+m.cv_submitted,interview_scheduled:a.interview_scheduled+m.interview_scheduled,interview_completed:a.interview_completed+m.interview_completed,rejected:a.rejected+m.rejected,offer_extended:a.offer_extended+m.offer_extended,offer_accepted:a.offer_accepted+m.offer_accepted,joined:a.joined+m.joined,renege_dropped:a.renege_dropped+m.renege_dropped}),{jobs_assigned:0,cv_submitted:0,interview_scheduled:0,interview_completed:0,rejected:0,offer_extended:0,offer_accepted:0,joined:0,renege_dropped:0})
+  const clientTotals  = clientProgress.reduce((a,c)=>({new_jobs_added:a.new_jobs_added+c.new_jobs_added,cv_submitted:a.cv_submitted+c.cv_submitted,interview_scheduled:a.interview_scheduled+c.interview_scheduled,interview_completed:a.interview_completed+c.interview_completed,rejected:a.rejected+c.rejected,offer_extended:a.offer_extended+c.offer_extended,offer_accepted:a.offer_accepted+c.offer_accepted,joined:a.joined+c.joined,renege_dropped:a.renege_dropped+c.renege_dropped}),{new_jobs_added:0,cv_submitted:0,interview_scheduled:0,interview_completed:0,rejected:0,offer_extended:0,offer_accepted:0,joined:0,renege_dropped:0})
+  const jobTotals     = jobProgress.reduce((a,j)=>({positions:a.positions+j.positions,cv_submitted:a.cv_submitted+j.cv_submitted,interview_scheduled:a.interview_scheduled+j.interview_scheduled,interview_completed:a.interview_completed+j.interview_completed,rejected:a.rejected+j.rejected,offer_extended:a.offer_extended+j.offer_extended,offer_accepted:a.offer_accepted+j.offer_accepted,joined:a.joined+j.joined,renege_dropped:a.renege_dropped+j.renege_dropped}),{positions:0,cv_submitted:0,interview_scheduled:0,interview_completed:0,rejected:0,offer_extended:0,offer_accepted:0,joined:0,renege_dropped:0})
 
   // ── Excel Export ───────────────────────────────────────────────────────────
   const exportToExcel = () => {
     setExporting(true)
     try {
-      const wb = XLSX.utils.book_new()
-      const period = getPeriodLabel()
-
-      // Summary sheet
-      const summaryData = [
-        [`Team Pipeline Analytics — ${user?.full_name} — ${period}`],
-        [`Generated on: ${new Date().toLocaleString()}`],
-        [],
-        ['Metric', 'Count'],
-        ['CV Submitted',        totals.total_cv_submitted],
-        ['Interview Scheduled', totals.total_interview_scheduled],
-        ['Interview Completed', totals.total_interview_completed],
-        ['Rejected',            totals.total_rejected],
-        ['Offer Extended',      totals.total_offer_extended],
-        ['Offer Accepted',      totals.total_offer_accepted],
-        ['Joined',              totals.total_joined],
-        ['Renege / Dropped',    totals.total_renege_dropped],
-        ['Overall Conversion %', `${totals.overall_conversion}%`],
-      ]
-      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData)
-      wsSummary['!cols'] = [{ wch: 28 }, { wch: 16 }]
-      XLSX.utils.book_append_sheet(wb, wsSummary, 'Overall Summary')
-
-      // Member Progress sheet
-      const memberHeaders = ['Member', 'Role', 'Reports To', 'Jobs Assigned', 'CV Submitted', 'Interview Scheduled', 'Interview Completed', 'Rejected', 'Offer Extended', 'Offer Accepted', 'Joined', 'Renege/Dropped', 'Conversion %']
-      const memberRows = memberProgress.map(m => [m.member_name, m.role === 'team_leader' ? 'Team Leader' : 'Recruiter', m.reports_to_name, m.jobs_assigned, m.cv_submitted, m.interview_scheduled, m.interview_completed, m.rejected, m.offer_extended, m.offer_accepted, m.joined, m.renege_dropped, `${m.conversion_rate}%`])
-      memberRows.push(['TOTAL', '', '', memberTotals.jobs_assigned, memberTotals.cv_submitted, memberTotals.interview_scheduled, memberTotals.interview_completed, memberTotals.rejected, memberTotals.offer_extended, memberTotals.offer_accepted, memberTotals.joined, memberTotals.renege_dropped, memberTotals.cv_submitted > 0 ? `${Math.round((memberTotals.joined / memberTotals.cv_submitted) * 100)}%` : '0%'])
-      const wsMember = XLSX.utils.aoa_to_sheet([memberHeaders, ...memberRows])
-      wsMember['!cols'] = [{ wch: 22 }, { wch: 14 }, { wch: 20 }, ...Array(10).fill({ wch: 20 })]
-      XLSX.utils.book_append_sheet(wb, wsMember, 'Member Progress')
-
-      // Client Progress sheet
-      const clientHeaders = ['Client', 'New Jobs', 'CV Submitted', 'Interview Scheduled', 'Interview Completed', 'Rejected', 'Offer Extended', 'Offer Accepted', 'Joined', 'Renege/Dropped', 'Conversion %']
-      const clientRows = clientProgress.map(c => [c.client_name, c.new_jobs_added, c.cv_submitted, c.interview_scheduled, c.interview_completed, c.rejected, c.offer_extended, c.offer_accepted, c.joined, c.renege_dropped, `${c.conversion_rate}%`])
-      clientRows.push(['TOTAL', clientTotals.new_jobs_added, clientTotals.cv_submitted, clientTotals.interview_scheduled, clientTotals.interview_completed, clientTotals.rejected, clientTotals.offer_extended, clientTotals.offer_accepted, clientTotals.joined, clientTotals.renege_dropped, clientTotals.cv_submitted > 0 ? `${Math.round((clientTotals.joined / clientTotals.cv_submitted) * 100)}%` : '0%'])
-      const wsClient = XLSX.utils.aoa_to_sheet([clientHeaders, ...clientRows])
-      wsClient['!cols'] = [{ wch: 28 }, ...Array(10).fill({ wch: 20 })]
-      XLSX.utils.book_append_sheet(wb, wsClient, 'Client Progress')
-
-      // Job Progress sheet
-      const jobHeaders = ['Job Code', 'Job Title', 'Client', 'Positions', 'CV Submitted', 'Interview Scheduled', 'Interview Completed', 'Rejected', 'Offer Extended', 'Offer Accepted', 'Joined', 'Renege/Dropped', 'Filled %']
-      const jobRows = jobProgress.map(j => [j.job_code, j.job_title, j.client_name, j.positions, j.cv_submitted, j.interview_scheduled, j.interview_completed, j.rejected, j.offer_extended, j.offer_accepted, j.joined, j.renege_dropped, `${j.filled_rate}%`])
-      const wsJob = XLSX.utils.aoa_to_sheet([jobHeaders, ...jobRows])
-      wsJob['!cols'] = [{ wch: 12 }, { wch: 28 }, { wch: 24 }, ...Array(10).fill({ wch: 18 })]
-      XLSX.utils.book_append_sheet(wb, wsJob, 'Job Progress')
-
-      const fileName = `Team_Analytics_${user?.full_name?.replace(/\s+/g, '_')}_${period.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`
-      XLSX.writeFile(wb, fileName)
-    } catch (err) {
-      console.error('Export error:', err)
-      alert('Export failed. Please try again.')
-    } finally {
-      setExporting(false)
-    }
+      const wb = XLSX.utils.book_new(); const period = getPeriodLabel()
+      const wsSummary = XLSX.utils.aoa_to_sheet([[`Team Pipeline Analytics — ${user?.full_name} — ${period}`],[`Generated on: ${new Date().toLocaleString()}`],[],['Metric','Count'],['CV Submitted',totals.total_cv_submitted],['Interview Scheduled',totals.total_interview_scheduled],['Interview Completed',totals.total_interview_completed],['Rejected',totals.total_rejected],['Offer Extended',totals.total_offer_extended],['Offer Accepted',totals.total_offer_accepted],['Joined',totals.total_joined],['Renege / Dropped',totals.total_renege_dropped],['Overall Conversion %',`${totals.overall_conversion}%`]])
+      wsSummary['!cols']=[{wch:28},{wch:16}]; XLSX.utils.book_append_sheet(wb,wsSummary,'Overall Summary')
+      const mH=['Member','Role','Reports To','Jobs Assigned','CV Submitted','Interview Scheduled','Interview Completed','Rejected','Offer Extended','Offer Accepted','Joined','Renege/Dropped','Conversion %']
+      const mR=memberProgress.map(m=>[m.member_name,m.role==='team_leader'?'Team Leader':'Recruiter',m.reports_to_name,m.jobs_assigned,m.cv_submitted,m.interview_scheduled,m.interview_completed,m.rejected,m.offer_extended,m.offer_accepted,m.joined,m.renege_dropped,`${m.conversion_rate}%`])
+      mR.push(['TOTAL','','',memberTotals.jobs_assigned,memberTotals.cv_submitted,memberTotals.interview_scheduled,memberTotals.interview_completed,memberTotals.rejected,memberTotals.offer_extended,memberTotals.offer_accepted,memberTotals.joined,memberTotals.renege_dropped,memberTotals.cv_submitted>0?`${Math.round(memberTotals.joined/memberTotals.cv_submitted*100)}%`:'0%'])
+      const wsM=XLSX.utils.aoa_to_sheet([mH,...mR]); wsM['!cols']=[{wch:22},{wch:14},{wch:20},...Array(10).fill({wch:20})]; XLSX.utils.book_append_sheet(wb,wsM,'Member Progress')
+      const cH=['Client','New Jobs','CV Submitted','Interview Scheduled','Interview Completed','Rejected','Offer Extended','Offer Accepted','Joined','Renege/Dropped','Conversion %']
+      const cR=clientProgress.map(c=>[c.client_name,c.new_jobs_added,c.cv_submitted,c.interview_scheduled,c.interview_completed,c.rejected,c.offer_extended,c.offer_accepted,c.joined,c.renege_dropped,`${c.conversion_rate}%`])
+      cR.push(['TOTAL',clientTotals.new_jobs_added,clientTotals.cv_submitted,clientTotals.interview_scheduled,clientTotals.interview_completed,clientTotals.rejected,clientTotals.offer_extended,clientTotals.offer_accepted,clientTotals.joined,clientTotals.renege_dropped,clientTotals.cv_submitted>0?`${Math.round(clientTotals.joined/clientTotals.cv_submitted*100)}%`:'0%'])
+      const wsC=XLSX.utils.aoa_to_sheet([cH,...cR]); wsC['!cols']=[{wch:28},...Array(10).fill({wch:20})]; XLSX.utils.book_append_sheet(wb,wsC,'Client Progress')
+      const jH=['Job Code','Job Title','Client','Positions','CV Submitted','Interview Scheduled','Interview Completed','Rejected','Offer Extended','Offer Accepted','Joined','Renege/Dropped','Filled %']
+      const jR=jobProgress.map(j=>[j.job_code,j.job_title,j.client_name,j.positions,j.cv_submitted,j.interview_scheduled,j.interview_completed,j.rejected,j.offer_extended,j.offer_accepted,j.joined,j.renege_dropped,`${j.filled_rate}%`])
+      const wsJ=XLSX.utils.aoa_to_sheet([jH,...jR]); wsJ['!cols']=[{wch:12},{wch:28},{wch:24},...Array(10).fill({wch:18})]; XLSX.utils.book_append_sheet(wb,wsJ,'Job Progress')
+      XLSX.writeFile(wb,`Team_Analytics_${user?.full_name?.replace(/\s+/g,'_')}_${period.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`)
+    } catch(err){ console.error('Export error:',err); alert('Export failed.') } finally { setExporting(false) }
   }
 
-  // ── UI helpers ─────────────────────────────────────────────────────────────
   const getStageColor = (stage: string) => {
-    switch (stage) {
+    switch(stage){
       case 'interview_scheduled': return 'bg-blue-100 text-blue-800 border-blue-300'
       case 'interview_completed': return 'bg-purple-100 text-purple-800 border-purple-300'
       case 'offer_extended':      return 'bg-orange-100 text-orange-800 border-orange-300'
@@ -608,68 +389,54 @@ export default function SrTLAnalytics() {
       default:                    return 'bg-gray-100 text-gray-800 border-gray-300'
     }
   }
-
-  const getStageLabel = (stage: string) =>
-    stage.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-
+  const getStageLabel = (stage: string) => stage.replace(/_/g,' ').replace(/\b\w/g,l=>l.toUpperCase())
   const groupedHighlights = {
-    interview_scheduled: highlights.filter(h => h.current_stage === 'interview_scheduled'),
-    interview_completed: highlights.filter(h => h.current_stage === 'interview_completed'),
-    offer_extended:      highlights.filter(h => h.current_stage === 'offer_extended'),
-    offer_accepted:      highlights.filter(h => h.current_stage === 'offer_accepted'),
-    joined:              highlights.filter(h => h.current_stage === 'joined'),
+    interview_scheduled: highlights.filter(h=>h.current_stage==='interview_scheduled'),
+    interview_completed: highlights.filter(h=>h.current_stage==='interview_completed'),
+    offer_extended:      highlights.filter(h=>h.current_stage==='offer_extended'),
+    offer_accepted:      highlights.filter(h=>h.current_stage==='offer_accepted'),
+    joined:              highlights.filter(h=>h.current_stage==='joined'),
   }
 
   const PipelineCell = ({ value, colKey }: { value: number; colKey: string }) => {
-    const col = PIPELINE_COLS.find(c => c.key === colKey)!
+    const col = PIPELINE_COLS.find(c=>c.key===colKey)!
     return <td className="px-4 py-3 text-center"><span className={`px-2 py-1 rounded font-semibold text-xs ${col.bg} ${col.text}`}>{value}</span></td>
   }
-
   const TotalCell = ({ value, colKey }: { value: number; colKey: string }) => {
-    const col = PIPELINE_COLS.find(c => c.key === colKey)!
+    const col = PIPELINE_COLS.find(c=>c.key===colKey)!
     return <td className="px-4 py-3 text-center"><span className={`px-2 py-1 rounded font-bold text-xs border-2 ${col.bg} ${col.text}`}>{value}</span></td>
   }
-
   const ConversionCell = ({ rate }: { rate: number }) => (
     <td className="px-4 py-3 text-center">
-      <span className={`px-2 py-1 rounded font-bold text-xs ${rate >= 20 ? 'bg-green-100 text-green-800' : rate >= 10 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{rate}%</span>
+      <span className={`px-2 py-1 rounded font-bold text-xs ${rate>=20?'bg-green-100 text-green-800':rate>=10?'bg-yellow-100 text-yellow-800':'bg-red-100 text-red-800'}`}>{rate}%</span>
     </td>
   )
 
-  if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        </div>
-      </DashboardLayout>
-    )
-  }
+  if (loading) return (
+    <DashboardLayout>
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    </DashboardLayout>
+  )
 
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6 pb-8">
 
-        {/* Header */}
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg p-6 text-white">
           <h1 className="text-3xl font-bold mb-1">📊 Team Pipeline Analytics</h1>
           <p className="text-blue-100">
-            {user?.full_name} · {memberProgress.filter(m => m.role === 'team_leader').length} TLs · {memberProgress.filter(m => m.role === 'recruiter').length} Recruiters
+            {user?.full_name} · {memberProgress.filter(m=>m.role==='team_leader').length} TLs · {memberProgress.filter(m=>m.role==='recruiter').length} Recruiters
           </p>
         </div>
 
-        {/* Period Selector */}
         <div className="bg-white rounded-lg p-4 shadow">
           <div className="flex flex-wrap gap-4 items-end">
             <div className="flex gap-2">
-              {[
-                { key: 'previous_day', label: 'Previous Day' },
-                { key: 'today',        label: 'Today' },
-                { key: 'week',         label: 'Last 7 Days' },
-                { key: 'month',        label: 'This Month' },
-              ].map(({ key, label }) => (
-                <button key={key} onClick={() => setSelectedPeriod(key)}
-                  className={`px-4 py-2 rounded-lg font-medium transition ${selectedPeriod === key ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}>
+              {[{key:'previous_day',label:'Previous Day'},{key:'today',label:'Today'},{key:'week',label:'Last 7 Days'},{key:'month',label:'This Month'}].map(({key,label})=>(
+                <button key={key} onClick={()=>setSelectedPeriod(key)}
+                  className={`px-4 py-2 rounded-lg font-medium transition ${selectedPeriod===key?'bg-blue-600 text-white':'bg-gray-100 hover:bg-gray-200'}`}>
                   {label}
                 </button>
               ))}
@@ -677,32 +444,27 @@ export default function SrTLAnalytics() {
             <div className="flex gap-2 items-end">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">From</label>
-                <input type="date" value={customStartDate}
-                  onChange={(e) => { setCustomStartDate(e.target.value); setSelectedPeriod('custom') }}
-                  className="px-3 py-2 border rounded-lg text-sm" />
+                <input type="date" value={customStartDate} onChange={e=>{setCustomStartDate(e.target.value);setSelectedPeriod('custom')}} className="px-3 py-2 border rounded-lg text-sm"/>
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">To</label>
-                <input type="date" value={customEndDate}
-                  onChange={(e) => { setCustomEndDate(e.target.value); setSelectedPeriod('custom') }}
-                  className="px-3 py-2 border rounded-lg text-sm" />
+                <input type="date" value={customEndDate} onChange={e=>{setCustomEndDate(e.target.value);setSelectedPeriod('custom')}} className="px-3 py-2 border rounded-lg text-sm"/>
               </div>
             </div>
             <button onClick={exportToExcel} disabled={exporting}
               className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium ml-auto flex items-center gap-2 transition disabled:opacity-60">
-              {exporting ? <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>Exporting...</> : <>📥 Export Excel</>}
+              {exporting?<><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>Exporting...</>:<>📥 Export Excel</>}
             </button>
           </div>
         </div>
 
-        {/* Overall Pipeline */}
         <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-6 border-2 border-purple-200">
           <h2 className="text-xl font-bold text-gray-900 mb-4">📈 Team Overall Pipeline</h2>
           <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3">
-            {PIPELINE_COLS.map(({ key, label, color }) => (
+            {PIPELINE_COLS.map(({key,label,color})=>(
               <div key={key} className="bg-white rounded-lg p-3 text-center shadow">
                 <div className="text-xs text-gray-500 mb-1 leading-tight">{label}</div>
-                <div className={`text-2xl font-bold ${color}`}>{(totals as any)[`total_${key}`] ?? 0}</div>
+                <div className={`text-2xl font-bold ${color}`}>{(totals as any)[`total_${key}`]??0}</div>
               </div>
             ))}
             <div className="bg-white rounded-lg p-3 text-center shadow border-2 border-green-300">
@@ -712,69 +474,57 @@ export default function SrTLAnalytics() {
           </div>
         </div>
 
-        {/* Tabs */}
         <div className="bg-white rounded-lg shadow">
           <div className="border-b border-gray-200">
             <div className="flex">
-              {[
-                { key: 'member', label: `👤 Member Progress (${memberProgress.length})` },
-                { key: 'client', label: `🏢 Client Progress (${clientProgress.length})` },
-                { key: 'job',    label: `💼 Job Progress (${jobProgress.length})` },
-              ].map(({ key, label }) => (
-                <button key={key} onClick={() => setActiveTab(key as any)}
-                  className={`px-6 py-4 font-medium border-b-2 transition ${activeTab === key ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-600 hover:text-gray-900'}`}>
+              {[{key:'member',label:`👤 Member Progress (${memberProgress.length})`},{key:'client',label:`🏢 Client Progress (${clientProgress.length})`},{key:'job',label:`💼 Job Progress (${jobProgress.length})`}].map(({key,label})=>(
+                <button key={key} onClick={()=>setActiveTab(key as any)}
+                  className={`px-6 py-4 font-medium border-b-2 transition ${activeTab===key?'border-blue-600 text-blue-600':'border-transparent text-gray-600 hover:text-gray-900'}`}>
                   {label}
                 </button>
               ))}
             </div>
           </div>
-
           <div className="p-6">
 
-            {/* Member Table — TLs grouped first, then recruiters under their TL */}
-            {activeTab === 'member' && (
+            {activeTab==='member'&&(
               <div className="overflow-x-auto">
-                {memberProgress.length === 0 ? (
+                {memberProgress.length===0?(
                   <div className="text-center py-8 text-gray-500">No team members found</div>
-                ) : (
+                ):(
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-700 sticky left-0 bg-gray-50">Member</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Role</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Reports To</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Jobs Assigned</th>
-                        {PIPELINE_COLS.map(c => (
-                          <th key={c.key} className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{c.label}</th>
-                        ))}
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Conversion %</th>
-                      </tr>
-                    </thead>
+                    <thead className="bg-gray-50"><tr>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-700 sticky left-0 bg-gray-50">Member</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-700">Role</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-700">Reports To</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-700">Jobs Assigned</th>
+                      {PIPELINE_COLS.map(c=><th key={c.key} className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{c.label}</th>)}
+                      <th className="px-4 py-3 text-center font-semibold text-gray-700">Conversion %</th>
+                    </tr></thead>
                     <tbody className="divide-y divide-gray-200">
-                      {memberProgress.map((m) => (
-                        <tr key={m.member_id} className={`hover:bg-gray-50 ${m.role === 'team_leader' ? 'bg-purple-50' : ''}`}>
-                          <td className={`px-4 py-3 font-medium sticky left-0 ${m.role === 'team_leader' ? 'bg-purple-50' : 'bg-white'}`}>
-                            {m.role === 'recruiter' && <span className="text-gray-300 mr-1">└</span>}
+                      {memberProgress.map(m=>(
+                        <tr key={m.member_id} className={`hover:bg-gray-50 ${m.role==='team_leader'?'bg-purple-50':''}`}>
+                          <td className={`px-4 py-3 font-medium sticky left-0 ${m.role==='team_leader'?'bg-purple-50':'bg-white'}`}>
+                            {m.role==='recruiter'&&<span className="text-gray-300 mr-1">└</span>}
                             {m.member_name}
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${m.role === 'team_leader' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
-                              {m.role === 'team_leader' ? 'TL' : 'Recruiter'}
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${m.role==='team_leader'?'bg-purple-100 text-purple-800':'bg-blue-100 text-blue-800'}`}>
+                              {m.role==='team_leader'?'TL':'Recruiter'}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-center text-xs text-gray-500">{m.reports_to_name}</td>
                           <td className="px-4 py-3 text-center">{m.jobs_assigned}</td>
-                          {PIPELINE_COLS.map(c => <PipelineCell key={c.key} colKey={c.key} value={(m as any)[c.key]} />)}
-                          <ConversionCell rate={m.conversion_rate} />
+                          {PIPELINE_COLS.map(c=><PipelineCell key={c.key} colKey={c.key} value={(m as any)[c.key]}/>)}
+                          <ConversionCell rate={m.conversion_rate}/>
                         </tr>
                       ))}
                       <tr className="bg-gray-100 font-bold border-t-2 border-gray-300">
                         <td className="px-4 py-3 text-gray-900 sticky left-0 bg-gray-100">Total</td>
-                        <td className="px-4 py-3"></td>
-                        <td className="px-4 py-3"></td>
+                        <td className="px-4 py-3"></td><td className="px-4 py-3"></td>
                         <td className="px-4 py-3 text-center">{memberTotals.jobs_assigned}</td>
-                        {PIPELINE_COLS.map(c => <TotalCell key={c.key} colKey={c.key} value={(memberTotals as any)[c.key]} />)}
-                        <ConversionCell rate={memberTotals.cv_submitted > 0 ? Math.round((memberTotals.joined / memberTotals.cv_submitted) * 100) : 0} />
+                        {PIPELINE_COLS.map(c=><TotalCell key={c.key} colKey={c.key} value={(memberTotals as any)[c.key]}/>)}
+                        <ConversionCell rate={memberTotals.cv_submitted>0?Math.round(memberTotals.joined/memberTotals.cv_submitted*100):0}/>
                       </tr>
                     </tbody>
                   </table>
@@ -782,35 +532,32 @@ export default function SrTLAnalytics() {
               </div>
             )}
 
-            {/* Client Table */}
-            {activeTab === 'client' && (
+            {activeTab==='client'&&(
               <div className="overflow-x-auto">
-                {clientProgress.length === 0 ? (
+                {clientProgress.length===0?(
                   <div className="text-center py-8 text-gray-500">No client data for this team in selected period</div>
-                ) : (
+                ):(
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-700 sticky left-0 bg-gray-50">Client</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700">New Jobs</th>
-                        {PIPELINE_COLS.map(c => <th key={c.key} className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{c.label}</th>)}
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Conversion %</th>
-                      </tr>
-                    </thead>
+                    <thead className="bg-gray-50"><tr>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-700 sticky left-0 bg-gray-50">Client</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-700">New Jobs</th>
+                      {PIPELINE_COLS.map(c=><th key={c.key} className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{c.label}</th>)}
+                      <th className="px-4 py-3 text-center font-semibold text-gray-700">Conversion %</th>
+                    </tr></thead>
                     <tbody className="divide-y divide-gray-200">
-                      {clientProgress.map((client) => (
+                      {clientProgress.map(client=>(
                         <tr key={client.client_id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 font-medium sticky left-0 bg-white">{client.client_name}</td>
                           <td className="px-4 py-3 text-center"><span className="px-2 py-1 bg-purple-100 text-purple-800 rounded font-semibold text-xs">{client.new_jobs_added}</span></td>
-                          {PIPELINE_COLS.map(c => <PipelineCell key={c.key} colKey={c.key} value={(client as any)[c.key]} />)}
-                          <ConversionCell rate={client.conversion_rate} />
+                          {PIPELINE_COLS.map(c=><PipelineCell key={c.key} colKey={c.key} value={(client as any)[c.key]}/>)}
+                          <ConversionCell rate={client.conversion_rate}/>
                         </tr>
                       ))}
                       <tr className="bg-gray-100 font-bold border-t-2 border-gray-300">
                         <td className="px-4 py-3 text-gray-900 sticky left-0 bg-gray-100">Total</td>
                         <td className="px-4 py-3 text-center"><span className="px-2 py-1 bg-purple-100 text-purple-800 rounded font-bold text-xs border-2">{clientTotals.new_jobs_added}</span></td>
-                        {PIPELINE_COLS.map(c => <TotalCell key={c.key} colKey={c.key} value={(clientTotals as any)[c.key]} />)}
-                        <ConversionCell rate={clientTotals.cv_submitted > 0 ? Math.round((clientTotals.joined / clientTotals.cv_submitted) * 100) : 0} />
+                        {PIPELINE_COLS.map(c=><TotalCell key={c.key} colKey={c.key} value={(clientTotals as any)[c.key]}/>)}
+                        <ConversionCell rate={clientTotals.cv_submitted>0?Math.round(clientTotals.joined/clientTotals.cv_submitted*100):0}/>
                       </tr>
                     </tbody>
                   </table>
@@ -818,36 +565,32 @@ export default function SrTLAnalytics() {
               </div>
             )}
 
-            {/* Job Table */}
-            {activeTab === 'job' && (
+            {activeTab==='job'&&(
               <div className="overflow-x-auto">
-                {jobProgress.length === 0 ? (
+                {jobProgress.length===0?(
                   <div className="text-center py-8 text-gray-500">No job data for this team in selected period</div>
-                ) : (
+                ):(
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-700 sticky left-0 bg-gray-50">Job Code</th>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-700">Job Title</th>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-700">Client</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Positions</th>
-                        {PIPELINE_COLS.map(c => <th key={c.key} className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{c.label}</th>)}
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Filled %</th>
-                      </tr>
-                    </thead>
+                    <thead className="bg-gray-50"><tr>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-700 sticky left-0 bg-gray-50">Job Code</th>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-700">Job Title</th>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-700">Client</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-700">Positions</th>
+                      {PIPELINE_COLS.map(c=><th key={c.key} className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{c.label}</th>)}
+                      <th className="px-4 py-3 text-center font-semibold text-gray-700">Filled %</th>
+                    </tr></thead>
                     <tbody className="divide-y divide-gray-200">
-                      {jobProgress.map((job) => (
+                      {jobProgress.map(job=>(
                         <tr key={job.job_id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 font-medium text-blue-600 sticky left-0 bg-white">{job.job_code}</td>
                           <td className="px-4 py-3">{job.job_title}</td>
                           <td className="px-4 py-3 text-gray-600">{job.client_name}</td>
                           <td className="px-4 py-3 text-center">{job.positions}</td>
-                          {PIPELINE_COLS.map(c => <PipelineCell key={c.key} colKey={c.key} value={(job as any)[c.key]} />)}
+                          {PIPELINE_COLS.map(c=><PipelineCell key={c.key} colKey={c.key} value={(job as any)[c.key]}/>)}
                           <td className="px-4 py-3 text-center">
                             <div className="flex items-center gap-2">
                               <div className="flex-1 bg-gray-200 rounded-full h-2">
-                                <div className={`h-2 rounded-full ${job.filled_rate >= 80 ? 'bg-green-500' : job.filled_rate >= 50 ? 'bg-yellow-500' : 'bg-orange-500'}`}
-                                  style={{ width: `${Math.min(job.filled_rate, 100)}%` }} />
+                                <div className={`h-2 rounded-full ${job.filled_rate>=80?'bg-green-500':job.filled_rate>=50?'bg-yellow-500':'bg-orange-500'}`} style={{width:`${Math.min(job.filled_rate,100)}%`}}/>
                               </div>
                               <span className="text-xs font-semibold w-8">{job.filled_rate}%</span>
                             </div>
@@ -858,12 +601,8 @@ export default function SrTLAnalytics() {
                         <td className="px-4 py-3 text-gray-900 sticky left-0 bg-gray-100">Total</td>
                         <td className="px-4 py-3"></td><td className="px-4 py-3"></td>
                         <td className="px-4 py-3 text-center">{jobTotals.positions}</td>
-                        {PIPELINE_COLS.map(c => <TotalCell key={c.key} colKey={c.key} value={(jobTotals as any)[c.key]} />)}
-                        <td className="px-4 py-3 text-center">
-                          <span className="text-xs font-bold text-gray-700">
-                            {jobTotals.positions > 0 ? Math.round((jobTotals.joined / jobTotals.positions) * 100) : 0}%
-                          </span>
-                        </td>
+                        {PIPELINE_COLS.map(c=><TotalCell key={c.key} colKey={c.key} value={(jobTotals as any)[c.key]}/>)}
+                        <td className="px-4 py-3 text-center"><span className="text-xs font-bold text-gray-700">{jobTotals.positions>0?Math.round(jobTotals.joined/jobTotals.positions*100):0}%</span></td>
                       </tr>
                     </tbody>
                   </table>
@@ -873,12 +612,11 @@ export default function SrTLAnalytics() {
           </div>
         </div>
 
-        {/* Active Candidate Highlights */}
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-2xl font-bold text-gray-900 mb-6">🎯 Active Candidates Highlight</h2>
           <div className="space-y-6">
-            {Object.entries(groupedHighlights).map(([stage, candidates]) => {
-              if (candidates.length === 0) return null
+            {Object.entries(groupedHighlights).map(([stage,candidates])=>{
+              if(candidates.length===0) return null
               return (
                 <div key={stage} className="border-l-4 border-blue-500 pl-4">
                   <h3 className="text-lg font-bold text-gray-900 mb-3">
@@ -887,13 +625,11 @@ export default function SrTLAnalytics() {
                     </span>
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {candidates.slice(0, 9).map((c) => (
+                    {candidates.slice(0,9).map(c=>(
                       <div key={c.id} className="border rounded-lg p-4 hover:shadow-lg transition bg-gradient-to-r from-white to-gray-50">
                         <div className="flex items-start justify-between mb-2">
                           <h4 className="font-bold text-gray-900">{c.full_name}</h4>
-                          <span className={`px-2 py-1 text-xs rounded-full ${c.days_in_stage <= 3 ? 'bg-green-100 text-green-800' : c.days_in_stage <= 7 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>
-                            {c.days_in_stage}d
-                          </span>
+                          <span className={`px-2 py-1 text-xs rounded-full ${c.days_in_stage<=3?'bg-green-100 text-green-800':c.days_in_stage<=7?'bg-yellow-100 text-yellow-800':'bg-red-100 text-red-800'}`}>{c.days_in_stage}d</span>
                         </div>
                         <div className="text-sm space-y-1">
                           <p className="text-gray-700"><span className="font-medium">Job:</span> {c.job_title}</p>
@@ -903,15 +639,11 @@ export default function SrTLAnalytics() {
                       </div>
                     ))}
                   </div>
-                  {candidates.length > 9 && (
-                    <div className="mt-4 text-center text-sm text-gray-600">+{candidates.length - 9} more in this stage</div>
-                  )}
+                  {candidates.length>9&&<div className="mt-4 text-center text-sm text-gray-600">+{candidates.length-9} more in this stage</div>}
                 </div>
               )
             })}
-            {highlights.length === 0 && (
-              <div className="text-center py-8 text-gray-500">No active candidates in pipeline stages</div>
-            )}
+            {highlights.length===0&&<div className="text-center py-8 text-gray-500">No active candidates in pipeline stages</div>}
           </div>
         </div>
 
