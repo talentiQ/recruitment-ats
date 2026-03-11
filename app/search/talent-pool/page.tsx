@@ -3,12 +3,12 @@
 export const dynamic = 'force-dynamic'
 
 import DashboardLayout from '@/components/DashboardLayout'
+import MatchScorePanel from '@/components/MatchScorePanel'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { normalizeSkills } from '@/lib/skillNormalization'
 
-// Use regular supabase client — RLS policies handle access control
 const supabaseAdmin = supabase
 
 interface SearchResult {
@@ -40,6 +40,13 @@ interface SearchResult {
   match_score: number
 }
 
+// ── NEW: scoring drawer state type ────────────────────────────────────────────
+interface ScoringTarget {
+  result: SearchResult
+  jobId:  string
+  jobTitle: string
+}
+
 export default function TalentPoolSearchPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
@@ -52,6 +59,10 @@ export default function TalentPoolSearchPage() {
   const [myJobs, setMyJobs] = useState<any[]>([])
   const [selectedJobId, setSelectedJobId] = useState('')
   const [addingToJob, setAddingToJob] = useState(false)
+
+  // ── NEW: Deep Score drawer ─────────────────────────────────────────────────
+  const [scoringTarget, setScoringTarget] = useState<ScoringTarget | null>(null)
+  const [scoreJobId, setScoreJobId] = useState('')    // job selected inside drawer
 
   // Filter states
   const [quickSearch, setQuickSearch] = useState('')
@@ -69,12 +80,7 @@ export default function TalentPoolSearchPage() {
   const [ownershipFilter, setOwnershipFilter] = useState('all')
 
   const [stats, setStats] = useState({
-    total: 0,
-    validated: 0,
-    resumeBank: 0,
-    owned: 0,
-    available: 0,
-    avgMatch: 0
+    total: 0, validated: 0, resumeBank: 0, owned: 0, available: 0, avgMatch: 0
   })
 
   useEffect(() => {
@@ -90,24 +96,13 @@ export default function TalentPoolSearchPage() {
     try {
       const { data: assignments } = await supabase
         .from('job_recruiter_assignments')
-        .select(`
-          job_id,
-          jobs (
-            id,
-            job_code,
-            job_title,
-            status,
-            clients (company_name)
-          )
-        `)
+        .select(`job_id, jobs (id, job_code, job_title, status, clients (company_name))`)
         .eq('recruiter_id', currentUser.id)
         .eq('is_active', true)
         .eq('jobs.status', 'open')
 
       if (assignments) {
-        const jobs = assignments
-          .map((a: any) => a.jobs)
-          .filter((j: any) => j !== null)
+        const jobs = assignments.map((a: any) => a.jobs).filter((j: any) => j !== null)
         setMyJobs(jobs)
       }
     } catch (error) {
@@ -129,7 +124,6 @@ export default function TalentPoolSearchPage() {
       alert('Please select a job')
       return
     }
-
     setAddingToJob(true)
     try {
       const { data: existing } = await supabase
@@ -142,27 +136,19 @@ export default function TalentPoolSearchPage() {
       if (!existing) {
         const { error: assignError } = await supabase
           .from('job_recruiter_assignments')
-          .insert({
-            job_id: selectedJobId,
-            recruiter_id: user.id,
-            assigned_by: user.id,
-            is_active: true,
-            positions_allocated: 1
-          })
+          .insert({ job_id: selectedJobId, recruiter_id: user.id, assigned_by: user.id, is_active: true, positions_allocated: 1 })
         if (assignError) throw assignError
       }
 
-      await supabase
-        .from('candidate_timeline')
-        .insert({
-          candidate_id: selectedCandidate.id,
-          activity_type: 'added_to_job',
-          activity_title: 'Added to Additional Job',
-          activity_description: `Added to job by ${user.full_name} from talent pool search`,
-          performed_by: user.id
-        })
+      await supabase.from('candidate_timeline').insert({
+        candidate_id: selectedCandidate.id,
+        activity_type: 'added_to_job',
+        activity_title: 'Added to Additional Job',
+        activity_description: `Added to job by ${user.full_name} from talent pool search`,
+        performed_by: user.id,
+      })
 
-      alert(`✅ Success! ${selectedCandidate.full_name} added to your job. You can now work on this candidate.`)
+      alert(`✅ ${selectedCandidate.full_name} added to your job.`)
       setShowAddToJobModal(false)
       setSelectedJobId('')
       setSelectedCandidate(null)
@@ -174,13 +160,21 @@ export default function TalentPoolSearchPage() {
     }
   }
 
+  // ── NEW: open scoring drawer ───────────────────────────────────────────────
+  const handleOpenScoreDrawer = (result: SearchResult) => {
+    // Default to the candidate's own job if available; otherwise let user pick
+    const defaultJobId    = result.job_id || myJobs[0]?.id || ''
+    const defaultJobTitle = result.job_title || myJobs[0]?.job_title || ''
+    setScoringTarget({ result, jobId: defaultJobId, jobTitle: defaultJobTitle })
+    setScoreJobId(defaultJobId)
+  }
+
   const handleSearch = async () => {
     setLoading(true)
     try {
       let allResults: SearchResult[] = []
       const now = new Date()
 
-      // Normalize search skills
       let searchSkills = selectedSkills
       if (selectedSkills.length > 0) {
         const normalized = await normalizeSkills(selectedSkills)
@@ -209,68 +203,43 @@ export default function TalentPoolSearchPage() {
             `full_name.ilike.%${quickSearch}%,phone.ilike.%${quickSearch}%,email.ilike.%${quickSearch}%`
           )
         }
-        if (searchSkills.length > 0) {
-          candidateQuery = candidateQuery.overlaps('key_skills', searchSkills)
-        }
-        if (location) {
-          candidateQuery = candidateQuery.ilike('current_location', `%${location}%`)
-        }
+        if (searchSkills.length > 0) candidateQuery = candidateQuery.overlaps('key_skills', searchSkills)
+        if (location) candidateQuery = candidateQuery.ilike('current_location', `%${location}%`)
         if (expMin) candidateQuery = candidateQuery.gte('total_experience', parseFloat(expMin))
         if (expMax) candidateQuery = candidateQuery.lte('total_experience', parseFloat(expMax))
         if (ctcMin) candidateQuery = candidateQuery.gte('expected_ctc', parseFloat(ctcMin))
         if (ctcMax) candidateQuery = candidateQuery.lte('expected_ctc', parseFloat(ctcMax))
         if (noticePeriod !== 'all') {
           const [min, max] = noticePeriod.split('-').map(Number)
-          if (max) {
-            candidateQuery = candidateQuery.gte('notice_period', min).lte('notice_period', max)
-          } else {
-            candidateQuery = candidateQuery.gte('notice_period', min)
-          }
+          if (max) candidateQuery = candidateQuery.gte('notice_period', min).lte('notice_period', max)
+          else     candidateQuery = candidateQuery.gte('notice_period', min)
         }
 
         const { data: candidates } = await candidateQuery
 
         if (candidates) {
-          const processedCandidates = candidates.map((c: any) => {
+          const processed = candidates.map((c: any) => {
             const lastActivity = c.last_activity_date ? new Date(c.last_activity_date) : new Date(c.created_at)
             const daysSince = Math.floor((now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24))
-            const isOwned = daysSince <= 90
-            const isAvailable = daysSince > 90
-
             return {
               source_type: 'candidate' as const,
-              id: c.id,
-              full_name: c.full_name,
-              phone: c.phone,
-              email: c.email,
-              current_company: c.current_company,
-              current_designation: c.current_designation,
-              total_experience: c.total_experience,
-              current_location: c.current_location,
-              expected_ctc: c.expected_ctc,
-              key_skills: c.key_skills || [],
-              current_stage: c.current_stage,
-              job_id: c.job_id,
+              id: c.id, full_name: c.full_name, phone: c.phone, email: c.email,
+              current_company: c.current_company, current_designation: c.current_designation,
+              total_experience: c.total_experience, current_location: c.current_location,
+              expected_ctc: c.expected_ctc, key_skills: c.key_skills || [],
+              current_stage: c.current_stage, job_id: c.job_id,
               job_title: c.jobs?.job_title,
-              assigned_to: c.assigned_to,
-              assigned_to_name: c.assigned_user?.full_name,
-              last_activity_date: c.last_activity_date,
-              resume_url: c.resume_url,
+              assigned_to: c.assigned_to, assigned_to_name: c.assigned_user?.full_name,
+              last_activity_date: c.last_activity_date, resume_url: c.resume_url,
               days_since_activity: daysSince,
-              is_owned: isOwned,
-              is_available: isAvailable,
-              match_score: calculateMatchScore(c, searchSkills, location, expMin, expMax, ctcMin, ctcMax)
+              is_owned: daysSince <= 90, is_available: daysSince > 90,
+              match_score: calculateMatchScore(c, searchSkills, location, expMin, expMax, ctcMin, ctcMax),
             }
           })
-
-          let filteredCandidates = processedCandidates
-          if (ownershipFilter === 'owned') {
-            filteredCandidates = processedCandidates.filter(c => c.is_owned)
-          } else if (ownershipFilter === 'available') {
-            filteredCandidates = processedCandidates.filter(c => c.is_available)
-          }
-
-          allResults = allResults.concat(filteredCandidates)
+          let filtered = processed
+          if (ownershipFilter === 'owned')     filtered = processed.filter(c => c.is_owned)
+          if (ownershipFilter === 'available') filtered = processed.filter(c => c.is_available)
+          allResults = allResults.concat(filtered)
         }
       }
 
@@ -283,8 +252,7 @@ export default function TalentPoolSearchPage() {
             current_company, current_designation,
             total_experience, current_location,
             expected_ctc, key_skills, notice_period,
-            status, uploaded_by, uploaded_at,
-            resume_url,
+            status, uploaded_by, uploaded_at, resume_url,
             uploader:uploaded_by (full_name)
           `)
           .eq('status', 'available')
@@ -294,9 +262,7 @@ export default function TalentPoolSearchPage() {
             `full_name.ilike.%${quickSearch}%,phone.ilike.%${quickSearch}%,email.ilike.%${quickSearch}%`
           )
         }
-        if (searchSkills.length > 0) {
-          resumeQuery = resumeQuery.overlaps('key_skills', searchSkills)
-        }
+        if (searchSkills.length > 0) resumeQuery = resumeQuery.overlaps('key_skills', searchSkills)
         if (location) resumeQuery = resumeQuery.ilike('current_location', `%${location}%`)
         if (expMin) resumeQuery = resumeQuery.gte('total_experience', parseFloat(expMin))
         if (expMax) resumeQuery = resumeQuery.lte('total_experience', parseFloat(expMax))
@@ -304,46 +270,29 @@ export default function TalentPoolSearchPage() {
         if (ctcMax) resumeQuery = resumeQuery.lte('expected_ctc', parseFloat(ctcMax))
         if (noticePeriod !== 'all') {
           const [min, max] = noticePeriod.split('-').map(Number)
-          if (max) {
-            resumeQuery = resumeQuery.gte('notice_period', min).lte('notice_period', max)
-          } else {
-            resumeQuery = resumeQuery.gte('notice_period', min)
-          }
+          if (max) resumeQuery = resumeQuery.gte('notice_period', min).lte('notice_period', max)
+          else     resumeQuery = resumeQuery.gte('notice_period', min)
         }
 
         const { data: resumes } = await resumeQuery
 
         if (resumes) {
-          const processedResumes = resumes.map((r: any) => ({
+          const processed = resumes.map((r: any) => ({
             source_type: 'resume_bank' as const,
-            id: r.id,
-            full_name: r.full_name,
-            phone: r.phone,
-            email: r.email,
-            current_company: r.current_company,
-            current_designation: r.current_designation,
-            total_experience: r.total_experience,
-            current_location: r.current_location,
-            expected_ctc: r.expected_ctc,
-            key_skills: r.key_skills || [],
-            resume_bank_status: r.status,
-            uploaded_by: r.uploaded_by,
-            uploaded_by_name: r.uploader?.full_name,
-            uploaded_at: r.uploaded_at,
-            resume_url: r.resume_url,
-            days_since_activity: 0,
-            is_owned: false,
-            is_available: true,
-            match_score: calculateMatchScore(r, searchSkills, location, expMin, expMax, ctcMin, ctcMax)
+            id: r.id, full_name: r.full_name, phone: r.phone, email: r.email,
+            current_company: r.current_company, current_designation: r.current_designation,
+            total_experience: r.total_experience, current_location: r.current_location,
+            expected_ctc: r.expected_ctc, key_skills: r.key_skills || [],
+            resume_bank_status: r.status, uploaded_by: r.uploaded_by,
+            uploaded_by_name: r.uploader?.full_name, uploaded_at: r.uploaded_at,
+            resume_url: r.resume_url, days_since_activity: 0,
+            is_owned: false, is_available: true,
+            match_score: calculateMatchScore(r, searchSkills, location, expMin, expMax, ctcMin, ctcMax),
           }))
-
-          if (ownershipFilter === 'available' || ownershipFilter === 'all') {
-            allResults = allResults.concat(processedResumes)
-          }
+          if (ownershipFilter !== 'owned') allResults = allResults.concat(processed)
         }
       }
 
-      // Sort by match score
       allResults.sort((a, b) => b.match_score - a.match_score)
 
       const validated  = allResults.filter(r => r.source_type === 'candidate').length
@@ -351,8 +300,7 @@ export default function TalentPoolSearchPage() {
       const owned      = allResults.filter(r => r.is_owned).length
       const available  = allResults.filter(r => r.is_available).length
       const avgMatch   = allResults.length > 0
-        ? Math.round(allResults.reduce((sum, r) => sum + r.match_score, 0) / allResults.length)
-        : 0
+        ? Math.round(allResults.reduce((sum, r) => sum + r.match_score, 0) / allResults.length) : 0
 
       setStats({ total: allResults.length, validated, resumeBank, owned, available, avgMatch })
       setResults(allResults)
@@ -366,44 +314,24 @@ export default function TalentPoolSearchPage() {
   }
 
   const calculateMatchScore = (
-    candidate: any,
-    skills: string[],
-    loc: string,
-    minExp: string,
-    maxExp: string,
-    minCtc: string,
-    maxCtc: string
+    candidate: any, skills: string[], loc: string,
+    minExp: string, maxExp: string, minCtc: string, maxCtc: string
   ): number => {
     let score = 0
     if (skills.length > 0 && candidate.key_skills) {
-      const matchedSkills = skills.filter(s =>
-        candidate.key_skills.some((cs: string) => cs.toLowerCase() === s.toLowerCase())
-      )
-      score += Math.round((matchedSkills.length / skills.length) * 40)
-    } else {
-      score += 40
-    }
+      const matched = skills.filter(s => candidate.key_skills.some((cs: string) => cs.toLowerCase() === s.toLowerCase()))
+      score += Math.round((matched.length / skills.length) * 40)
+    } else { score += 40 }
     if (minExp || maxExp) {
-      const exp = candidate.total_experience
-      const min = parseFloat(minExp) || 0
-      const max = parseFloat(maxExp) || 100
+      const exp = candidate.total_experience, min = parseFloat(minExp) || 0, max = parseFloat(maxExp) || 100
       if (exp >= min && exp <= max) score += 20
-    } else {
-      score += 20
-    }
-    if (loc) {
-      if (candidate.current_location?.toLowerCase().includes(loc.toLowerCase())) score += 15
-    } else {
-      score += 15
-    }
+    } else { score += 20 }
+    if (loc) { if (candidate.current_location?.toLowerCase().includes(loc.toLowerCase())) score += 15 }
+    else { score += 15 }
     if (minCtc || maxCtc) {
-      const ctc = candidate.expected_ctc
-      const min = parseFloat(minCtc) || 0
-      const max = parseFloat(maxCtc) || 1000
+      const ctc = candidate.expected_ctc, min = parseFloat(minCtc) || 0, max = parseFloat(maxCtc) || 1000
       if (ctc >= min && ctc <= max) score += 15
-    } else {
-      score += 15
-    }
+    } else { score += 15 }
     const notice = candidate.notice_period || 0
     if (notice <= 30) score += 10
     else if (notice <= 60) score += 5
@@ -416,64 +344,44 @@ export default function TalentPoolSearchPage() {
       setSkillInput('')
     }
   }
-
-  const removeSkill = (skill: string) => {
-    setSelectedSkills(selectedSkills.filter(s => s !== skill))
-  }
+  const removeSkill = (skill: string) => setSelectedSkills(selectedSkills.filter(s => s !== skill))
 
   const handleClearAll = () => {
-    setQuickSearch('')
-    setSelectedSkills([])
-    setLocation('')
-    setExpMin('')
-    setExpMax('')
-    setCtcMin('')
-    setCtcMax('')
-    setNoticePeriod('all')
-    setOwnershipFilter('all')
+    setQuickSearch(''); setSelectedSkills([]); setLocation('')
+    setExpMin(''); setExpMax(''); setCtcMin(''); setCtcMax('')
+    setNoticePeriod('all'); setOwnershipFilter('all')
     setResults([])
     setStats({ total: 0, validated: 0, resumeBank: 0, owned: 0, available: 0, avgMatch: 0 })
   }
 
-  const handleViewResume = async (resumeUrl: string) => {
-    if (!resumeUrl) { alert('No resume available'); return }
-    window.open(resumeUrl, '_blank')
-  }
+  const getMatchBadge = (score: number) =>
+    score >= 80 ? 'bg-green-100 text-green-800 border-green-300' :
+    score >= 60 ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
+    'bg-orange-100 text-orange-800 border-orange-300'
 
-  const getMatchBadge = (score: number) => {
-    if (score >= 80) return 'bg-green-100 text-green-800 border-green-300'
-    if (score >= 60) return 'bg-yellow-100 text-yellow-800 border-yellow-300'
-    return 'bg-orange-100 text-orange-800 border-orange-300'
-  }
-
-  const getMatchStars = (score: number) => {
-    if (score >= 80) return '⭐⭐⭐⭐⭐'
-    if (score >= 60) return '⭐⭐⭐⭐'
-    if (score >= 40) return '⭐⭐⭐'
-    return '⭐⭐'
-  }
+  const getMatchStars = (score: number) =>
+    score >= 80 ? '⭐⭐⭐⭐⭐' : score >= 60 ? '⭐⭐⭐⭐' : score >= 40 ? '⭐⭐⭐' : '⭐⭐'
 
   const getOwnershipBadge = (result: SearchResult) => {
-    if (result.source_type === 'resume_bank') {
-      return (
-        <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-bold border-2 border-blue-300">
-          📄 AVAILABLE - Resume Bank
-        </span>
-      )
-    }
-    if (result.is_owned) {
-      return (
-        <span className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-bold border-2 border-purple-300">
-          🔒 OWNED - {result.assigned_to_name} ({result.days_since_activity}d ago)
-        </span>
-      )
-    }
+    if (result.source_type === 'resume_bank') return (
+      <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-bold border-2 border-blue-300">📄 AVAILABLE - Resume Bank</span>
+    )
+    if (result.is_owned) return (
+      <span className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-bold border-2 border-purple-300">
+        🔒 OWNED - {result.assigned_to_name} ({result.days_since_activity}d ago)
+      </span>
+    )
     return (
       <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-bold border-2 border-green-300 animate-pulse">
         ✅ AVAILABLE ({result.days_since_activity}d inactive)
       </span>
     )
   }
+
+  // ── NEW: active job in scoring drawer ─────────────────────────────────────
+  const activeScoreJobId    = scoreJobId || scoringTarget?.jobId || ''
+  const activeScoreJobTitle = myJobs.find(j => j.id === activeScoreJobId)?.job_title
+    || scoringTarget?.jobTitle || ''
 
   return (
     <DashboardLayout>
@@ -491,8 +399,7 @@ export default function TalentPoolSearchPage() {
         {/* Quick Search */}
         <div className="card">
           <input
-            type="text"
-            value={quickSearch}
+            type="text" value={quickSearch}
             onChange={(e) => setQuickSearch(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
             placeholder="Quick search by name, phone, or email..."
@@ -502,10 +409,7 @@ export default function TalentPoolSearchPage() {
 
         {/* Advanced Filters */}
         <div className="card">
-          <button
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="text-blue-600 hover:text-blue-800 font-medium mb-4"
-          >
+          <button onClick={() => setShowAdvanced(!showAdvanced)} className="text-blue-600 hover:text-blue-800 font-medium mb-4">
             {showAdvanced ? '▼' : '▶'} Advanced Filters
           </button>
 
@@ -516,8 +420,7 @@ export default function TalentPoolSearchPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Skills Required</label>
                 <div className="flex gap-2 mb-2">
                   <input
-                    type="text"
-                    value={skillInput}
+                    type="text" value={skillInput}
                     onChange={(e) => setSkillInput(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && addSkill()}
                     placeholder="Type skill and press Enter..."
@@ -575,7 +478,7 @@ export default function TalentPoolSearchPage() {
                 </div>
               </div>
 
-              {/* Source & Ownership Filters */}
+              {/* Source & Ownership */}
               <div className="border-t pt-4 grid grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Show Results From:</label>
@@ -597,11 +500,10 @@ export default function TalentPoolSearchPage() {
                     <option value="owned">🔒 Owned (Active within 90 days)</option>
                     <option value="available">✅ Available (90+ days inactive)</option>
                   </select>
-                  <p className="text-xs text-gray-500 mt-1">Owned CVs show who has credit. Available CVs are free to pick up.</p>
                 </div>
               </div>
 
-              {/* Action Buttons */}
+              {/* Actions */}
               <div className="flex gap-4 pt-4 border-t">
                 <button onClick={handleSearch} disabled={loading} className="btn-primary flex-1 disabled:opacity-50">
                   {loading ? 'Searching...' : '🔍 Search Entire Talent Pool'}
@@ -614,34 +516,23 @@ export default function TalentPoolSearchPage() {
           )}
         </div>
 
-        {/* Stats Summary */}
+        {/* Stats */}
         {results.length > 0 && (
           <div className="card bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200">
             <div className="grid grid-cols-6 gap-4 text-center">
-              <div>
-                <div className="text-sm text-gray-600 mb-1">Total Results</div>
-                <div className="text-3xl font-bold text-blue-900">{stats.total}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600 mb-1">✓ Validated</div>
-                <div className="text-3xl font-bold text-green-600">{stats.validated}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600 mb-1">📄 Resume Bank</div>
-                <div className="text-3xl font-bold text-blue-600">{stats.resumeBank}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600 mb-1">🔒 Owned</div>
-                <div className="text-3xl font-bold text-purple-600">{stats.owned}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600 mb-1">✅ Available</div>
-                <div className="text-3xl font-bold text-green-600">{stats.available}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600 mb-1">Avg Match</div>
-                <div className="text-3xl font-bold text-orange-600">{stats.avgMatch}%</div>
-              </div>
+              {[
+                { label: 'Total Results', val: stats.total, color: 'text-blue-900' },
+                { label: '✓ Validated',   val: stats.validated, color: 'text-green-600' },
+                { label: '📄 Resume Bank', val: stats.resumeBank, color: 'text-blue-600' },
+                { label: '🔒 Owned',       val: stats.owned, color: 'text-purple-600' },
+                { label: '✅ Available',   val: stats.available, color: 'text-green-600' },
+                { label: 'Avg Match',      val: `${stats.avgMatch}%`, color: 'text-orange-600' },
+              ].map(s => (
+                <div key={s.label}>
+                  <div className="text-sm text-gray-600 mb-1">{s.label}</div>
+                  <div className={`text-3xl font-bold ${s.color}`}>{s.val}</div>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -663,9 +554,7 @@ export default function TalentPoolSearchPage() {
               <div
                 key={`${result.source_type}-${result.id}`}
                 className={`card hover:shadow-lg transition ${
-                  result.is_available && result.source_type === 'candidate'
-                    ? 'border-2 border-green-300 bg-green-50'
-                    : ''
+                  result.is_available && result.source_type === 'candidate' ? 'border-2 border-green-300 bg-green-50' : ''
                 }`}
               >
                 {/* Header */}
@@ -678,42 +567,27 @@ export default function TalentPoolSearchPage() {
                       {result.match_score}% Match {getMatchStars(result.match_score)}
                     </span>
                   </div>
+                  {/* ── NEW: Deep Score button ──────────────────────────────── */}
+                  <button
+                    onClick={() => handleOpenScoreDrawer(result)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-50 text-violet-700 border border-violet-200 rounded-lg text-xs font-semibold hover:bg-violet-100 transition"
+                  >
+                    🔬 Deep Score
+                  </button>
                 </div>
 
                 {/* Professional Info */}
                 <div className="grid grid-cols-4 gap-4 mb-3">
-                  <div>
-                    <div className="text-xs text-gray-500">Company</div>
-                    <div className="font-medium">{result.current_company || 'N/A'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-500">Designation</div>
-                    <div className="font-medium">{result.current_designation || 'N/A'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-500">Experience</div>
-                    <div className="font-medium">{result.total_experience} years</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-500">Location</div>
-                    <div className="font-medium">{result.current_location || 'N/A'}</div>
-                  </div>
+                  <div><div className="text-xs text-gray-500">Company</div><div className="font-medium">{result.current_company || 'N/A'}</div></div>
+                  <div><div className="text-xs text-gray-500">Designation</div><div className="font-medium">{result.current_designation || 'N/A'}</div></div>
+                  <div><div className="text-xs text-gray-500">Experience</div><div className="font-medium">{result.total_experience} years</div></div>
+                  <div><div className="text-xs text-gray-500">Location</div><div className="font-medium">{result.current_location || 'N/A'}</div></div>
                 </div>
 
-                {/* Second Row */}
                 <div className="grid grid-cols-4 gap-4 mb-3">
-                  <div>
-                    <div className="text-xs text-gray-500">Expected CTC</div>
-                    <div className="font-medium text-green-600">₹{result.expected_ctc}L</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-500">Phone</div>
-                    <div className="font-medium text-sm">{result.phone}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <div className="text-xs text-gray-500">Email</div>
-                    <div className="font-medium text-sm">{result.email}</div>
-                  </div>
+                  <div><div className="text-xs text-gray-500">Expected CTC</div><div className="font-medium text-green-600">₹{result.expected_ctc}L</div></div>
+                  <div><div className="text-xs text-gray-500">Phone</div><div className="font-medium text-sm">{result.phone}</div></div>
+                  <div className="col-span-2"><div className="text-xs text-gray-500">Email</div><div className="font-medium text-sm">{result.email}</div></div>
                 </div>
 
                 {/* Skills */}
@@ -721,16 +595,10 @@ export default function TalentPoolSearchPage() {
                   <div className="text-xs text-gray-500 mb-1">Skills</div>
                   <div className="flex flex-wrap gap-2">
                     {result.key_skills.slice(0, 10).map(skill => (
-                      <span
-                        key={skill}
-                        className={`px-2 py-1 rounded text-xs font-medium ${
-                          selectedSkills.some(s => s.toLowerCase() === skill.toLowerCase())
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-700'
-                        }`}
-                      >
-                        {skill}
-                      </span>
+                      <span key={skill} className={`px-2 py-1 rounded text-xs font-medium ${
+                        selectedSkills.some(s => s.toLowerCase() === skill.toLowerCase())
+                          ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
+                      }`}>{skill}</span>
                     ))}
                     {result.key_skills.length > 10 && (
                       <span className="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">
@@ -742,24 +610,12 @@ export default function TalentPoolSearchPage() {
 
                 {/* Status Info */}
                 {result.source_type === 'candidate' ? (
-                  <div className={`border rounded p-3 text-sm mb-3 ${
-                    result.is_owned ? 'bg-purple-50 border-purple-200' : 'bg-green-50 border-green-200'
-                  }`}>
+                  <div className={`border rounded p-3 text-sm mb-3 ${result.is_owned ? 'bg-purple-50 border-purple-200' : 'bg-green-50 border-green-200'}`}>
                     <div className="grid grid-cols-4 gap-2">
-                      <div>
-                        <span className="text-gray-600">Stage:</span>{' '}
-                        <span className="font-medium">{result.current_stage?.replace(/_/g, ' ')}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Current Job:</span>{' '}
-                        <span className="font-medium">{result.job_title || 'None'}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Credit To:</span>{' '}
-                        <span className="font-medium">{result.assigned_to_name || 'Unassigned'}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Last Activity:</span>{' '}
+                      <div><span className="text-gray-600">Stage:</span>{' '}<span className="font-medium">{result.current_stage?.replace(/_/g, ' ')}</span></div>
+                      <div><span className="text-gray-600">Current Job:</span>{' '}<span className="font-medium">{result.job_title || 'None'}</span></div>
+                      <div><span className="text-gray-600">Credit To:</span>{' '}<span className="font-medium">{result.assigned_to_name || 'Unassigned'}</span></div>
+                      <div><span className="text-gray-600">Last Activity:</span>{' '}
                         <span className={`font-medium ${result.is_available ? 'text-green-600' : 'text-purple-600'}`}>
                           {result.days_since_activity}d ago
                         </span>
@@ -769,19 +625,11 @@ export default function TalentPoolSearchPage() {
                 ) : (
                   <div className="bg-blue-50 border border-blue-200 rounded p-3 text-sm mb-3">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-gray-600">Uploaded by:</span>{' '}
-                        <span className="font-medium">{result.uploaded_by_name}</span>
+                      <div><span className="text-gray-600">Uploaded by:</span>{' '}<span className="font-medium">{result.uploaded_by_name}</span></div>
+                      <div><span className="text-gray-600">Uploaded:</span>{' '}
+                        <span className="font-medium">{result.uploaded_at ? new Date(result.uploaded_at).toLocaleDateString() : 'N/A'}</span>
                       </div>
-                      <div>
-                        <span className="text-gray-600">Uploaded:</span>{' '}
-                        <span className="font-medium">
-                          {result.uploaded_at ? new Date(result.uploaded_at).toLocaleDateString() : 'N/A'}
-                        </span>
-                      </div>
-                      <span className="px-2 py-1 bg-blue-200 text-blue-900 rounded text-xs font-bold">
-                        ✅ Available for anyone
-                      </span>
+                      <span className="px-2 py-1 bg-blue-200 text-blue-900 rounded text-xs font-bold">✅ Available for anyone</span>
                     </div>
                   </div>
                 )}
@@ -792,52 +640,32 @@ export default function TalentPoolSearchPage() {
                     <>
                       <button
                         onClick={() => {
-                          const role = user?.role === 'sr_team_leader' ? 'sr-tl' :
-                                       user?.role === 'team_leader' ? 'tl' : 'recruiter'
+                          const role = user?.role === 'sr_team_leader' ? 'sr-tl' : user?.role === 'team_leader' ? 'tl' : 'recruiter'
                           router.push(`/${role}/candidates/${result.id}`)
                         }}
                         className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium"
                       >
                         📋 View Full Details
                       </button>
-                      <button
-                        onClick={() => handleAddToJob(result)}
-                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-medium"
-                      >
+                      <button onClick={() => handleAddToJob(result)} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-medium">
                         ➕ Add to My Job
                       </button>
                       {result.resume_url && (
-                        <button
-                          onClick={() => handleViewResume(result.resume_url!)}
-                          className="bg-white border border-gray-300 px-4 py-2 rounded hover:bg-gray-50"
-                        >
+                        <button onClick={() => window.open(result.resume_url, '_blank')} className="bg-white border border-gray-300 px-4 py-2 rounded hover:bg-gray-50">
                           📄 Resume
                         </button>
                       )}
                     </>
                   ) : (
                     <>
-                      <button
-                        onClick={() => alert('Convert to Candidate feature coming soon!')}
-                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium flex-1"
-                      >
+                      <button onClick={() => alert('Convert to Candidate feature coming soon!')}
+                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium flex-1">
                         ✨ Convert to Candidate
                       </button>
                       {result.resume_url && (
-                        <>
-                          <button
-                            onClick={() => handleViewResume(result.resume_url!)}
-                            className="bg-white border border-gray-300 px-4 py-2 rounded hover:bg-gray-50"
-                          >
-                            👁️ View
-                          </button>
-                          <button
-                            onClick={() => window.open(result.resume_url, '_blank')}
-                            className="bg-white border border-gray-300 px-4 py-2 rounded hover:bg-gray-50"
-                          >
-                            📥 Download
-                          </button>
-                        </>
+                        <button onClick={() => window.open(result.resume_url, '_blank')} className="bg-white border border-gray-300 px-4 py-2 rounded hover:bg-gray-50">
+                          📥 Download
+                        </button>
                       )}
                     </>
                   )}
@@ -848,61 +676,115 @@ export default function TalentPoolSearchPage() {
         )}
       </div>
 
+      {/* ── NEW: Deep Score Drawer ────────────────────────────────────────────── */}
+      {scoringTarget && (
+        <div className="fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <div className="flex-1 bg-black/40" onClick={() => setScoringTarget(null)} />
+
+          {/* Drawer */}
+          <div className="w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden">
+            {/* Drawer Header */}
+            <div className="bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-4 flex items-center justify-between flex-shrink-0">
+              <div className="text-white">
+                <div className="font-semibold">🔬 Deep Score</div>
+                <div className="text-xs text-violet-200">{scoringTarget.result.full_name}</div>
+              </div>
+              <button onClick={() => setScoringTarget(null)} className="text-white/70 hover:text-white text-2xl leading-none">×</button>
+            </div>
+
+            {/* Candidate quick summary */}
+            <div className="px-5 py-3 bg-gray-50 border-b flex-shrink-0">
+              <div className="text-sm font-medium text-gray-800">{scoringTarget.result.current_designation} at {scoringTarget.result.current_company || '—'}</div>
+              <div className="text-xs text-gray-500 mt-0.5">
+                {scoringTarget.result.total_experience} yrs exp · ₹{scoringTarget.result.expected_ctc}L expected · {scoringTarget.result.current_location || '—'}
+              </div>
+              <div className="flex flex-wrap gap-1 mt-2">
+                {scoringTarget.result.key_skills.slice(0, 6).map(s => (
+                  <span key={s} className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">{s}</span>
+                ))}
+                {scoringTarget.result.key_skills.length > 6 && (
+                  <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs">+{scoringTarget.result.key_skills.length - 6}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Job selector inside drawer */}
+            <div className="px-5 py-3 border-b flex-shrink-0">
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-1.5">Score against job</label>
+              <select
+                value={scoreJobId}
+                onChange={(e) => setScoreJobId(e.target.value)}
+                className="input text-sm"
+              >
+                <option value="">Select a job…</option>
+                {/* Candidate's own job first */}
+                {scoringTarget.result.job_id && scoringTarget.result.job_title && (
+                  <option value={scoringTarget.result.job_id}>
+                    📌 {scoringTarget.result.job_title} (candidate's current)
+                  </option>
+                )}
+                {myJobs
+                  .filter(j => j.id !== scoringTarget.result.job_id)
+                  .map(job => (
+                    <option key={job.id} value={job.id}>
+                      {job.job_code} — {job.job_title} ({job.clients?.company_name})
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+
+            {/* MatchScorePanel */}
+            <div className="flex-1 overflow-y-auto p-5">
+              <MatchScorePanel
+                jobId={activeScoreJobId || null}
+                jobTitle={activeScoreJobTitle}
+                candidateId={scoringTarget.result.source_type === 'candidate' ? scoringTarget.result.id : undefined}
+                resumeBankId={scoringTarget.result.source_type === 'resume_bank' ? scoringTarget.result.id : undefined}
+                screenedBy={user?.id}
+                autoRun={false}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add to Job Modal */}
       {showAddToJobModal && selectedCandidate && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
             <h3 className="text-xl font-bold mb-4">Add to My Job</h3>
-
             <div className="mb-4">
               <p className="text-sm text-gray-600 mb-2">Adding:</p>
               <p className="font-medium">{selectedCandidate.full_name}</p>
               <p className="text-sm text-gray-500">{selectedCandidate.current_designation} at {selectedCandidate.current_company}</p>
             </div>
-
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">Select Your Job:</label>
               <select value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)} className="input">
                 <option value="">-- Select a Job --</option>
                 {myJobs.map((job: any) => (
-                  <option key={job.id} value={job.id}>
-                    {job.job_code} - {job.job_title} ({job.clients?.company_name})
-                  </option>
+                  <option key={job.id} value={job.id}>{job.job_code} - {job.job_title} ({job.clients?.company_name})</option>
                 ))}
               </select>
-              {myJobs.length === 0 && (
-                <p className="text-sm text-red-600 mt-2">
-                  You have no open jobs assigned. Please get a job assigned first.
-                </p>
-              )}
+              {myJobs.length === 0 && <p className="text-sm text-red-600 mt-2">You have no open jobs assigned.</p>}
             </div>
-
             <div className="bg-blue-50 border border-blue-200 rounded p-3 text-sm mb-4">
               <p className="font-medium text-blue-900 mb-1">What happens next:</p>
               <ul className="text-blue-800 text-xs space-y-1 list-disc list-inside">
                 <li>You'll be assigned to this job</li>
-                <li>You can work on this candidate for your job</li>
                 <li>Original owner keeps credit for their job</li>
                 <li>Both can work on same candidate for different jobs</li>
               </ul>
             </div>
-
             <div className="flex gap-3">
-              <button
-                onClick={handleAddToJobSubmit}
-                disabled={!selectedJobId || addingToJob}
-                className="btn-primary flex-1 disabled:opacity-50"
-              >
+              <button onClick={handleAddToJobSubmit} disabled={!selectedJobId || addingToJob}
+                className="btn-primary flex-1 disabled:opacity-50">
                 {addingToJob ? 'Adding...' : '✅ Add to Job'}
               </button>
-              <button
-                onClick={() => {
-                  setShowAddToJobModal(false)
-                  setSelectedJobId('')
-                  setSelectedCandidate(null)
-                }}
-                className="bg-white border border-gray-300 px-4 py-2 rounded hover:bg-gray-50"
-              >
+              <button onClick={() => { setShowAddToJobModal(false); setSelectedJobId(''); setSelectedCandidate(null) }}
+                className="bg-white border border-gray-300 px-4 py-2 rounded hover:bg-gray-50">
                 Cancel
               </button>
             </div>

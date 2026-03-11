@@ -1,34 +1,42 @@
-// app/upload-resumes/page.tsx - COMPLETE UPLOAD INTERFACE
+// app/upload-resumes/page.tsx — v5: Developer card layout + full feature logic
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { normalizeSkills } from '@/lib/skillNormalization'
 
-interface ParsedResume {
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type FileStatus =
+  | 'pending' | 'parsing' | 'needs_review'
+  | 'confirmed' | 'uploading' | 'success' | 'duplicate' | 'error'
+
+interface ReviewFields {
+  full_name: string
+  phone: string
+  email: string
+  current_designation: string
+  current_company: string
+  total_experience: string
+  current_location: string
+  expected_ctc: string
+  notice_period: string
+  industry: string
+  key_skills: string[]
+  requirement_keywords: string[]
+}
+
+interface ResumeFile {
+  id: string
   fileName: string
   file: File
-  status: 'pending' | 'parsing' | 'success' | 'error' | 'duplicate'
+  status: FileStatus
   progress: number
   error?: string
-  parsedData?: {
-    full_name?: string
-    phone?: string
-    email?: string
-    current_company?: string
-    current_designation?: string
-    total_experience?: number
-    relevant_experience?: number
-    current_location?: string
-    preferred_location?: string
-    current_ctc?: number
-    expected_ctc?: number
-    notice_period?: number
-    key_skills?: string[]
-    education_level?: string
-    highest_degree?: string
-  }
+  reviewFields?: ReviewFields
+  skillInput: string
+  keywordInput: string
   duplicateInfo?: {
     found_in: 'candidates' | 'resume_bank'
     record_id: string
@@ -36,607 +44,771 @@ interface ParsedResume {
   }
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const DEFAULT_INDUSTRIES = [
+  'HR / Recruitment', 'IT / Technology', 'Finance / Accounting',
+  'Sales / Marketing', 'Operations / Supply Chain', 'Healthcare / Pharma',
+  'Manufacturing / Engineering', 'Banking / Financial Services',
+  'Education / Training', 'Legal / Compliance', 'Consulting',
+]
+
+const MANDATORY: (keyof ReviewFields)[] = [
+  'full_name', 'total_experience', 'current_location',
+  'industry', 'key_skills', 'requirement_keywords',
+]
+
+const MANDATORY_LABELS: Record<string, string> = {
+  full_name: 'Name', total_experience: 'Experience',
+  current_location: 'Location', industry: 'Industry',
+  key_skills: 'Skills', requirement_keywords: 'Keywords',
+}
+
+function getMissing(rv: ReviewFields): string[] {
+  return MANDATORY.filter(k => {
+    const v = (rv as any)[k]
+    return Array.isArray(v) ? v.length === 0 : !String(v ?? '').trim()
+  }).map(k => MANDATORY_LABELS[k])
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
 export default function UploadResumesPage() {
-  const [user, setUser] = useState<any>(null)
-  const [files, setFiles] = useState<ParsedResume[]>([])
-  const [uploading, setUploading] = useState(false)
+  const [user, setUser]             = useState<any>(null)
+  const [files, setFiles]           = useState<ResumeFile[]>([])
   const [dragActive, setDragActive] = useState(false)
+  const [parsing, setParsing]       = useState(false)
+  const [saving, setSaving]         = useState(false)
+  const [industries, setIndustries] = useState<string[]>(DEFAULT_INDUSTRIES)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    const userData = localStorage.getItem('user')
-    if (userData) {
-      setUser(JSON.parse(userData))
-    }
+    const u = localStorage.getItem('user')
+    if (u) setUser(JSON.parse(u))
   }, [])
 
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true)
-    } else if (e.type === 'dragleave') {
-      setDragActive(false)
-    }
-  }
+  const updateFile = (id: string, patch: Partial<ResumeFile>) =>
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f))
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragActive(false)
-
-    const droppedFiles = Array.from(e.dataTransfer.files)
-    addFiles(droppedFiles)
-  }
-
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const selectedFiles = Array.from(e.target.files)
-      addFiles(selectedFiles)
-    }
-  }
-
-  const addFiles = (newFiles: File[]) => {
-    // Accept PDF and Word formats
-    const allowedTypes = [
-      'application/pdf',
-      'application/msword', // .doc
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' // .docx
-    ]
-    
-    const validFiles = newFiles.filter(file => allowedTypes.includes(file.type))
-    
-    if (validFiles.length !== newFiles.length) {
-      alert('Only PDF and Word (.doc, .docx) files are allowed!')
-    }
-
-    const parsedFiles: ParsedResume[] = validFiles.map(file => ({
-      fileName: file.name,
-      file: file,
-      status: 'pending',
-      progress: 0
+  const updateReview = (id: string, patch: Partial<ReviewFields>) =>
+    setFiles(prev => prev.map(f => {
+      if (f.id !== id || !f.reviewFields) return f
+      return { ...f, reviewFields: { ...f.reviewFields, ...patch } }
     }))
 
-    setFiles(prev => [...prev, ...parsedFiles])
+  // ── Drop zone ────────────────────────────────────────────────────────────────
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    setDragActive(e.type !== 'dragleave' && e.type !== 'drop')
   }
 
-  const removeFile = (index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index))
+  const addFiles = (incoming: File[]) => {
+    const allowed = [
+      'application/pdf', 'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ]
+    const valid = incoming.filter(f => allowed.includes(f.type))
+    if (valid.length !== incoming.length)
+      alert('Only PDF and Word (.doc, .docx) files are allowed.')
+    setFiles(prev => [...prev, ...valid.map(f => ({
+      id: crypto.randomUUID(), fileName: f.name, file: f,
+      status: 'pending' as FileStatus, progress: 0,
+      skillInput: '', keywordInput: '',
+    }))])
   }
 
-  const checkDuplicate = async (phone: string, email: string) => {
+  // ── Parse ────────────────────────────────────────────────────────────────────
+
+  const inferIndustry = (sector: string, skills: string[]): string => {
+    const s = sector.toLowerCase()
+    const sk = skills.map(x => x.toLowerCase()).join(' ')
+    if (s === 'hr'       || sk.includes('recruitment') || sk.includes('talent acquisition')) return 'HR / Recruitment'
+    if (s === 'it'       || sk.includes('java') || sk.includes('python') || sk.includes('react')) return 'IT / Technology'
+    if (s === 'finance'  || sk.includes('gst') || sk.includes('fp&a'))   return 'Finance / Accounting'
+    if (s === 'sales'    || sk.includes('b2b') || sk.includes('business development')) return 'Sales / Marketing'
+    if (s === 'operations' || sk.includes('supply chain'))                return 'Operations / Supply Chain'
+    return ''
+  }
+
+  async function parseOne(file: ResumeFile) {
+    updateFile(file.id, { status: 'parsing', progress: 30 })
     try {
-      // Check in candidates table
-      const { data: candidateMatch } = await supabase
-        .from('candidates')
-        .select('id, full_name, phone, email')
-        .or(`phone.eq.${phone},email.eq.${email}`)
-        .limit(1)
-        .single()
+      const fd = new FormData()
+      fd.append('file', file.file)
+      const res = await fetch('/api/parse-resume', { method: 'POST', body: fd })
+      if (!res.ok) throw new Error('Parse API failed')
+      const { success, data } = await res.json()
+      if (!success || !data) throw new Error('Invalid parse response')
 
-      if (candidateMatch) {
-        return {
-          found_in: 'candidates' as const,
-          record_id: candidateMatch.id,
-          full_name: candidateMatch.full_name
-        }
+      const rv: ReviewFields = {
+        full_name:            data.full_name           || '',
+        phone:                data.phone               || '',
+        email:                data.email               || '',
+        current_designation:  data.current_designation || '',
+        current_company:      data.current_company     || '',
+        total_experience:     data.total_experience != null ? String(data.total_experience) : '',
+        current_location:     data.current_location    || '',
+        expected_ctc:         data.expected_ctc  != null ? String(data.expected_ctc)  : '',
+        notice_period:        data.notice_period != null ? String(data.notice_period) : '',
+        industry:             inferIndustry(data.sector || '', data.skills || []),
+        key_skills:           data.skills || [],
+        requirement_keywords: [],
       }
-
-      // Check in resume_bank
-      const { data: resumeMatch } = await supabase
-        .from('resume_bank')
-        .select('id, full_name, phone, email')
-        .eq('status', 'available')
-        .or(`phone.eq.${phone},email.eq.${email}`)
-        .limit(1)
-        .single()
-
-      if (resumeMatch) {
-        return {
-          found_in: 'resume_bank' as const,
-          record_id: resumeMatch.id,
-          full_name: resumeMatch.full_name
-        }
-      }
-
-      return null
-    } catch (error) {
-      return null
+      updateFile(file.id, { status: 'needs_review', progress: 100, reviewFields: rv })
+    } catch (e: any) {
+      updateFile(file.id, { status: 'error', progress: 0, error: e.message })
     }
   }
 
-  const parseResume = async (file: File): Promise<any> => {
-    // Using your existing parser from /api/parse-resume
-    const formData = new FormData()
-    formData.append('file', file) // Your API expects 'file' field
+  async function handleParseAll() {
+    setParsing(true)
+    for (const f of files.filter(f => f.status === 'pending')) await parseOne(f)
+    setParsing(false)
+  }
 
+  function handleConfirmAll() {
+    setFiles(prev => prev.map(f => {
+      if (f.status !== 'needs_review' || !f.reviewFields) return f
+      if (getMissing(f.reviewFields).length > 0) return f
+      return { ...f, status: 'confirmed' }
+    }))
+  }
+
+  // ── Save ─────────────────────────────────────────────────────────────────────
+
+  async function checkDuplicate(phone: string, email: string) {
+    if (!phone && !email) return null
+    const or = [phone && `phone.eq.${phone}`, email && `email.eq.${email}`].filter(Boolean).join(',')
+    const { data: c } = await supabase.from('candidates').select('id,full_name').or(or).limit(1).maybeSingle()
+    if (c) return { found_in: 'candidates' as const, record_id: c.id, full_name: c.full_name }
+    const { data: r } = await supabase.from('resume_bank').select('id,full_name').eq('status', 'available').or(or).limit(1).maybeSingle()
+    if (r) return { found_in: 'resume_bank' as const, record_id: r.id, full_name: r.full_name }
+    return null
+  }
+
+  async function saveOne(file: ResumeFile) {
+    const rv = file.reviewFields!
+    updateFile(file.id, { status: 'uploading', progress: 10 })
     try {
-      const response = await fetch('/api/parse-resume', {
-        method: 'POST',
-        body: formData
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to parse resume')
-      }
-
-      const result = await response.json()
-      
-      if (!result.success || !result.data) {
-        throw new Error('Parser returned invalid response')
-      }
-
-      // Map your parser's response to our expected format
-      const data = result.data
-      return {
-        full_name: data.name || data.full_name || '',
-        phone: data.phone || data.mobile || data.contact || '',
-        email: data.email || '',
-        current_company: data.company || data.current_company || data.organization || '',
-        current_designation: data.designation || data.title || data.role || data.position || '',
-        total_experience: data.total_experience || data.experience || data.years_of_experience || 0,
-        relevant_experience: data.relevant_experience || 0,
-        current_location: data.location || data.city || data.current_location || '',
-        preferred_location: data.preferred_location || '',
-        current_ctc: data.current_ctc || data.current_salary || 0,
-        expected_ctc: data.expected_ctc || data.expected_salary || 0,
-        notice_period: data.notice_period || 0,
-        key_skills: data.skills || data.key_skills || [],
-        education_level: data.education || data.education_level || '',
-        highest_degree: data.degree || data.highest_degree || '',
-        // Store additional fields if available
-        sector: data.sector || '',
-        confidence: data.confidence || 0
-      }
-    } catch (error: any) {
-      console.error('Parse error:', error)
-      throw error
-    }
-  }
-
-  const uploadToStorage = async (file: File): Promise<string> => {
-    // Generate UUID for storage filename
-    const uuid = crypto.randomUUID()
-    
-    // Get file extension
-    const fileExtension = file.name.split('.').pop()
-    
-    // Storage filename: UUID + extension
-    const storageFileName = `${uuid}.${fileExtension}`
-    const filePath = `resume_bank/${storageFileName}`
-
-    const { data, error } = await supabase.storage
-      .from('resumes') // Using existing bucket
-      .upload(filePath, file)
-
-    if (error) {
-      console.error('Storage upload error:', error)
-      throw error
-    }
-
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from('resumes')
-      .getPublicUrl(filePath)
-
-    return urlData.publicUrl
-  }
-
-  const saveToResumeBank = async (
-    resumeUrl: string,
-    parsedData: any,
-    fileName: string
-  ) => {
-    const { data, error } = await supabase
-      .from('resume_bank')
-      .insert({
-        resume_url: resumeUrl,
-        resume_file_name: fileName,
-        parsed_data: parsedData,
-        full_name: parsedData.full_name,
-        phone: parsedData.phone,
-        email: parsedData.email,
-        current_company: parsedData.current_company,
-        current_designation: parsedData.current_designation,
-        total_experience: parsedData.total_experience,
-        relevant_experience: parsedData.relevant_experience,
-        current_location: parsedData.current_location,
-        preferred_location: parsedData.preferred_location,
-        current_ctc: parsedData.current_ctc,
-        expected_ctc: parsedData.expected_ctc,
-        notice_period: parsedData.notice_period,
-        key_skills: parsedData.key_skills || [],
-        education_level: parsedData.education_level,
-        highest_degree: parsedData.highest_degree,
-        uploaded_by: user.id,
-        source: 'bulk_upload',
-        status: 'available'
-      })
-      .select()
-      .single()
-
-    if (error) throw error
-
-    // Log to history
-    await supabase
-      .from('resume_bank_history')
-      .insert({
-        resume_id: data.id,
-        action_type: 'uploaded',
-        performed_by: user.id,
-        details: { file_name: fileName, upload_method: 'bulk_upload' }
-      })
-
-    return data
-  }
-
-  const processFile = async (index: number) => {
-    const file = files[index]
-    
-    try {
-      // Update status to parsing
-      updateFileStatus(index, 'parsing', 10)
-
-      // Step 1: Parse resume with AI
-      const parsedData = await parseResume(file.file)
-      updateFileStatus(index, 'parsing', 40, parsedData)
-
-        // Step 2: Check for duplicates
-      if (parsedData.phone || parsedData.email) {
-        const duplicate = await checkDuplicate(parsedData.phone, parsedData.email)
-        if (duplicate) {
-          updateFileStatus(index, 'duplicate', 100, parsedData, undefined, duplicate)
+      // Duplicate check
+      if (rv.phone || rv.email) {
+        const dup = await checkDuplicate(rv.phone, rv.email)
+        if (dup) {
+          updateFile(file.id, { status: 'duplicate', progress: 100, duplicateInfo: dup })
           return
         }
-      if (parsedData.key_skills?.length > 0) {
-      const normalized = await normalizeSkills(parsedData.key_skills)
-      parsedData.key_skills = normalized.normalized
-        }  
-
       }
-      updateFileStatus(index, 'parsing', 60, parsedData)
+      updateFile(file.id, { progress: 40 })
 
-      // Step 3: Upload to storage
-      const resumeUrl = await uploadToStorage(file.file)
-      updateFileStatus(index, 'parsing', 80, parsedData)
+      // Skill normalisation
+      let skills = rv.key_skills
+      if (skills.length > 0) {
+        const n = await normalizeSkills(skills)
+        skills = n.normalized
+      }
 
-      // Step 4: Save to resume_bank
-      await saveToResumeBank(resumeUrl, parsedData, file.fileName)
-      updateFileStatus(index, 'success', 100, parsedData)
+      // Storage upload
+      const ext  = file.file.name.split('.').pop()
+      const path = `resume_bank/${crypto.randomUUID()}.${ext}`
+      const { error: se } = await supabase.storage.from('resumes').upload(path, file.file)
+      if (se) throw se
+      const { data: urlData } = supabase.storage.from('resumes').getPublicUrl(path)
+      updateFile(file.id, { progress: 75 })
 
-    } catch (error: any) {
-      console.error('Process error:', error)
-      updateFileStatus(index, 'error', 0, undefined, error.message || 'Failed to process')
+      // DB insert
+      const { error: de } = await supabase.from('resume_bank').insert({
+        resume_url:           urlData.publicUrl,
+        resume_file_name:     file.fileName,
+        full_name:            rv.full_name.trim(),
+        phone:                rv.phone.trim(),
+        email:                rv.email.trim().toLowerCase(),
+        current_designation:  rv.current_designation.trim(),
+        current_company:      rv.current_company.trim(),
+        total_experience:     parseFloat(rv.total_experience) || 0,
+        current_location:     rv.current_location.trim(),
+        expected_ctc:         parseFloat(rv.expected_ctc)  || null,
+        notice_period:        parseInt(rv.notice_period)   || null,
+        industry:             rv.industry,
+        key_skills:           skills,
+        requirement_keywords: rv.requirement_keywords,
+        uploaded_by:          user.id,
+        source:               'bulk_upload',
+        status:               'available',
+        parsed_data: {
+          full_name: rv.full_name, phone: rv.phone,
+          email: rv.email, skills, sector: rv.industry,
+        },
+      })
+      if (de) throw de
+
+      if (rv.industry && !industries.includes(rv.industry))
+        setIndustries(prev => [...prev, rv.industry].sort())
+
+      updateFile(file.id, { status: 'success', progress: 100 })
+    } catch (e: any) {
+      updateFile(file.id, { status: 'error', progress: 0, error: e.message })
     }
   }
 
-  const updateFileStatus = (
-    index: number,
-    status: ParsedResume['status'],
-    progress: number,
-    parsedData?: any,
-    error?: string,
-    duplicateInfo?: any
-  ) => {
-    setFiles(prev => prev.map((f, i) => 
-      i === index 
-        ? { ...f, status, progress, parsedData, error, duplicateInfo }
-        : f
-    ))
+  async function handleSaveAll() {
+    if (!user) { alert('Please login first'); return }
+    setSaving(true)
+    for (const f of files.filter(f => f.status === 'confirmed')) await saveOne(f)
+    setSaving(false)
   }
 
-  const handleUploadAll = async () => {
-    if (!user) {
-      alert('Please login first')
-      return
-    }
+  // ── Tag helpers ──────────────────────────────────────────────────────────────
 
-    setUploading(true)
-
-    // Process all pending files
-    const pendingIndices = files
-      .map((f, i) => ({ file: f, index: i }))
-      .filter(({ file }) => file.status === 'pending')
-      .map(({ index }) => index)
-
-    // Process sequentially to avoid overwhelming the API
-    for (const index of pendingIndices) {
-      await processFile(index)
-    }
-
-    setUploading(false)
+  function addTag(id: string, field: 'key_skills' | 'requirement_keywords', inputField: 'skillInput' | 'keywordInput') {
+    const f = files.find(f => f.id === id); if (!f) return
+    const raw = (f[inputField] || '').trim(); if (!raw) return
+    const tags = raw.split(/[,;]+/).map(t => t.trim()).filter(Boolean)
+    const merged = Array.from(new Set([...(f.reviewFields?.[field] || []), ...tags]))
+    updateReview(id, { [field]: merged })
+    updateFile(id, { [inputField]: '' })
   }
 
-  const getStatusIcon = (status: ParsedResume['status']) => {
-    switch (status) {
-      case 'pending': return '⏳'
-      case 'parsing': return '🔄'
-      case 'success': return '✅'
-      case 'error': return '❌'
-      case 'duplicate': return '⚠️'
-    }
+  function removeTag(id: string, field: 'key_skills' | 'requirement_keywords', tag: string) {
+    const existing = files.find(f => f.id === id)?.reviewFields?.[field] || []
+    updateReview(id, { [field]: (existing as string[]).filter(t => t !== tag) })
   }
 
-  const getStatusColor = (status: ParsedResume['status']) => {
-    switch (status) {
-      case 'pending': return 'bg-gray-100 text-gray-700'
-      case 'parsing': return 'bg-blue-100 text-blue-700'
-      case 'success': return 'bg-green-100 text-green-700'
-      case 'error': return 'bg-red-100 text-red-700'
-      case 'duplicate': return 'bg-yellow-100 text-yellow-700'
-    }
-  }
-
-  const getStatusText = (status: ParsedResume['status']) => {
-    switch (status) {
-      case 'pending': return 'Ready to upload'
-      case 'parsing': return 'Processing...'
-      case 'success': return 'Uploaded successfully'
-      case 'error': return 'Failed'
-      case 'duplicate': return 'Duplicate found'
-    }
-  }
+  // ── Computed ─────────────────────────────────────────────────────────────────
 
   const stats = {
-    total: files.length,
-    pending: files.filter(f => f.status === 'pending').length,
-    success: files.filter(f => f.status === 'success').length,
-    error: files.filter(f => f.status === 'error').length,
-    duplicate: files.filter(f => f.status === 'duplicate').length
+    total:       files.length,
+    pending:     files.filter(f => f.status === 'pending').length,
+    needsReview: files.filter(f => f.status === 'needs_review').length,
+    confirmed:   files.filter(f => f.status === 'confirmed').length,
+    success:     files.filter(f => f.status === 'success').length,
+    duplicate:   files.filter(f => f.status === 'duplicate').length,
+    error:       files.filter(f => f.status === 'error').length,
   }
+
+  const reviewRows    = files.filter(f => f.status === 'needs_review')
+  const confirmedRows = files.filter(f => f.status === 'confirmed')
+  const doneRows      = files.filter(f => ['success', 'duplicate', 'error'].includes(f.status))
+
+  // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <DashboardLayout>
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="text-center">
-          <h2 className="text-3xl font-bold text-gray-900">📤 Upload Resumes</h2>
-          <p className="text-gray-600 mt-2">Bulk upload resumes to the talent pool</p>
-        </div>
+      <div className="max-w-screen-xl mx-auto space-y-6 px-6 pb-12">
 
-        {/* Upload Area */}
-        <div className="card">
-          <div
-            className={`
-              border-2 border-dashed rounded-lg p-12 text-center transition-colors
-              ${dragActive 
-                ? 'border-blue-500 bg-blue-50' 
-                : 'border-gray-300 hover:border-gray-400'
-              }
-            `}
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-          >
-            <div className="space-y-4">
-              <div className="text-6xl">📄</div>
-              <div>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">
-                  Drop resumes here
-                </h3>
-                <p className="text-gray-600 mb-4">
-                  PDF or Word documents (.doc, .docx)
-                </p>
-              </div>
-              <div>
-                <input
-                  type="file"
-                  id="file-upload"
-                  className="hidden"
-                  accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  multiple
-                  onChange={handleFileInput}
-                />
-                <label
-                  htmlFor="file-upload"
-                  className="btn-primary cursor-pointer inline-block"
-                >
-                  📁 Choose Files
-                </label>
-              </div>
-              <p className="text-sm text-gray-500">
-                Supports: PDF, Word (.doc, .docx) | Max size: 10MB per file
-              </p>
-            </div>
+        {/* ── Header + action buttons ── */}
+        <div className="flex items-center justify-between flex-wrap gap-3 pt-1">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">📤 Bulk Resume Upload</h2>
+            <p className="text-sm text-gray-400 mt-0.5">
+              Drop → Parse → Fill → Confirm → Save &nbsp;·&nbsp;
+              <span className="text-red-400">*</span> fields are mandatory
+            </p>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={() => fileInputRef.current?.click()}
+              className="bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-gray-900">
+              + Upload Files
+            </button>
+            {stats.pending > 0 && (
+              <button onClick={handleParseAll} disabled={parsing}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+                {parsing ? '⏳ Parsing…' : `🔍 Parse ${stats.pending}`}
+              </button>
+            )}
+            {stats.needsReview > 0 && (
+              <button onClick={handleConfirmAll}
+                className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600">
+                ✅ Confirm All Ready
+              </button>
+            )}
+            {stats.confirmed > 0 && (
+              <button onClick={handleSaveAll} disabled={saving}
+                className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50">
+                {saving ? '⏳ Saving…' : `💾 Save ${stats.confirmed}`}
+              </button>
+            )}
+            <input ref={fileInputRef} type="file" multiple className="hidden"
+              accept=".pdf,.doc,.docx"
+              onChange={e => e.target.files && addFiles(Array.from(e.target.files))} />
           </div>
         </div>
 
-        {/* Stats Summary */}
+        {/* ── Drop zone ── */}
+        <div
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all
+            ${dragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400 hover:bg-gray-50'}`}
+          onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag}
+          onDrop={e => { handleDrag(e); addFiles(Array.from(e.dataTransfer.files)) }}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <p className="text-3xl mb-1">📄</p>
+          <p className="font-semibold text-gray-600">Drop resumes here or click to browse</p>
+          <p className="text-xs text-gray-400 mt-1">PDF · DOC · DOCX — select multiple files at once</p>
+        </div>
+
+        {/* ── Stats bar ── */}
         {files.length > 0 && (
-          <div className="card bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200">
-            <div className="grid grid-cols-5 gap-4 text-center">
-              <div>
-                <div className="text-sm text-gray-600 mb-1">Total Files</div>
-                <div className="text-3xl font-bold text-blue-900">{stats.total}</div>
+          <div className="flex flex-wrap items-center gap-4 bg-white border border-gray-100 rounded-xl px-5 py-3 text-sm shadow-sm">
+            {[
+              ['Total',      stats.total,       'text-gray-700'],
+              ['Pending',    stats.pending,     'text-gray-400'],
+              ['Review',     stats.needsReview,  'text-amber-600 font-bold'],
+              ['Confirmed',  stats.confirmed,    'text-blue-600 font-bold'],
+              ['Saved',      stats.success,     'text-emerald-600 font-bold'],
+              ['Duplicates', stats.duplicate,   'text-yellow-600'],
+              ['Errors',     stats.error,        'text-red-500'],
+            ].map(([label, val, cls]) => (
+              <div key={label as string} className="flex items-center gap-1.5">
+                <span className="text-gray-400 text-xs">{label}</span>
+                <span className={`text-lg leading-none ${cls}`}>{val}</span>
               </div>
-              <div>
-                <div className="text-sm text-gray-600 mb-1">⏳ Pending</div>
-                <div className="text-3xl font-bold text-gray-600">{stats.pending}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600 mb-1">✅ Success</div>
-                <div className="text-3xl font-bold text-green-600">{stats.success}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600 mb-1">⚠️ Duplicate</div>
-                <div className="text-3xl font-bold text-yellow-600">{stats.duplicate}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600 mb-1">❌ Errors</div>
-                <div className="text-3xl font-bold text-red-600">{stats.error}</div>
-              </div>
-            </div>
+            ))}
+            <button onClick={() => setFiles([])}
+              className="ml-auto text-xs text-gray-400 hover:text-red-500">🗑 Clear all</button>
           </div>
         )}
 
-        {/* Action Buttons */}
-        {files.length > 0 && (
-          <div className="flex gap-4">
-            <button
-              onClick={handleUploadAll}
-              disabled={uploading || stats.pending === 0}
-              className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {uploading ? '⏳ Processing...' : `🚀 Upload All (${stats.pending})`}
-            </button>
-            <button
-              onClick={() => setFiles([])}
-              className="bg-white border border-gray-300 px-6 py-2 rounded-lg hover:bg-gray-50"
-            >
-              🗑️ Clear All
-            </button>
-          </div>
+        {/* ── REVIEW CARDS ── */}
+        {reviewRows.length > 0 && (
+          <section className="space-y-4">
+            <h3 className="font-semibold text-gray-700">
+              ✏️ Fill in details — {reviewRows.length} resume{reviewRows.length !== 1 ? 's' : ''}
+            </h3>
+
+            {reviewRows.map((file, i) => (
+              <ReviewCard
+                key={file.id}
+                index={i + 1}
+                file={file}
+                industries={industries}
+                onUpdateReview={patch => updateReview(file.id, patch)}
+                onAddTag={(field, inp) => addTag(file.id, field, inp)}
+                onRemoveTag={(field, tag) => removeTag(file.id, field, tag)}
+                onSkillInputChange={v => updateFile(file.id, { skillInput: v })}
+                onKeywordInputChange={v => updateFile(file.id, { keywordInput: v })}
+                onAddIndustry={ind => setIndustries(prev => prev.includes(ind) ? prev : [...prev, ind].sort())}
+                onConfirm={() => updateFile(file.id, { status: 'confirmed' })}
+                onRemove={() => setFiles(prev => prev.filter(f => f.id !== file.id))}
+              />
+            ))}
+          </section>
         )}
 
-        {/* Files List */}
-        {files.length > 0 && (
-          <div className="card">
-            <h3 className="font-bold text-lg mb-4">📋 Upload Queue ({files.length})</h3>
-            <div className="space-y-3">
-              {files.map((file, index) => (
-                <div
-                  key={index}
-                  className={`border rounded-lg p-4 ${
-                    file.status === 'success' 
-                      ? 'bg-green-50 border-green-200' 
-                      : file.status === 'error'
-                        ? 'bg-red-50 border-red-200'
-                        : file.status === 'duplicate'
-                          ? 'bg-yellow-50 border-yellow-200'
-                          : 'bg-white border-gray-200'
-                  }`}
-                >
-                  {/* File Header */}
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <span className="text-2xl">{getStatusIcon(file.status)}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-gray-900 truncate">
-                          {file.fileName}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          {(file.file.size / 1024).toFixed(1)} KB
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${getStatusColor(file.status)}`}>
-                        {getStatusText(file.status)}
-                      </span>
-                      {file.status === 'pending' && (
-                        <button
-                          onClick={() => removeFile(index)}
-                          className="text-red-600 hover:text-red-800 font-bold"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Progress Bar */}
-                  {file.status === 'parsing' && (
-                    <div className="mb-3">
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div
-                          className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                          style={{ width: `${file.progress}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">{file.progress}% complete</p>
-                    </div>
-                  )}
-
-                  {/* Parsed Data Preview */}
-                  {file.parsedData && (
-                    <div className="bg-white border border-gray-200 rounded p-3 text-sm mt-3">
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <span className="text-gray-500">Name:</span>{' '}
-                          <span className="font-medium">{file.parsedData.full_name || 'N/A'}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Phone:</span>{' '}
-                          <span className="font-medium">{file.parsedData.phone || 'N/A'}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Email:</span>{' '}
-                          <span className="font-medium">{file.parsedData.email || 'N/A'}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Experience:</span>{' '}
-                          <span className="font-medium">{file.parsedData.total_experience || 0} years</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Location:</span>{' '}
-                          <span className="font-medium">{file.parsedData.current_location || 'N/A'}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Expected CTC:</span>{' '}
-                          <span className="font-medium">₹{file.parsedData.expected_ctc || 0}L</span>
-                        </div>
-                      </div>
-                      {file.parsedData.key_skills && file.parsedData.key_skills.length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-gray-200">
-                          <span className="text-gray-500 text-xs">Skills:</span>{' '}
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {file.parsedData.key_skills.slice(0, 8).map((skill: string, i: number) => (
-                              <span key={i} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">
-                                {skill}
-                              </span>
+        {/* ── CONFIRMED summary ── */}
+        {confirmedRows.length > 0 && (
+          <section>
+            <h3 className="font-semibold text-gray-700 mb-3">
+              ✅ Confirmed — {confirmedRows.length} ready to save
+            </h3>
+            <div className="bg-white rounded-xl border border-emerald-200 overflow-hidden shadow-sm">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-emerald-50 text-xs font-semibold text-gray-500 uppercase tracking-wide text-left">
+                    {['Name', 'Designation', 'Exp', 'Location', 'Industry', 'Skills', 'Keywords', ''].map(h => (
+                      <th key={h} className="px-4 py-2.5 border-b border-emerald-100">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {confirmedRows.map(file => {
+                    const rv = file.reviewFields!
+                    return (
+                      <tr key={file.id} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="px-4 py-2.5 font-semibold">{rv.full_name}</td>
+                        <td className="px-4 py-2.5 text-gray-500">{rv.current_designation || '—'}</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">{rv.total_experience} yrs</td>
+                        <td className="px-4 py-2.5">{rv.current_location}</td>
+                        <td className="px-4 py-2.5">
+                          <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-xs font-medium">
+                            {rv.industry}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex flex-wrap gap-1">
+                            {rv.key_skills.slice(0, 3).map(s => (
+                              <span key={s} className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">{s}</span>
                             ))}
-                            {file.parsedData.key_skills.length > 8 && (
-                              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">
-                                +{file.parsedData.key_skills.length - 8} more
-                              </span>
+                            {rv.key_skills.length > 3 && (
+                              <span className="text-xs text-gray-400">+{rv.key_skills.length - 3}</span>
                             )}
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Error Message */}
-                  {file.error && (
-                    <div className="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700 mt-3">
-                      ❌ Error: {file.error}
-                    </div>
-                  )}
-
-                  {/* Duplicate Info */}
-                  {file.duplicateInfo && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-yellow-800 mt-3">
-                      <p className="font-medium mb-1">⚠️ Duplicate Found</p>
-                      <p>
-                        This resume already exists in{' '}
-                        <span className="font-bold">
-                          {file.duplicateInfo.found_in === 'candidates' ? 'Candidates' : 'Resume Bank'}
-                        </span>
-                        {' '}as{' '}
-                        <span className="font-bold">{file.duplicateInfo.full_name}</span>
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ))}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex flex-wrap gap-1">
+                            {rv.requirement_keywords.length === 0
+                              ? <span className="text-gray-300 text-xs">—</span>
+                              : rv.requirement_keywords.map(k => (
+                                  <span key={k} className="px-1.5 py-0.5 bg-violet-50 text-violet-700 rounded text-xs">{k}</span>
+                                ))
+                            }
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <button onClick={() => updateFile(file.id, { status: 'needs_review' })}
+                            className="text-xs text-blue-600 hover:underline">Edit</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
+          </section>
+        )}
+
+        {/* ── RESULTS ── */}
+        {doneRows.length > 0 && (
+          <section>
+            <h3 className="font-semibold text-gray-700 mb-3">Results</h3>
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide text-left">
+                    {['File', 'Name', 'Industry', 'Status', 'Note'].map(h => (
+                      <th key={h} className="px-4 py-2.5 border-b">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {doneRows.map(file => (
+                    <tr key={file.id} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-2.5 text-gray-400 text-xs">{file.fileName}</td>
+                      <td className="px-4 py-2.5 font-medium">{file.reviewFields?.full_name || '—'}</td>
+                      <td className="px-4 py-2.5 text-gray-500">{file.reviewFields?.industry || '—'}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          file.status === 'success'   ? 'bg-emerald-100 text-emerald-800' :
+                          file.status === 'duplicate' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'}`}>
+                          {file.status === 'success' ? '🎉 Saved'
+                            : file.status === 'duplicate' ? '⚠️ Duplicate' : '❌ Error'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-gray-500">
+                        {file.status === 'duplicate'
+                          ? `Exists as "${file.duplicateInfo?.full_name}" in ${
+                              file.duplicateInfo?.found_in === 'candidates' ? 'Candidates' : 'Resume Bank'}`
+                          : file.error || ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {/* ── Empty state ── */}
+        {files.length === 0 && (
+          <div className="text-center py-16 text-gray-300">
+            <div className="text-5xl mb-3">📭</div>
+            <p className="text-gray-400">No files yet — drop resumes above to begin</p>
           </div>
         )}
 
-        {/* Empty State */}
-        {files.length === 0 && (
-          <div className="card text-center py-12 bg-gray-50">
-            <div className="text-6xl mb-4">📭</div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">No files yet</h3>
-            <p className="text-gray-600 mb-4">
-              Upload PDF resumes to start building your talent pool
-            </p>
-            <p className="text-sm text-gray-500">
-              Drag & drop files or click "Choose Files" above
-            </p>
-          </div>
-        )}
       </div>
     </DashboardLayout>
+  )
+}
+
+// ─── ReviewCard ───────────────────────────────────────────────────────────────
+
+interface ReviewCardProps {
+  file: ResumeFile
+  index: number
+  industries: string[]
+  onUpdateReview: (p: Partial<ReviewFields>) => void
+  onAddTag: (field: 'key_skills' | 'requirement_keywords', inp: 'skillInput' | 'keywordInput') => void
+  onRemoveTag: (field: 'key_skills' | 'requirement_keywords', tag: string) => void
+  onSkillInputChange: (v: string) => void
+  onKeywordInputChange: (v: string) => void
+  onAddIndustry: (ind: string) => void
+  onConfirm: () => void
+  onRemove: () => void
+}
+
+function ReviewCard({
+  file, index, industries,
+  onUpdateReview, onAddTag, onRemoveTag,
+  onSkillInputChange, onKeywordInputChange,
+  onAddIndustry, onConfirm, onRemove,
+}: ReviewCardProps) {
+  const rv = file.reviewFields!
+  const missing = getMissing(rv)
+  const canConfirm = missing.length === 0
+
+  // Industry combobox state
+  const [industryOpen, setIndustryOpen]   = useState(false)
+  const [industryInput, setIndustryInput] = useState(rv.industry)
+  const industryRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { setIndustryInput(rv.industry) }, [rv.industry])
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (industryRef.current && !industryRef.current.contains(e.target as Node))
+        setIndustryOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  const selectIndustry = (ind: string) => {
+    setIndustryInput(ind); onUpdateReview({ industry: ind }); setIndustryOpen(false)
+  }
+  const commitIndustry = () => {
+    const t = industryInput.trim(); if (!t) return
+    if (!industries.includes(t)) onAddIndustry(t)
+    onUpdateReview({ industry: t }); setIndustryOpen(false)
+  }
+  const filteredInds = industries.filter(i =>
+    i.toLowerCase().includes(industryInput.toLowerCase())
+  )
+
+  // Input base styles
+  const base = "w-full border rounded-lg px-3 py-2 text-sm text-gray-800 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all"
+  const inp  = (hasErr: boolean) => `${base} ${hasErr ? 'border-red-300 bg-red-50' : 'border-gray-200 hover:border-gray-300'}`
+  const lbl  = "block text-xs font-semibold text-gray-500 mb-1"
+
+  return (
+    <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all
+      ${canConfirm ? 'border-gray-200' : 'border-amber-200'}`}>
+
+      {/* Card header */}
+      <div className={`flex items-center justify-between px-5 py-3 border-b
+        ${canConfirm ? 'bg-gray-50 border-gray-100' : 'bg-amber-50 border-amber-100'}`}>
+        <div className="flex items-center gap-3">
+          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+            canConfirm ? 'bg-blue-100 text-blue-600' : 'bg-amber-100 text-amber-600'}`}>
+            #{index}
+          </span>
+          <div>
+            <p className="font-semibold text-gray-800 text-sm leading-tight">
+              {rv.full_name || <span className="text-gray-400 italic">Unnamed — fill Name below</span>}
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">📎 {file.fileName}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {missing.length > 0 && (
+            <p className="text-xs text-amber-600 font-medium hidden sm:block">
+              Fill: {missing.join(' · ')}
+            </p>
+          )}
+          <button
+            onClick={onConfirm}
+            disabled={!canConfirm}
+            title={!canConfirm ? `Fill required: ${missing.join(', ')}` : 'Confirm this resume'}
+            className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${
+              canConfirm
+                ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm active:scale-95'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+            }`}>
+            {canConfirm ? '✓ Confirm' : 'Fill fields'}
+          </button>
+          <button onClick={onRemove}
+            className="text-xs text-gray-300 hover:text-red-500 transition-colors">✕</button>
+        </div>
+      </div>
+
+      {/* Card body */}
+      <div className="px-5 py-4 space-y-4">
+
+        {/* Row 1 — Identity */}
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className={lbl}>Full Name <span className="text-red-400">*</span></label>
+            <input className={inp(!rv.full_name.trim())}
+              placeholder="e.g. Ravi Kumar"
+              value={rv.full_name}
+              onChange={e => onUpdateReview({ full_name: e.target.value })} />
+          </div>
+          <div>
+            <label className={lbl}>Phone</label>
+            <input className={inp(false)}
+              placeholder="9876543210"
+              value={rv.phone}
+              onChange={e => onUpdateReview({ phone: e.target.value })} />
+          </div>
+          <div>
+            <label className={lbl}>Email</label>
+            <input className={inp(false)}
+              placeholder="email@domain.com"
+              value={rv.email}
+              onChange={e => onUpdateReview({ email: e.target.value })} />
+          </div>
+        </div>
+
+        {/* Row 2 — Current role */}
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className={lbl}>Designation</label>
+            <input className={inp(false)}
+              placeholder="e.g. Design Engineer"
+              value={rv.current_designation}
+              onChange={e => onUpdateReview({ current_designation: e.target.value })} />
+          </div>
+          <div>
+            <label className={lbl}>Company</label>
+            <input className={inp(false)}
+              placeholder="Current company"
+              value={rv.current_company}
+              onChange={e => onUpdateReview({ current_company: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lbl}>Exp (yrs) <span className="text-red-400">*</span></label>
+              <input type="number" step="0.5" min="0" max="50"
+                className={inp(!rv.total_experience.trim())}
+                placeholder="0"
+                value={rv.total_experience}
+                onChange={e => onUpdateReview({ total_experience: e.target.value })} />
+            </div>
+            <div>
+              <label className={lbl}>Location <span className="text-red-400">*</span></label>
+              <input className={inp(!rv.current_location.trim())}
+                placeholder="City"
+                value={rv.current_location}
+                onChange={e => onUpdateReview({ current_location: e.target.value })} />
+            </div>
+          </div>
+        </div>
+
+        {/* Row 3 — Industry + optional */}
+        <div className="grid grid-cols-3 gap-4">
+          {/* Industry combobox */}
+          <div ref={industryRef}>
+            <label className={lbl}>Industry / Domain <span className="text-red-400">*</span></label>
+            <div className="relative">
+              <input
+                className={`${inp(!rv.industry)} pr-7`}
+                placeholder="Select or type new…"
+                value={industryInput}
+                onChange={e => { setIndustryInput(e.target.value); setIndustryOpen(true) }}
+                onFocus={() => setIndustryOpen(true)}
+                onBlur={() => setTimeout(commitIndustry, 160)} />
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-300 text-xs pointer-events-none">▾</span>
+              {industryOpen && (
+                <div className="absolute z-50 top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-60 overflow-y-auto">
+                  {filteredInds.map(ind => (
+                    <button key={ind} type="button"
+                      onMouseDown={() => selectIndustry(ind)}
+                      className={`w-full text-left px-4 py-2 text-sm hover:bg-blue-50 transition-colors
+                        ${rv.industry === ind ? 'bg-blue-50 font-semibold text-blue-700' : 'text-gray-700'}`}>
+                      {ind}
+                    </button>
+                  ))}
+                  {industryInput.trim() && !industries.includes(industryInput.trim()) && (
+                    <button type="button"
+                      onMouseDown={() => { onAddIndustry(industryInput.trim()); selectIndustry(industryInput.trim()) }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-blue-600 font-semibold hover:bg-blue-50 border-t border-gray-100">
+                      ＋ Add "{industryInput.trim()}"
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <div>
+            <label className={lbl}>Expected CTC (Lakhs)</label>
+            <input type="number" step="0.5"
+              className={inp(false)}
+              placeholder="e.g. 8.5"
+              value={rv.expected_ctc}
+              onChange={e => onUpdateReview({ expected_ctc: e.target.value })} />
+          </div>
+          <div>
+            <label className={lbl}>Notice Period (days)</label>
+            <input type="number"
+              className={inp(false)}
+              placeholder="e.g. 30"
+              value={rv.notice_period}
+              onChange={e => onUpdateReview({ notice_period: e.target.value })} />
+          </div>
+        </div>
+
+        {/* Row 4 — Skills + Keywords side by side */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className={lbl}>
+              Skills <span className="text-red-400">*</span>
+              <span className="text-gray-300 font-normal ml-1">— Enter or comma to add</span>
+            </label>
+            <TagInput
+              tags={rv.key_skills}
+              inputValue={file.skillInput}
+              placeholder="e.g. Payroll, SAP, Excel…"
+              tagColor="bg-blue-100 text-blue-800 border border-blue-200"
+              hasError={rv.key_skills.length === 0}
+              onInputChange={onSkillInputChange}
+              onAdd={() => onAddTag('key_skills', 'skillInput')}
+              onRemove={tag => onRemoveTag('key_skills', tag)}
+            />
+          </div>
+          <div>
+            <label className={lbl}>
+              <span className="text-violet-600">Requirement Keywords</span>
+              <span className="text-red-400"> *</span>
+              <span className="text-gray-300 font-normal ml-1">— job-role match tags</span>
+            </label>
+            <TagInput
+              tags={rv.requirement_keywords}
+              inputValue={file.keywordInput}
+              placeholder="e.g. Design Engineer, AutoCAD…"
+              tagColor="bg-violet-100 text-violet-800 border border-violet-200"
+              hasError={rv.requirement_keywords.length === 0}
+              onInputChange={onKeywordInputChange}
+              onAdd={() => onAddTag('requirement_keywords', 'keywordInput')}
+              onRemove={tag => onRemoveTag('requirement_keywords', tag)}
+            />
+          </div>
+        </div>
+
+      </div>
+    </div>
+  )
+}
+
+// ─── TagInput ─────────────────────────────────────────────────────────────────
+
+interface TagInputProps {
+  tags: string[]
+  inputValue: string
+  placeholder: string
+  tagColor: string
+  hasError: boolean
+  onInputChange: (v: string) => void
+  onAdd: () => void
+  onRemove: (tag: string) => void
+}
+
+function TagInput({ tags, inputValue, placeholder, tagColor, hasError, onInputChange, onAdd, onRemove }: TagInputProps) {
+  return (
+    <div
+      className={`min-h-[44px] border rounded-lg px-3 pt-2 pb-1.5 flex flex-wrap gap-1.5 items-start
+        focus-within:ring-2 focus-within:ring-blue-400 focus-within:border-transparent transition-all cursor-text
+        ${hasError ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white hover:border-gray-300'}`}
+      onClick={e => (e.currentTarget.querySelector('input') as HTMLInputElement)?.focus()}>
+      {tags.map(tag => (
+        <span key={tag}
+          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${tagColor}`}>
+          {tag}
+          <button
+            onClick={e => { e.stopPropagation(); onRemove(tag) }}
+            className="opacity-50 hover:opacity-100 hover:text-red-600 font-bold leading-none transition-opacity">
+            ×
+          </button>
+        </span>
+      ))}
+      <input
+        className="flex-1 min-w-[100px] text-sm border-0 outline-none bg-transparent placeholder-gray-300 py-0.5"
+        value={inputValue}
+        placeholder={tags.length === 0 ? placeholder : 'Add more…'}
+        onChange={e => onInputChange(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); onAdd() }
+        }} />
+    </div>
   )
 }

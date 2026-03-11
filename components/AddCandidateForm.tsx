@@ -1,4 +1,4 @@
-﻿// components/AddCandidateForm.tsx - AI-POWERED RESUME PARSING via Talent IQ
+﻿// components/AddCandidateForm.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { parseResumeWithAI } from '@/lib/resumeExtractor'
 import { normalizeSkills } from '@/lib/skillNormalization'
+import MatchScorePanel from '@/components/MatchScorePanel'
 
 interface Job {
   id: string
@@ -47,6 +48,19 @@ export default function AddCandidateForm({
   const [parseConfidence, setParseConfidence] = useState(existingCandidate?.auto_fill_confidence || 0)
   const [autoFilled, setAutoFilled] = useState(existingCandidate?.auto_filled || false)
   const [parseError, setParseError] = useState<string>('')
+
+  // Validation errors for mandatory fields
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+
+  // ── NEW: store full parsed result for MatchScorePanel ──────────────────────
+  const [parsedResume, setParsedResume] = useState<{
+    skills: string[]
+    total_experience: number | null
+    expected_ctc: number | null
+  } | null>(null)
+
+  // ── NEW: track selected job title for MatchScorePanel header ──────────────
+  const [selectedJobTitle, setSelectedJobTitle] = useState<string>('')
 
   // Skills state
   const [skillSuggestions, setSkillSuggestions] = useState<string[]>([])
@@ -108,6 +122,26 @@ export default function AddCandidateForm({
     }
   }, [existingCandidate?.id, isEditMode])
 
+  // ── NEW: keep selectedJobTitle in sync when job_id changes ────────────────
+  useEffect(() => {
+    if (formData.job_id && jobs.length > 0) {
+      const found = jobs.find(j => j.id === formData.job_id)
+      if (found) setSelectedJobTitle(found.job_title)
+    }
+  }, [formData.job_id, jobs])
+
+  // ── NEW: keep parsedResume in sync when skills or experience change ────────
+  // (covers the case where recruiter manually edits after auto-fill)
+  useEffect(() => {
+    if (autoFilled || selectedSkills.length > 0) {
+      setParsedResume({
+        skills:           selectedSkills,
+        total_experience: parseFloat(formData.total_experience) || null,
+        expected_ctc:     parseFloat(formData.expected_ctc)     || null,
+      })
+    }
+  }, [selectedSkills, formData.total_experience, formData.expected_ctc, autoFilled])
+
   const loadJobs = async (userId: string, teamId: string, role: string) => {
     try {
       if (role === 'recruiter') {
@@ -163,7 +197,7 @@ export default function AddCandidateForm({
   }, [preSelectedJobId, userRole])
 
   // ─────────────────────────────────────────────
-  // AI-POWERED RESUME UPLOAD HANDLER
+  // RESUME UPLOAD HANDLER
   // ─────────────────────────────────────────────
   const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -192,11 +226,12 @@ export default function AddCandidateForm({
     setParsing(true)
     setParseError('')
     setAutoFilled(false)
+    setParsedResume(null)
 
     try {
-            const parsed = await parseResumeWithAI(file)
+      const parsed = await parseResumeWithAI(file)
 
-      // Auto-fill form with AI results (only overwrite if AI found something)
+      // Auto-fill form
       setFormData(prev => ({
         ...prev,
         full_name:            parsed.full_name            || prev.full_name,
@@ -224,14 +259,20 @@ export default function AddCandidateForm({
       setParseConfidence(parsed.confidence)
       setAutoFilled(true)
 
-      // Check for duplicates
+      // ── NEW: store parsed data for MatchScorePanel ─────────────────────────
+      setParsedResume({
+        skills:           parsed.skills,
+        total_experience: parsed.total_experience ?? null,
+        expected_ctc:     parsed.expected_ctc     ?? null,
+      })
+
       if (parsed.phone || parsed.email) {
         checkDuplicate(parsed.phone || '', parsed.email || '')
       }
 
     } catch (error: any) {
       console.error('Parse error:', error)
-      setParseError(error.message || 'AI parsing failed. Please fill manually.')
+      setParseError(error.message || 'Parsing failed. Please fill manually.')
     } finally {
       setParsing(false)
     }
@@ -251,13 +292,11 @@ export default function AddCandidateForm({
       } else {
         query = query.eq('email', email)
       }
-      
 
       if (isEditMode && existingCandidate) {
         query = query.neq('id', existingCandidate.id)
       }
-      
-      
+
       const { data } = await query
 
       if (data && data.length > 0) {
@@ -304,127 +343,172 @@ export default function AddCandidateForm({
     setSelectedSkills(selectedSkills.filter(s => s !== skillToRemove))
   }
 
+  // ── NEW: persist match score after candidate is saved ─────────────────────
+  const saveMatchScore = async (candidateId: string, jobId: string) => {
+    if (!user?.id || !jobId) return
+    try {
+      await fetch('/api/match-resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId,
+          candidateId,
+          screenedBy: user.id,
+        }),
+      })
+    } catch {
+      // Non-blocking — score can be generated later from profile page
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault()
+    e.preventDefault()
 
-  if (!formData.full_name || !formData.phone || !formData.job_id) {
-    alert('Please fill all required fields (Name, Phone, Job)')
-    return
-  }
+    // ── Validate all mandatory fields ────────────────────────────────────────
+    const errors: Record<string, string> = {}
+    if (!formData.full_name.trim())          errors.full_name         = 'Full name is required'
+    if (!formData.phone.trim())              errors.phone             = 'Mobile number is required'
+    if (!formData.email.trim())              errors.email             = 'Email ID is required'
+    if (!formData.job_id)                    errors.job_id            = 'Please select a job'
+    if (!formData.total_experience.trim())   errors.total_experience  = 'Total experience is required'
+    if (!formData.current_ctc.trim())        errors.current_ctc       = 'Current CTC is required'
+    if (!formData.notice_period.trim())      errors.notice_period     = 'Notice period is required'
+    if (!formData.current_location.trim())   errors.current_location  = 'Current location is required'
+    if (!formData.education_level)           errors.education_level   = 'Education level is required'
+    if (!formData.education_degree.trim())   errors.education_degree  = 'Degree is required'
+    if (selectedSkills.length === 0)         errors.skills            = 'Please add at least one skill'
 
-  if (!isEditMode) {
-    const isDuplicate = await checkDuplicate(formData.phone, formData.email)
-    if (isDuplicate) {
-      const confirm = window.confirm(`DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`)
-      if (!confirm) return
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors)
+      // Scroll to first error
+      const firstErrorField = Object.keys(errors)[0]
+      document.querySelector(`[name="${firstErrorField}"], [data-field="${firstErrorField}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
     }
-  }
+    setFormErrors({})
 
-  setLoading(true)
-
-  try {
-    // Normalize skills before creating candidateData
-    let normalizedSkills = selectedSkills
-    if (selectedSkills.length > 0) {
-      const normalized = await normalizeSkills(selectedSkills)
-      normalizedSkills = normalized.normalized
-    }
-
-    const candidateData = {
-      ...formData,
-      total_experience: parseFloat(formData.total_experience) || 0,
-      relevant_experience: parseFloat(formData.relevant_experience) || 0,
-      current_ctc: parseFloat(formData.current_ctc) || 0,
-      expected_ctc: parseFloat(formData.expected_ctc) || 0,
-      notice_period: parseInt(formData.notice_period) || 0,
-      key_skills: normalizedSkills,
-      last_activity_date: new Date().toISOString(),
+    if (!isEditMode) {
+      const isDuplicate = await checkDuplicate(formData.phone, formData.email)
+      if (isDuplicate) {
+        const confirm = window.confirm(`DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`)
+        if (!confirm) return
+      }
     }
 
-    if (isEditMode && existingCandidate) {
-      const { error } = await supabase
-        .from('candidates')
-        .update(candidateData)
-        .eq('id', existingCandidate.id)
+    setLoading(true)
 
-      if (error) throw error
-
-      await supabase.from('candidate_timeline').insert([{
-        candidate_id: existingCandidate.id,
-        activity_type: 'candidate_updated',
-        activity_title: 'Candidate Updated',
-        activity_description: 'Candidate information was updated',
-        performed_by: user.id,
-      }])
-
-      alert('Candidate updated successfully!')
-      if (redirectPath) router.push(redirectPath)
-      else router.back()
-
-    } else {
-      let resumeUrl = null
-      if (resumeFile) {
-        const fileExt = resumeFile.name.split('.').pop()
-        const fileName = `${Date.now()}_${formData.full_name.replace(/\s+/g, '_')}.${fileExt}`
-        const { error: uploadError } = await supabase.storage
-          .from('resumes')
-          .upload(`resumes/${fileName}`, resumeFile)
-
-        if (!uploadError) {
-          const { data: urlData } = supabase.storage.from('resumes').getPublicUrl(`resumes/${fileName}`)
-          resumeUrl = urlData.publicUrl
-        }
+    try {
+      let normalizedSkills = selectedSkills
+      if (selectedSkills.length > 0) {
+        const normalized = await normalizeSkills(selectedSkills)
+        normalizedSkills = normalized.normalized
       }
 
-      const { data, error } = await supabase
-        .from('candidates')
-        .insert([{
-          ...candidateData,
-          assigned_to: user.id,
-          team_id: user.team_id,
-          created_by: user.id,
-          current_stage: 'sourced',
-          date_sourced: new Date().toISOString(),
-          resume_url: resumeUrl,
-          resume_file_name: resumeFile?.name,
-          resume_file_size: resumeFile?.size,
-          resume_uploaded_at: resumeUrl ? new Date().toISOString() : null,
-          resume_parsed: autoFilled,
-          auto_filled: autoFilled,
-          auto_fill_confidence: parseConfidence,
+      const candidateData = {
+        ...formData,
+        total_experience: parseFloat(formData.total_experience) || 0,
+        relevant_experience: parseFloat(formData.relevant_experience) || 0,
+        current_ctc: parseFloat(formData.current_ctc) || 0,
+        expected_ctc: parseFloat(formData.expected_ctc) || 0,
+        notice_period: parseInt(formData.notice_period) || 0,
+        key_skills: normalizedSkills,
+        last_activity_date: new Date().toISOString(),
+      }
+
+      if (isEditMode && existingCandidate) {
+        const { error } = await supabase
+          .from('candidates')
+          .update(candidateData)
+          .eq('id', existingCandidate.id)
+
+        if (error) throw error
+
+        await supabase.from('candidate_timeline').insert([{
+          candidate_id: existingCandidate.id,
+          activity_type: 'candidate_updated',
+          activity_title: 'Candidate Updated',
+          activity_description: 'Candidate information was updated',
+          performed_by: user.id,
         }])
-        .select()
 
-      if (error) throw error
+        alert('Candidate updated successfully!')
+        if (redirectPath) router.push(redirectPath)
+        else router.back()
 
-      await supabase.from('candidate_timeline').insert([{
-        candidate_id: data[0].id,
-        activity_type: 'candidate_created',
-        activity_title: 'Candidate Created',
-        activity_description: autoFilled
-          ? `Candidate added via Talent IQ resume parsing (${(parseConfidence * 100).toFixed(0)}% confidence)`
-          : 'Candidate added manually',
-        metadata: { auto_filled: autoFilled, confidence: parseConfidence, skills_count: normalizedSkills.length },
-        performed_by: user.id,
-      }])
+      } else {
+        let resumeUrl = null
+        if (resumeFile) {
+          const fileExt = resumeFile.name.split('.').pop()
+          const fileName = `${Date.now()}_${formData.full_name.replace(/\s+/g, '_')}.${fileExt}`
+          const { error: uploadError } = await supabase.storage
+            .from('resumes')
+            .upload(`resumes/${fileName}`, resumeFile)
 
-      alert('Candidate added successfully!')
+          if (!uploadError) {
+            const { data: urlData } = supabase.storage.from('resumes').getPublicUrl(`resumes/${fileName}`)
+            resumeUrl = urlData.publicUrl
+          }
+        }
 
-      if (redirectPath) router.push(redirectPath)
-      else if (userRole === 'team_leader') router.push('/tl/candidates')
-      else if (userRole === 'sr_team_leader') router.push('/sr-tl/candidates')
-      else router.push('/recruiter/dashboard')
+        const { data, error } = await supabase
+          .from('candidates')
+          .insert([{
+            ...candidateData,
+            assigned_to: user.id,
+            team_id: user.team_id,
+            created_by: user.id,
+            current_stage: 'sourced',
+            date_sourced: new Date().toISOString(),
+            resume_url: resumeUrl,
+            resume_file_name: resumeFile?.name,
+            resume_file_size: resumeFile?.size,
+            resume_uploaded_at: resumeUrl ? new Date().toISOString() : null,
+            resume_parsed: autoFilled,
+            auto_filled: autoFilled,
+            auto_fill_confidence: parseConfidence,
+          }])
+          .select()
+
+        if (error) throw error
+
+        const newCandidateId = data[0].id
+
+        await supabase.from('candidate_timeline').insert([{
+          candidate_id: newCandidateId,
+          activity_type: 'candidate_created',
+          activity_title: 'Candidate Created',
+          activity_description: autoFilled
+            ? `Candidate added via Talent IQ resume parsing (${(parseConfidence * 100).toFixed(0)}% confidence)`
+            : 'Candidate added manually',
+          metadata: { auto_filled: autoFilled, confidence: parseConfidence, skills_count: normalizedSkills.length },
+          performed_by: user.id,
+        }])
+
+        // ── NEW: persist match score (non-blocking) ────────────────────────
+        saveMatchScore(newCandidateId, formData.job_id)
+
+        alert('Candidate added successfully!')
+
+        if (redirectPath) router.push(redirectPath)
+        else if (userRole === 'team_leader') router.push('/tl/candidates')
+        else if (userRole === 'sr_team_leader') router.push('/sr-tl/candidates')
+        else router.push('/recruiter/dashboard')
+      }
+    } catch (error: any) {
+      console.error('Submit error:', error)
+      alert('Error: ' + error.message)
+    } finally {
+      setLoading(false)
     }
-  } catch (error: any) {
-    console.error('Submit error:', error)
-    alert('Error: ' + error.message)
-  } finally {
-    setLoading(false)
   }
-}
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
+    // Clear error for this field when user starts typing
+    if (formErrors[e.target.name]) {
+      setFormErrors(prev => { const n = { ...prev }; delete n[e.target.name]; return n })
+    }
   }
 
   return (
@@ -438,6 +522,11 @@ export default function AddCandidateForm({
             ? 'Update candidate information'
             : 'Upload resume for Talent IQ auto-fill or enter manually'}
         </p>
+        {!isEditMode && (
+          <p className="text-xs text-gray-500 mt-1">
+            Fields marked <span className="text-red-500 font-semibold">*</span> are mandatory
+          </p>
+        )}
       </div>
 
       {/* Resume Upload - Only in Add Mode */}
@@ -452,7 +541,7 @@ export default function AddCandidateForm({
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Upload Resume (PDF, Word .docx, or Text) — AI extracts all fields automatically
+                Upload Resume (PDF, Word .docx, or Text) — extracts all fields automatically
               </label>
               <input
                 type="file"
@@ -489,7 +578,7 @@ export default function AddCandidateForm({
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <div className="flex items-center gap-2 text-green-800 mb-1">
                   <span className="text-lg">✅</span>
-                  <span className="font-semibold">AI Parsing Complete!</span>
+                  <span className="font-semibold">Parsing Complete!</span>
                 </div>
                 <div className="flex items-center gap-4 text-sm text-green-700">
                   <span>Confidence: <strong>{(parseConfidence * 100).toFixed(0)}%</strong></span>
@@ -504,7 +593,7 @@ export default function AddCandidateForm({
         </div>
       )}
 
-      {/* Edit Mode - AI badge */}
+      {/* Edit Mode - parse badge */}
       {isEditMode && existingCandidate?.auto_filled && (
         <div className="card mb-6 bg-green-50 border border-green-200">
           <div className="flex items-center gap-2 text-green-800">
@@ -551,28 +640,34 @@ export default function AddCandidateForm({
       )}
 
       {/* MAIN FORM */}
-      <form onSubmit={handleSubmit} className="card space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-6">
 
         {/* Basic Information */}
-        <div>
+        <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Basic Information
             {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">🤖 AI-Filled</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Full Name *</label>
-              <input type="text" name="full_name" value={formData.full_name} onChange={handleChange} className="input" required />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Full Name <span className="text-red-500">*</span></label>
+              <input type="text" name="full_name" value={formData.full_name} onChange={handleChange}
+                className={`input ${formErrors.full_name ? 'border-red-500 border-2' : ''}`} required />
+              {formErrors.full_name && <p className="text-xs text-red-600 mt-1">{formErrors.full_name}</p>}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email ID <span className="text-red-500">*</span></label>
               <input type="email" name="email" value={formData.email} onChange={handleChange}
-                className={`input ${duplicateWarning && formData.email && !isEditMode ? 'border-red-500 border-2' : ''}`} />
+                className={`input ${formErrors.email || (duplicateWarning && formData.email && !isEditMode) ? 'border-red-500 border-2' : ''}`}
+                required />
+              {formErrors.email && <p className="text-xs text-red-600 mt-1">{formErrors.email}</p>}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Phone *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Mobile Number <span className="text-red-500">*</span></label>
               <input type="tel" name="phone" value={formData.phone} onChange={handleChange}
-                className={`input ${duplicateWarning && formData.phone && !isEditMode ? 'border-red-500 border-2' : ''}`} required />
+                className={`input ${formErrors.phone || (duplicateWarning && formData.phone && !isEditMode) ? 'border-red-500 border-2' : ''}`}
+                required />
+              {formErrors.phone && <p className="text-xs text-red-600 mt-1">{formErrors.phone}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Gender</label>
@@ -590,20 +685,32 @@ export default function AddCandidateForm({
                 className="input" max={new Date().toISOString().split('T')[0]} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Current Location</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Current Location <span className="text-red-500">*</span></label>
               <input type="text" name="current_location" value={formData.current_location} onChange={handleChange}
-                className="input" placeholder="e.g., Mumbai, Bangalore" />
+                className={`input ${formErrors.current_location ? 'border-red-500 border-2' : ''}`}
+                placeholder="e.g., Mumbai, Bangalore" />
+              {formErrors.current_location && <p className="text-xs text-red-600 mt-1">{formErrors.current_location}</p>}
             </div>
           </div>
         </div>
 
         {/* Job Assignment */}
-        <div>
+        <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Job Assignment</h3>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Job Role *</label>
-            <select name="job_id" value={formData.job_id} onChange={handleChange} className="input" required
-              disabled={!!preSelectedJobId || !!jobFromUrl}>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Job Role <span className="text-red-500">*</span></label>
+            <select
+              name="job_id"
+              value={formData.job_id}
+              onChange={(e) => {
+                handleChange(e)
+                const found = jobs.find(j => j.id === e.target.value)
+                setSelectedJobTitle(found?.job_title || '')
+              }}
+              className={`input ${formErrors.job_id ? 'border-red-500 border-2' : ''}`}
+              required
+              disabled={!!preSelectedJobId || !!jobFromUrl}
+            >
               <option value="">Select Job</option>
               {jobs.map(job => (
                 <option key={job.id} value={job.id}>
@@ -611,12 +718,25 @@ export default function AddCandidateForm({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">{jobs.length} job{jobs.length !== 1 ? 's' : ''} available</p>
+            {formErrors.job_id
+              ? <p className="text-xs text-red-600 mt-1">{formErrors.job_id}</p>
+              : <p className="text-xs text-gray-500 mt-1">{jobs.length} job{jobs.length !== 1 ? 's' : ''} available</p>
+            }
           </div>
+
+          {/* ── NEW: MatchScorePanel — preview mode ──────────────────────────── */}
+          {!isEditMode && (
+            <MatchScorePanel
+              jobId={formData.job_id || null}
+              jobTitle={selectedJobTitle}
+              parsedData={parsedResume}
+              autoRun={true}
+            />
+          )}
         </div>
 
         {/* Professional Details */}
-        <div>
+        <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Professional Details
             {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">🤖 AI-Filled</span>}
@@ -631,38 +751,45 @@ export default function AddCandidateForm({
               <input type="text" name="current_designation" value={formData.current_designation} onChange={handleChange} className="input" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Total Experience (Years)</label>
-              <input type="number" step="0.5" name="total_experience" value={formData.total_experience} onChange={handleChange} className="input" />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Total Experience (Years) <span className="text-red-500">*</span></label>
+              <input type="number" step="0.5" name="total_experience" value={formData.total_experience} onChange={handleChange}
+                className={`input ${formErrors.total_experience ? 'border-red-500 border-2' : ''}`} placeholder="e.g., 4.5" />
+              {formErrors.total_experience && <p className="text-xs text-red-600 mt-1">{formErrors.total_experience}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Relevant Experience (Years)</label>
               <input type="number" step="0.5" name="relevant_experience" value={formData.relevant_experience} onChange={handleChange} className="input" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Current CTC (INR)</label>
-              <input type="number" step="0.1" name="current_ctc" value={formData.current_ctc} onChange={handleChange} className="input" />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Current CTC (Lakhs) <span className="text-red-500">*</span></label>
+              <input type="number" step="0.1" name="current_ctc" value={formData.current_ctc} onChange={handleChange}
+                className={`input ${formErrors.current_ctc ? 'border-red-500 border-2' : ''}`} placeholder="e.g., 6.5" />
+              {formErrors.current_ctc && <p className="text-xs text-red-600 mt-1">{formErrors.current_ctc}</p>}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Expected CTC (INR)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Expected CTC (Lakhs)</label>
               <input type="number" step="0.1" name="expected_ctc" value={formData.expected_ctc} onChange={handleChange} className="input" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Notice Period (Days)</label>
-              <input type="number" name="notice_period" value={formData.notice_period} onChange={handleChange} className="input" />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Notice Period (Days) <span className="text-red-500">*</span></label>
+              <input type="number" name="notice_period" value={formData.notice_period} onChange={handleChange}
+                className={`input ${formErrors.notice_period ? 'border-red-500 border-2' : ''}`} placeholder="e.g., 30" />
+              {formErrors.notice_period && <p className="text-xs text-red-600 mt-1">{formErrors.notice_period}</p>}
             </div>
           </div>
         </div>
 
         {/* Education */}
-        <div>
+        <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             Education
             {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">🤖 AI-Filled</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Education Level</label>
-              <select name="education_level" value={formData.education_level} onChange={handleChange} className="input">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Education Level <span className="text-red-500">*</span></label>
+              <select name="education_level" value={formData.education_level} onChange={handleChange}
+                className={`input ${formErrors.education_level ? 'border-red-500 border-2' : ''}`}>
                 <option value="">Select Level</option>
                 <option value="High School">High School</option>
                 <option value="Diploma">Diploma</option>
@@ -670,11 +797,14 @@ export default function AddCandidateForm({
                 <option value="Master">Master's</option>
                 <option value="PhD">PhD</option>
               </select>
+              {formErrors.education_level && <p className="text-xs text-red-600 mt-1">{formErrors.education_level}</p>}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Degree</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Degree <span className="text-red-500">*</span></label>
               <input type="text" name="education_degree" value={formData.education_degree} onChange={handleChange}
-                className="input" placeholder="e.g., B.Tech, MBA" />
+                className={`input ${formErrors.education_degree ? 'border-red-500 border-2' : ''}`}
+                placeholder="e.g., B.Tech, MBA" />
+              {formErrors.education_degree && <p className="text-xs text-red-600 mt-1">{formErrors.education_degree}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Field of Study</label>
@@ -690,14 +820,19 @@ export default function AddCandidateForm({
         </div>
 
         {/* Skills */}
-        <div>
+        <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            Key Skills
+            Key Skills <span className="text-red-500">*</span>
             {autoFilled && !isEditMode && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">🤖 AI-Filled</span>}
           </h3>
           <div className="space-y-4">
+            {formErrors.skills && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <span>⚠️</span> {formErrors.skills}
+              </div>
+            )}
             {selectedSkills.length > 0 && (
-              <div className="flex flex-wrap gap-2">
+              <div data-field="skills" className="flex flex-wrap gap-2">
                 {selectedSkills.map((skill, index) => (
                   <span key={index} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium flex items-center gap-2">
                     {skill}
@@ -710,10 +845,11 @@ export default function AddCandidateForm({
               <input
                 type="text"
                 value={skillInput}
+                data-field="skills"
                 onChange={(e) => { setSkillInput(e.target.value); loadSkillSuggestions(e.target.value) }}
                 onKeyPress={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddSkill(skillInput) } }}
-                className="input"
-                placeholder="Type skill and press Enter (e.g., React, Python, AWS)"
+                className={`input ${formErrors.skills && selectedSkills.length === 0 ? 'border-red-500 border-2' : ''}`}
+                placeholder="Type skill and press Enter"
               />
               {skillSuggestions.length > 0 && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
@@ -731,7 +867,7 @@ export default function AddCandidateForm({
         </div>
 
         {/* Additional */}
-        <div>
+        <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Additional Details</h3>
           <div className="space-y-4">
             <div>
@@ -755,26 +891,41 @@ export default function AddCandidateForm({
         </div>
 
         {/* Submit */}
-        <div className="flex gap-4 pt-4 border-t border-gray-200">
-          <button
-            type="submit"
-            disabled={loading || (!isEditMode && jobs.length === 0)}
-            className={`btn-primary ${duplicateWarning && !isEditMode ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
-          >
-            {loading
-              ? (isEditMode ? 'Updating...' : 'Adding...')
-              : isEditMode
-                ? 'Update Candidate'
-                : duplicateWarning
-                  ? 'Add Anyway'
-                  : autoFilled
-                    ? '💾 Save AI-Parsed Candidate'
-                    : 'Add Candidate'}
-          </button>
-          <button type="button" onClick={() => router.back()}
-            className="bg-white border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-medium hover:border-gray-400">
-            Cancel
-          </button>
+        <div className="card">
+          {/* Validation summary banner */}
+        {Object.keys(formErrors).length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center gap-2 text-red-800 font-semibold mb-2">
+              <span>⚠️</span> Please fix the following before submitting:
+            </div>
+            <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
+              {Object.values(formErrors).map((err, i) => (
+                <li key={i}>{err}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="flex gap-4">
+            <button
+              type="submit"
+              disabled={loading || (!isEditMode && jobs.length === 0)}
+              className={`btn-primary ${duplicateWarning && !isEditMode ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
+            >
+              {loading
+                ? (isEditMode ? 'Updating...' : 'Adding...')
+                : isEditMode
+                  ? 'Update Candidate'
+                  : duplicateWarning
+                    ? 'Add Anyway'
+                    : autoFilled
+                      ? '💾 Save AI-Parsed Candidate'
+                      : 'Add Candidate'}
+            </button>
+            <button type="button" onClick={() => router.back()}
+              className="bg-white border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-medium hover:border-gray-400">
+              Cancel
+            </button>
+          </div>
         </div>
       </form>
     </div>

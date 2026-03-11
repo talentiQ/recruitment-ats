@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import InterviewScheduler from '@/components/InterviewScheduler'
 import OfferForm from '@/components/OfferForm'
+import ResumeUpload from '@/components/ResumeUpload'
+import MatchScorePanel from '@/components/MatchScorePanel'
 
 interface CandidateDetailViewProps {
   candidateId: string
@@ -29,6 +31,15 @@ export default function CandidateDetailView({
   // For offer management
   const [existingOffers, setExistingOffers] = useState<any[]>([])
   const [activeOffer, setActiveOffer] = useState<any>(null)
+
+  // For ResumeUpload + MatchScorePanel
+  const [user, setUser] = useState<any>(null)
+  const [showResumeUpload, setShowResumeUpload] = useState(false)
+
+  useEffect(() => {
+    const userData = localStorage.getItem('user')
+    if (userData) setUser(JSON.parse(userData))
+  }, [])
 
   useEffect(() => {
     loadCandidate()
@@ -714,6 +725,12 @@ export default function CandidateDetailView({
     return ['offer_accepted', 'offer_extended', 'joined', 'dropped', 'rejected'].includes(candidate?.current_stage || '')
   }
 
+  const handleUploadComplete = () => {
+    setShowResumeUpload(false)
+    loadCandidate()
+    loadTimeline()
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -944,10 +961,22 @@ export default function CandidateDetailView({
         </div>
       )}
 
-      {/* Resume */}
+      {/* Resume / CV */}
       <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Resume / CV</h3>
-        {candidate.resume_url ? (
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Resume / CV</h3>
+          {candidate.resume_url && !showResumeUpload && (
+            <button
+              onClick={() => setShowResumeUpload(true)}
+              className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+            >
+              🔄 Replace Resume
+            </button>
+          )}
+        </div>
+
+        {/* Existing resume — original View/Download preserved exactly */}
+        {candidate.resume_url && !showResumeUpload && (
           <div className="space-y-3">
             <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
               <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -977,10 +1006,53 @@ export default function CandidateDetailView({
               </div>
             </div>
           </div>
-        ) : (
-          <p className="text-gray-500 text-center py-8">No resume uploaded</p>
+        )}
+
+        {/* No resume uploaded */}
+        {!candidate.resume_url && !showResumeUpload && (
+          <p className="text-gray-500 text-center py-4">No resume uploaded</p>
+        )}
+
+        {/* Upload section — shown when no resume exists OR Replace is clicked */}
+        {(!candidate.resume_url || showResumeUpload) && (
+          <div className={showResumeUpload ? 'mt-4 border border-blue-200 rounded-lg p-4 bg-blue-50' : ''}>
+            {showResumeUpload && (
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-medium text-blue-800">Upload new resume (will replace current)</p>
+                <button
+                  onClick={() => setShowResumeUpload(false)}
+                  className="text-blue-600 hover:text-blue-900 text-sm font-medium"
+                >
+                  ✕ Cancel
+                </button>
+              </div>
+            )}
+            <ResumeUpload
+              candidateId={candidate.id}
+              candidateName={candidate.full_name}
+              currentCandidateData={candidate}
+              onUploadComplete={handleUploadComplete}
+              jobId={candidate.job_id}
+              jobTitle={candidate.jobs?.job_title}
+              screenedBy={user?.id}
+            />
+          </div>
         )}
       </div>
+
+      {/* Match Score Panel — visible when candidate has an assigned job */}
+      {candidate.job_id && (
+        <div className="card">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Job Match Score</h3>
+          <MatchScorePanel
+            jobId={candidate.job_id}
+            jobTitle={candidate.jobs?.job_title}
+            candidateId={candidate.id}
+            screenedBy={user?.id}
+            autoRun={false}
+          />
+        </div>
+      )}
 
       {/* Timeline */}
       <div className="card">

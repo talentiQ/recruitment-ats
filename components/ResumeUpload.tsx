@@ -1,37 +1,22 @@
+// components/ResumeUpload.tsx
 'use client'
 
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { parseResumeLocally, LocalParsedResume } from '@/lib/localResumeParser'
-import mammoth from 'mammoth'
+import { LocalParsedResume } from '@/lib/localResumeParser'
+import { parseResumeWithAI } from '@/lib/resumeExtractor'
+import MatchScorePanel from '@/components/MatchScorePanel'
 
 interface ResumeUploadProps {
   candidateId: string
   candidateName: string
   currentCandidateData: any
   onUploadComplete: (parsedData: LocalParsedResume) => void
-}
-
-// ─── Text extraction ──────────────────────────────────────────────────────────
-
-async function extractTextFromFile(file: File): Promise<string> {
-  // DOCX → mammoth
-  if (
-    file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    file.name.endsWith('.docx')
-  ) {
-    const arrayBuffer = await file.arrayBuffer()
-    const result = await mammoth.extractRawText({ arrayBuffer })
-    return result.value
-  }
-
-  // PDF / TXT → plain text read
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => resolve((e.target?.result as string) ?? '')
-    reader.onerror = () => reject(new Error('Failed to read file'))
-    reader.readAsText(file)
-  })
+  // ── NEW: optional match scoring props ──────────────────────────────────────
+  // Pass these from the candidate profile page to enable match scoring
+  jobId?:      string   // candidate's job_id
+  jobTitle?:   string   // job title for display
+  screenedBy?: string   // logged-in user id
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -41,12 +26,22 @@ export default function ResumeUpload({
   candidateName,
   currentCandidateData,
   onUploadComplete,
+  jobId,
+  jobTitle,
+  screenedBy,
 }: ResumeUploadProps) {
-  const [uploading, setUploading]       = useState(false)
-  const [parsing, setParsing]           = useState(false)
-  const [progress, setProgress]         = useState(0)
-  const [parsedData, setParsedData]     = useState<LocalParsedResume | null>(null)
+  const [uploading, setUploading]           = useState(false)
+  const [parsing, setParsing]               = useState(false)
+  const [progress, setProgress]             = useState(0)
+  const [parsedData, setParsedData]         = useState<LocalParsedResume | null>(null)
   const [showParsedData, setShowParsedData] = useState(false)
+
+  // ── NEW: after successful upload, pass parsed data to MatchScorePanel ──────
+  const [matchData, setMatchData] = useState<{
+    skills: string[]
+    total_experience: number | null
+    expected_ctc: number | null
+  } | null>(null)
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -71,18 +66,17 @@ export default function ResumeUpload({
     setProgress(5)
 
     try {
-      // ── Step 1: Extract text then parse ─────────────────────────────────────
+      // ── Step 1: Parse via unified API (same path as AddCandidateForm) ────────
       setParsing(true)
       setProgress(15)
 
-      const resumeText = await extractTextFromFile(file)   // FIX: extract first
-      const parsed = parseResumeLocally(resumeText)        // FIX: correct fn name + pass string
+      const parsed = await parseResumeWithAI(file)
 
       setProgress(30)
       setParsedData(parsed)
       setParsing(false)
 
-      // ── Step 2: Upload to Supabase Storage ───────────────────────────────────
+      // ── Step 2: Upload to Supabase Storage ──────────────────────────────────
       const fileExt  = file.name.split('.').pop()
       const fileName = `${candidateId}_${Date.now()}.${fileExt}`
       const filePath = `resumes/${fileName}`
@@ -102,7 +96,7 @@ export default function ResumeUpload({
 
       setProgress(80)
 
-      // ── Step 3: Update candidate record ──────────────────────────────────────
+      // ── Step 3: Update candidate record ────────────────────────────────────
       const updateData: Record<string, any> = {
         resume_url:          urlData.publicUrl,
         resume_file_name:    file.name,
@@ -111,20 +105,16 @@ export default function ResumeUpload({
         resume_parsed:       true,
         resume_parse_date:   new Date().toISOString(),
         last_activity_date:  new Date().toISOString(),
-
-        // FIX: use correct field names from LocalParsedResume
         parsed_skills:       parsed.skills,
         education_level:     parsed.education_level,
         education_degree:    parsed.education_degree,
         education_field:     parsed.education_field,
         education_institution: parsed.education_institution,
         sector:              parsed.sector,
-
-        // Auto-fill only if not already present on the candidate record
         ...(parsed.email        && !currentCandidateData.email             && { email: parsed.email }),
         ...(parsed.phone        && !currentCandidateData.phone             && { phone: parsed.phone }),
-        ...(parsed.current_location && !currentCandidateData.current_location && { current_location: parsed.current_location }), // FIX: was parsed.location
-        ...(parsed.date_of_birth && !currentCandidateData.date_of_birth   && { date_of_birth: parsed.date_of_birth }),           // FIX: was parsed.dateOfBirth
+        ...(parsed.current_location && !currentCandidateData.current_location && { current_location: parsed.current_location }),
+        ...(parsed.date_of_birth && !currentCandidateData.date_of_birth   && { date_of_birth: parsed.date_of_birth }),
         ...(parsed.gender       && !currentCandidateData.gender            && { gender: parsed.gender }),
         ...(parsed.current_company && !currentCandidateData.current_company && { current_company: parsed.current_company }),
         ...(parsed.current_designation && !currentCandidateData.current_designation && { current_designation: parsed.current_designation }),
@@ -142,7 +132,7 @@ export default function ResumeUpload({
 
       setProgress(90)
 
-      // ── Step 4: Timeline entry ────────────────────────────────────────────────
+      // ── Step 4: Timeline entry ──────────────────────────────────────────────
       const userData = JSON.parse(localStorage.getItem('user') || '{}')
 
       await supabase.from('candidate_timeline').insert([{
@@ -163,6 +153,13 @@ export default function ResumeUpload({
       setProgress(100)
       setShowParsedData(true)
 
+      // ── NEW: set match data — triggers MatchScorePanel auto-run ────────────
+      setMatchData({
+        skills:           parsed.skills,
+        total_experience: parsed.total_experience ?? null,
+        expected_ctc:     parsed.expected_ctc     ?? null,
+      })
+
       setTimeout(() => {
         alert('✅ Resume uploaded and parsed successfully!')
         onUploadComplete(parsed)
@@ -180,6 +177,7 @@ export default function ResumeUpload({
 
   return (
     <div className="space-y-4">
+      {/* Upload Input */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Upload Resume (PDF, Word, or Text)
@@ -199,6 +197,7 @@ export default function ResumeUpload({
         />
       </div>
 
+      {/* Progress bar */}
       {uploading && (
         <div className="space-y-2">
           <div className="flex justify-between text-sm text-gray-600">
@@ -214,16 +213,16 @@ export default function ResumeUpload({
         </div>
       )}
 
+      {/* Parsed Data Summary */}
       {showParsedData && parsedData && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <h4 className="font-semibold text-green-900 mb-3">
-            ✅ Parsed Information from Resume
+            ✅ Parsed Information
             <span className="ml-2 text-xs font-normal text-green-700">
               ({Math.round(parsedData.confidence * 100)}% confidence)
             </span>
           </h4>
           <div className="space-y-2 text-sm">
-
             {parsedData.skills.length > 0 && (
               <div>
                 <span className="font-medium text-gray-700">Skills Found:</span>
@@ -241,14 +240,6 @@ export default function ResumeUpload({
                 </div>
               </div>
             )}
-
-            {parsedData.email && (
-              <div><span className="font-medium text-gray-700">Email:</span>{' '}{parsedData.email}</div>
-            )}
-            {parsedData.phone && (
-              <div><span className="font-medium text-gray-700">Phone:</span>{' '}{parsedData.phone}</div>
-            )}
-            {/* FIX: was parsed.location → parsed.current_location */}
             {parsedData.current_location && (
               <div><span className="font-medium text-gray-700">Location:</span>{' '}{parsedData.current_location}</div>
             )}
@@ -268,9 +259,25 @@ export default function ResumeUpload({
                   .filter(Boolean).join(' — ')}
               </div>
             )}
-            {/* NOTE: linkedIn / github / languages are NOT in localResumeParser v4 */}
           </div>
         </div>
+      )}
+
+      {/* ── NEW: MatchScorePanel ───────────────────────────────────────────────
+          Persistent mode: uses candidateId — loads cached score or lets user score.
+          If parsedData was just uploaded AND jobId is available, auto-runs once.
+          If no jobId is passed, panel shows "Select a job to enable scoring". */}
+      {jobId && (
+        <MatchScorePanel
+          jobId={jobId}
+          jobTitle={jobTitle}
+          candidateId={candidateId}
+          screenedBy={screenedBy}
+          // After fresh upload, feed parsedData so panel can score immediately
+          // even before the DB record refresh
+          parsedData={matchData}
+          autoRun={!!matchData}
+        />
       )}
     </div>
   )

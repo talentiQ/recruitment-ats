@@ -1,4 +1,4 @@
-// lib/localResumeParser.ts  v4 — fixed for actual mammoth output
+// lib/localResumeParser.ts  v5 — added 'personal statement' + common heading variants to SECTION_HEADERS
 
 export interface LocalParsedResume {
   full_name: string
@@ -23,6 +23,11 @@ export interface LocalParsedResume {
 }
 
 const SECTION_HEADERS = new Set([
+  // ── ADDED in v5 ────────────────────────────────────────────────────────────
+  'personal statement','about me','about','career profile','professional profile',
+  'executive summary','executive profile','introduction','bio','profile summary',
+  'curriculum vitae','resume','cv',
+  // ── existing ───────────────────────────────────────────────────────────────
   'key skills','technical skills','core skills','skills','work experience',
   'experience','education','employment','profile','summary','objective',
   'career summary','professional summary','personal details','personal information',
@@ -50,10 +55,9 @@ const SKILL_MAP = new Map<string, string>([
   ['lateral hiring','HR'],['headhunting','HR'],['executive search','HR'],
   ['talent mapping','HR'],['joining formalities','HR'],['background verification','HR'],
   ['candidate experience','HR'],['job portals','HR'],
-  // Multi-word compound skills from Shikha's CV bullets
   ['client & stakeholder management','HR'],['market mapping & talent intelligence','HR'],
   ['niche & leadership hiring','HR'],['offer management & negotiations','HR'],
-  ['ats tracking & reporting','HR'],['recruitment strategy','HR'],
+  ['ats tracking & reporting','HR'],
   // IT
   ['java','IT'],['python','IT'],['javascript','IT'],['typescript','IT'],['react','IT'],
   ['angular','IT'],['node.js','IT'],['aws','IT'],['azure','IT'],['gcp','IT'],
@@ -142,13 +146,17 @@ function extractPhone(text: string): string {
 
 function extractName(text: string): string {
   const lines = getLines(text)
-  for (const line of lines.slice(0,20)) {
+
+  // Pass 1: explicit "Name: ..." label
+  for (const line of lines.slice(0, 20)) {
     const m = line.match(/^(?:name|full\s*name)\s*[:\-]\s*(.+)/i)
     if (m?.[1]) {
       const n = m[1].trim()
-      if (n.length>2 && n.length<50 && !n.includes('@') && !isSectionHeader(n)) return toTitleCase(n)
+      if (n.length > 2 && n.length < 50 && !n.includes('@') && !isSectionHeader(n)) return toTitleCase(n)
     }
   }
+
+  // Pass 2: ALL-CAPS 2-4 word line in first 15 lines
   for (let i = 0; i < Math.min(15, lines.length); i++) {
     const line = lines[i]
     if (line.includes('@') || /\d/.test(line) || line.length > 40 || line.length < 3) continue
@@ -158,11 +166,15 @@ function extractName(text: string): string {
     if (words.length >= 2 && words.length <= 4 && words.every(w => /^[A-Z]{2,}$/.test(w)))
       return words.map(w => toTitleCase(w)).join(' ')
   }
+
+  // Pass 3: Title-case 2-4 word line — SKIP if it matches a section header pattern
   for (let i = 0; i < Math.min(12, lines.length); i++) {
     const line = lines[i]
     if (line.includes('@') || /\d{3,}/.test(line) || line.length > 55 || line.length < 3) continue
     if (isSectionHeader(line)) continue
-    if (/www\.|http|linkedin|github|profile|summary/i.test(line)) continue
+    // ── v5 guard: skip lines that look like sentence fragments ──────────────
+    if (/[.,;:!?]/.test(line)) continue
+    if (/www\.|http|linkedin|github|profile|summary|statement|about/i.test(line)) continue
     const words = line.split(/\s+/)
     if (words.length >= 2 && words.length <= 4 && words.every(w => /^[A-Z][a-z]{1,}$/.test(w) || /^[A-Z]{2,5}$/.test(w)))
       return line
@@ -179,7 +191,7 @@ function extractExperience(text: string): number | null {
     const m = text.match(p); if (m) { const v=parseFloat(m[1]); if (v>0&&v<50) return v }
   }
   const months = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec'
-  const ranges = [...text.matchAll(new RegExp(`(${months})\\s+(\\d{4})\\s*[\u2013\\-\u2014]\\s*(?:Present|${months}\\s+\\d{4})`, 'gi'))]
+  const ranges = [...text.matchAll(new RegExp(`(${months})\\s+(\\d{4})\\s*[–\\-—]\\s*(?:Present|${months}\\s+\\d{4})`, 'gi'))]
   if (ranges.length > 0) {
     const current = new Date().getFullYear(); let earliest = current
     for (const m of ranges) { const yr=parseInt(m[2]); if (yr<earliest&&yr>1970) earliest=yr }
@@ -268,8 +280,8 @@ function extractEducation(text: string) {
     'mca':{level:'Master',degree:'MCA'},'m.tech':{level:'Master',degree:'M.Tech'},
     'm.sc':{level:'Master',degree:'M.Sc'},'m.com':{level:'Master',degree:'M.Com'},
     'm.e':{level:'Master',degree:'M.E'},'m.a':{level:'Master',degree:'M.A'},
-    'pg \u2013':{level:'Master',degree:'PG'},'pg -':{level:'Master',degree:'PG'},
-    'pg \u2014':{level:'Master',degree:'PG'},'pg\u2013':{level:'Master',degree:'PG'},
+    'pg –':{level:'Master',degree:'PG'},'pg -':{level:'Master',degree:'PG'},
+    'pg —':{level:'Master',degree:'PG'},'pg–':{level:'Master',degree:'PG'},
     'post graduate':{level:'Master',degree:'Post Graduate'},
     'phd':{level:'PhD',degree:'PhD'},'ph.d':{level:'PhD',degree:'PhD'},
     'b.tech':{level:'Bachelor',degree:'B.Tech'},'b.e':{level:'Bachelor',degree:'B.E'},
@@ -280,7 +292,7 @@ function extractEducation(text: string) {
   const lower = text.toLowerCase()
   let level='', degree='', field='', institution=''
   const ordered = ['phd','ph.d','mba','pgdm','mca','m.tech','m.sc','m.com','m.e','m.a',
-    'pg \u2013','pg -','pg \u2014','pg\u2013','post graduate',
+    'pg –','pg -','pg —','pg–','post graduate',
     'b.tech','b.e','bca','bba','b.sc','b.com','b.a','diploma']
   for (const key of ordered) { if (lower.includes(key)) { level=degreeMap[key].level; degree=degreeMap[key].degree; break } }
 
@@ -292,13 +304,12 @@ function extractEducation(text: string) {
     const instStart = trimmed.search(instKeywords)
     if (instStart < 0) continue
     const beforeInst = trimmed.slice(0, instStart).trim()
-    // Strip degree prefix to get field
     const fieldRaw = beforeInst
-      .replace(/^(?:PG|MBA|PGDM|B\.Com|B\.Tech|B\.Sc|B\.A|BCA|BBA|B\.E|M\.Com|M\.A|M\.Sc)\s*[\u2013\-\u2014\u2012]?\s*/i, '')
+      .replace(/^(?:PG|MBA|PGDM|B\.Com|B\.Tech|B\.Sc|B\.A|BCA|BBA|B\.E|M\.Com|M\.A|M\.Sc)\s*[–\-—‒]?\s*/i, '')
       .trim()
     if (fieldRaw.length > 2 && fieldRaw.length < 50 && !/\d{4}/.test(fieldRaw) &&
         !instKeywords.test(fieldRaw)) field = fieldRaw
-    const instRaw = trimmed.slice(instStart).replace(/\s*\(\d{4}[\s\u2013\-\u2014]*\d{4}\)/, '').trim()
+    const instRaw = trimmed.slice(instStart).replace(/\s*\(\d{4}[\s–\-—]*\d{4}\)/, '').trim()
     if (instRaw.length > 3 && instRaw.length < 100) institution = instRaw
     if (field || institution) break
   }
@@ -316,20 +327,15 @@ function extractSkills(text: string): { skills: string[]; sector: string } {
   const found = new Map<string, string>()
   const lines = text.split('\n')
 
-  // KEY FIX: bullet char is on its own line, skill text is on the NEXT line
-  // Pattern: lines[i] = "•"  and  lines[i+1] = "Recruitment Strategy"
   for (let i = 0; i < lines.length - 1; i++) {
     const trimmed = lines[i].trim()
-    // Standalone bullet char OR bullet+text on same line
-    if (trimmed === '•' || trimmed === '-' || trimmed === '*' || trimmed === '\u25aa' || trimmed === '\u25b8') {
-      // Skill is on the next non-empty line
+    if (trimmed === '•' || trimmed === '-' || trimmed === '*' || trimmed === '▪' || trimmed === '▸') {
       const nextLine = lines[i+1]?.trim() || ''
       if (nextLine.length > 2 && nextLine.length < 80 && !isSectionHeader(nextLine)) {
         const lo = nextLine.toLowerCase()
         if (SKILL_MAP.has(lo)) {
           found.set(lo, SKILL_MAP.get(lo)!)
         } else {
-          // partial match
           for (const [skill, sector] of SKILL_MAP.entries()) {
             if (skill.length < 4) continue
             if (lo === skill || lo.includes(skill) || skill.includes(lo)) {
@@ -338,9 +344,8 @@ function extractSkills(text: string): { skills: string[]; sector: string } {
           }
         }
       }
-    } else if (/^[•\-\*\u25aa\u25b8]\s+.{2,}/.test(trimmed)) {
-      // Bullet + text on same line
-      const content = trimmed.replace(/^[•\-\*\u25aa\u25b8]\s+/, '').trim()
+    } else if (/^[•\-\*▪▸]\s+.{2,}/.test(trimmed)) {
+      const content = trimmed.replace(/^[•\-\*▪▸]\s+/, '').trim()
       const lo = content.toLowerCase()
       if (SKILL_MAP.has(lo)) found.set(lo, SKILL_MAP.get(lo)!)
       else {
@@ -352,7 +357,6 @@ function extractSkills(text: string): { skills: string[]; sector: string } {
     }
   }
 
-  // Full-text scan for skills not caught by bullets
   const fullLower = text.toLowerCase()
   const sorted = Array.from(SKILL_MAP.entries()).sort((a,b)=>b[0].length-a[0].length)
   for (const [skill, sector] of sorted) {
