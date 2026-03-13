@@ -58,6 +58,7 @@ export default function CandidateTimeline({ candidateId }: CandidateTimelineProp
       submitted_to_client: { color: 'bg-purple-500', symbol: 'S' },
       interview_scheduled: { color: 'bg-indigo-500', symbol: 'I' },
       interview_completed: { color: 'bg-green-500', symbol: '✓' },
+      interview_rejected: { color: 'bg-red-500', symbol: '✗' },
       interview_feedback: { color: 'bg-teal-500', symbol: 'F' },
       offer_made: { color: 'bg-emerald-500', symbol: '$' },
       offer_accepted: { color: 'bg-lime-500', symbol: '✓' },

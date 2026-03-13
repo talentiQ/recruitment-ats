@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase as supabaseAdmin } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
+import { PIPELINE_STAGES, getStageLabel } from '@/lib/pipelineStages'
 
 interface DashboardStats {
   totalRevenueEarned: number
@@ -470,15 +471,7 @@ export default function ManagementDashboard() {
   }
 
   const loadPipelineData = async () => {
-    const stages = [
-      { key: 'sourced', label: 'Sourced' },
-      { key: 'screening', label: 'Screening' },
-      { key: 'interview_scheduled', label: 'Interview Scheduled' },
-      { key: 'interview_completed', label: 'Interview Completed' },
-      { key: 'offer_extended', label: 'Offer Extended' },
-      { key: 'offer_accepted', label: 'Offer Accepted' },
-      { key: 'joined', label: 'Joined' },
-    ]
+  const stages = PIPELINE_STAGES.map(key => ({ key, label: getStageLabel(key) }))
 
     const pipelinePromises = stages.map(async (stage) => {
       const { count } = await supabaseAdmin
@@ -617,8 +610,8 @@ export default function ManagementDashboard() {
         const rate = fromCount && fromCount > 0 ? Math.round((toCount! / fromCount) * 100) : 0
 
         return {
-          from: from.replace(/_/g, ' '),
-          to: to.replace(/_/g, ' '),
+          from: getStageLabel(from),
+          to: getStageLabel(to),
           rate,
           count: toCount || 0
         }

@@ -45,13 +45,10 @@ export default function RecruiterDashboard() {
     }
   }, [])
 
-  // FIX: Load monthly target FIRST, then pass its value to loadRevenueStats
-  // This prevents the race condition where both were running in parallel via Promise.all
   const loadDashboard = async (userId: string) => {
     setLoading(true)
     try {
       const target = await loadMonthlyTarget(userId)
-
       await Promise.all([
         loadStats(userId),
         loadRevenueStats(userId, target),
@@ -74,38 +71,50 @@ export default function RecruiterDashboard() {
 
     if (!data) return
 
-    const now = new Date()
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+    const now        = new Date()
+    const weekAgo    = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
 
     setStats({
-      total: data.length,
-      sourced: data.filter(c => c.current_stage === 'sourced').length,
+      total:    data.length,
+      sourced:  data.filter(c => c.current_stage === 'sourced').length,
       screening: data.filter(c => c.current_stage === 'screening').length,
-      interview: data.filter(c => c.current_stage.includes('interview')).length,
-      offered: data.filter(c => c.current_stage.includes('offer')).length,
+
+      // ✅ FIX: explicit stages only — excludes interview_rejected
+      interview: data.filter(c =>
+        ['interview_scheduled', 'interview_completed'].includes(c.current_stage)
+      ).length,
+
+      // ✅ FIX: explicit stages only — excludes offer_rejected
+      offered: data.filter(c =>
+        ['offer_extended', 'offer_accepted'].includes(c.current_stage)
+      ).length,
+
       joined: data.filter(c => c.current_stage === 'joined').length,
-      thisMonth: data.filter(c => c.date_joined && new Date(c.date_joined) >= monthStart).length,
-      thisWeek: data.filter(c => c.date_sourced && new Date(c.date_sourced) >= weekAgo).length,
+
+      thisMonth: data.filter(c =>
+        c.date_joined && new Date(c.date_joined) >= monthStart
+      ).length,
+
+      thisWeek: data.filter(c =>
+        c.date_sourced && new Date(c.date_sourced) >= weekAgo
+      ).length,
+
       offersAccepted: data.filter(c => c.current_stage === 'offer_accepted').length,
     })
   }
 
-  // FIX: Accept userMonthlyTarget as a parameter instead of reading from state
-  // (state is not guaranteed to be set yet when this runs)
   const loadRevenueStats = async (userId: string, userMonthlyTarget: number) => {
-    const now = new Date()
-    const currentYear = now.getFullYear()
-    const currentMonth = now.getMonth() + 1 // 1-12
+    const now          = new Date()
+    const currentYear  = now.getFullYear()
+    const currentMonth = now.getMonth() + 1
 
-    // Calculate business quarter (Apr-Mar fiscal year)
     let businessQuarter: number
-    if (currentMonth >= 4 && currentMonth <= 6) businessQuarter = 1
-    else if (currentMonth >= 7 && currentMonth <= 9) businessQuarter = 2
+    if (currentMonth >= 4 && currentMonth <= 6)    businessQuarter = 1
+    else if (currentMonth >= 7 && currentMonth <= 9)   businessQuarter = 2
     else if (currentMonth >= 10 && currentMonth <= 12) businessQuarter = 3
     else businessQuarter = 4
 
-    // Get current month revenue
     const { data: monthlyData } = await supabase
       .from('candidates')
       .select('revenue_earned')
@@ -114,38 +123,24 @@ export default function RecruiterDashboard() {
       .gte('date_joined', `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`)
       .lt('date_joined', `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`)
 
-    const monthlyRevenueLakhs = monthlyData?.reduce(
-    (sum, c) => sum + (c.revenue_earned || 0),0) || 0
-    const monthlyRevenue = monthlyRevenueLakhs
+    const monthlyRevenue  = monthlyData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
     const monthlyJoinings = monthlyData?.length || 0
-    
 
-    // Get quarterly revenue
-    let quarterStartMonth: number
-    let quarterEndMonth: number
-    let quarterStartYear: number
-    let quarterEndYear: number
+    let quarterStartMonth: number, quarterEndMonth: number
+    let quarterStartYear:  number, quarterEndYear:  number
 
     if (businessQuarter === 1) {
-      quarterStartMonth = 4
-      quarterEndMonth = 7
-      quarterStartYear = currentYear
-      quarterEndYear = currentYear
+      quarterStartMonth = 4;  quarterEndMonth = 7
+      quarterStartYear  = currentYear; quarterEndYear = currentYear
     } else if (businessQuarter === 2) {
-      quarterStartMonth = 7
-      quarterEndMonth = 10
-      quarterStartYear = currentYear
-      quarterEndYear = currentYear
+      quarterStartMonth = 7;  quarterEndMonth = 10
+      quarterStartYear  = currentYear; quarterEndYear = currentYear
     } else if (businessQuarter === 3) {
-      quarterStartMonth = 10
-      quarterEndMonth = 1
-      quarterStartYear = currentYear
-      quarterEndYear = currentYear + 1
+      quarterStartMonth = 10; quarterEndMonth = 1
+      quarterStartYear  = currentYear; quarterEndYear = currentYear + 1
     } else {
-      quarterStartMonth = 1
-      quarterEndMonth = 4
-      quarterStartYear = currentYear
-      quarterEndYear = currentYear
+      quarterStartMonth = 1;  quarterEndMonth = 4
+      quarterStartYear  = currentYear; quarterEndYear = currentYear
     }
 
     const { data: quarterlyData } = await supabase
@@ -156,12 +151,9 @@ export default function RecruiterDashboard() {
       .gte('date_joined', `${quarterStartYear}-${String(quarterStartMonth).padStart(2, '0')}-01`)
       .lt('date_joined', `${quarterEndYear}-${String(quarterEndMonth).padStart(2, '0')}-01`)
 
-    const quarterlyRevenueLakhs = quarterlyData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
-    const quarterlyRevenue = quarterlyRevenueLakhs
-    
-    // Get annual revenue (Apr to Mar fiscal year)
-    const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
+    const quarterlyRevenue = quarterlyData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
 
+    const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
     const { data: annualData } = await supabase
       .from('candidates')
       .select('revenue_earned')
@@ -170,11 +162,11 @@ export default function RecruiterDashboard() {
       .gte('date_joined', `${fiscalYearStart}-04-01`)
       .lt('date_joined', `${fiscalYearStart + 1}-04-01`)
 
-    const annualRevenueLakhs = annualData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
-    const annualRevenue = annualRevenueLakhs
+    const annualRevenue = annualData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
+
     setRevenueStats({
       monthlyRevenue,
-      monthlyTarget: userMonthlyTarget,   // FIX: use the directly passed value
+      monthlyTarget:   userMonthlyTarget,
       quarterlyRevenue,
       annualRevenue,
       monthlyJoinings,
@@ -182,8 +174,6 @@ export default function RecruiterDashboard() {
     })
   }
 
-  // Fetches monthly_target directly from the user's row in the users table.
-  // No month_year filter — monthly_target is a plain column on the user record.
   const loadMonthlyTarget = async (userId: string): Promise<number> => {
     const { data, error } = await supabase
       .from('users')
@@ -192,16 +182,8 @@ export default function RecruiterDashboard() {
       .single()
 
     console.log('Monthly target result — data:', data, 'error:', error)
-
-  if (error) {
-    console.error('Monthly target error:', error)
-    return 0
-  }
-
-  if (data && data.monthly_target !== null) {
-    return Number(data.monthly_target)
-  }
-
+    if (error) { console.error('Monthly target error:', error); return 0 }
+    if (data && data.monthly_target !== null) return Number(data.monthly_target)
     return 0
   }
 
@@ -212,13 +194,12 @@ export default function RecruiterDashboard() {
 
       if (data && !error) {
         setAiPrediction(data)
-
         await supabase.from('ai_predictions').insert([{
           user_id: userId,
           predicted_joinings_this_month: data.predicted_joinings,
-          predicted_target_achievement: (data.predicted_joinings / 2 * 100),
+          predicted_target_achievement:  (data.predicted_joinings / 2 * 100),
           confidence_score: data.confidence,
-          factors: data.factors,
+          factors:          data.factors,
         }])
       }
     } catch (error) {
@@ -236,19 +217,13 @@ export default function RecruiterDashboard() {
 
     if (data) {
       setAchievements(data)
-
       const unviewed = data.filter(a => !a.is_viewed)
       if (unviewed.length > 0) {
         const random = unviewed[Math.floor(Math.random() * unviewed.length)]
         setFeaturedAchievement(random)
-
-        await supabase
-          .from('recruiter_achievements')
-          .update({ is_viewed: true })
-          .eq('id', random.id)
+        await supabase.from('recruiter_achievements').update({ is_viewed: true }).eq('id', random.id)
       } else if (data.length > 0) {
-        const random = data[Math.floor(Math.random() * data.length)]
-        setFeaturedAchievement(random)
+        setFeaturedAchievement(data[Math.floor(Math.random() * data.length)])
       }
     }
   }
@@ -256,14 +231,7 @@ export default function RecruiterDashboard() {
   const loadRecentCandidates = async (userId: string) => {
     const { data } = await supabase
       .from('candidates')
-      .select(`
-        *,
-        jobs (
-          job_title,
-          job_code,
-          clients (company_name)
-        )
-      `)
+      .select(`*, jobs ( job_title, job_code, clients (company_name) )`)
       .eq('assigned_to', userId)
       .order('date_sourced', { ascending: false })
       .limit(5)
@@ -273,10 +241,10 @@ export default function RecruiterDashboard() {
 
   const getAchievementBadgeStyle = (color: string) => {
     const styles: { [key: string]: string } = {
-      gold: 'from-yellow-400 to-yellow-600',
+      gold:   'from-yellow-400 to-yellow-600',
       silver: 'from-gray-300 to-gray-500',
       bronze: 'from-orange-400 to-orange-600',
-      blue: 'from-blue-400 to-blue-600',
+      blue:   'from-blue-400 to-blue-600',
     }
     return styles[color] || 'from-blue-400 to-blue-600'
   }
@@ -285,13 +253,11 @@ export default function RecruiterDashboard() {
     if (percentage >= 200) return 'bg-purple-600'
     if (percentage >= 150) return 'bg-green-600'
     if (percentage >= 100) return 'bg-blue-600'
-    if (percentage >= 75) return 'bg-yellow-600'
+    if (percentage >= 75)  return 'bg-yellow-600'
     return 'bg-gray-400'
   }
 
-  const formatRevenue = (amount: number) => {
-    return `Rs. ${(amount).toLocaleString('en-IN')}`
-  }
+  const formatRevenue = (amount: number) => `Rs. ${amount.toLocaleString('en-IN')}`
 
   if (loading) {
     return (
@@ -310,30 +276,22 @@ export default function RecruiterDashboard() {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
-       {/* ✅ STALE CANDIDATES BANNER — shows automatically if any candidate is 7+ days stale */}
         <StaleCandidatesBanner userId={user?.id} userRole={user?.role} />
 
-        {/* Welcome Section with Featured Achievement */}
+        {/* Welcome */}
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Welcome Back, {user?.full_name?.split(' ')[0]}! 👋
           </h1>
-
           {featuredAchievement && (
             <div className={`inline-block bg-gradient-to-r ${getAchievementBadgeStyle(featuredAchievement.badge_color)} text-white rounded-lg p-6 mt-3 shadow-lg`}>
               <div className="flex items-center gap-4 justify-center">
                 <span className="text-5xl">{featuredAchievement.badge_icon}</span>
                 <div className="text-left">
-                  <div className="text-2xl font-bold">
-                    {featuredAchievement.achievement_title}
-                  </div>
-                  <div className="text-sm opacity-90">
-                    {featuredAchievement.achievement_description}
-                  </div>
+                  <div className="text-2xl font-bold">{featuredAchievement.achievement_title}</div>
+                  <div className="text-sm opacity-90">{featuredAchievement.achievement_description}</div>
                   {featuredAchievement.month_year && (
-                    <div className="text-xs opacity-75 mt-1">
-                      {featuredAchievement.month_year}
-                    </div>
+                    <div className="text-xs opacity-75 mt-1">{featuredAchievement.month_year}</div>
                   )}
                 </div>
               </div>
@@ -343,28 +301,19 @@ export default function RecruiterDashboard() {
 
         {/* Monthly Target & AI Prediction */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Monthly Target Progress */}
           <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
-              📊 Monthly Target Progress
-            </h3>
-
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">📊 Monthly Target Progress</h3>
             <div className="space-y-4">
-              {/* Revenue Section */}
               <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-4 border-2 border-blue-200">
                 <div className="text-center mb-3">
                   <div className="text-sm text-blue-700 mb-1">Revenue This Month</div>
-                  <div className="text-3xl font-bold text-blue-900">
-                    {formatRevenue(revenueStats.monthlyRevenue)}
-                  </div>
+                  <div className="text-3xl font-bold text-blue-900">{formatRevenue(revenueStats.monthlyRevenue)}</div>
                   <div className="text-xs text-blue-600 mt-1">
                     {revenueStats.monthlyTarget > 0
                       ? `Target: ${formatRevenue(revenueStats.monthlyTarget)}`
                       : 'No target set for this month'}
                   </div>
                 </div>
-
-                {/* Progress Bar — only show if target exists */}
                 {revenueStats.monthlyTarget > 0 && (
                   <div className="relative">
                     <div className="w-full bg-blue-200 rounded-full h-6">
@@ -376,55 +325,40 @@ export default function RecruiterDashboard() {
                       </div>
                     </div>
                     {achievementPercentage < 20 && (
-                      <div className="text-center mt-1 text-sm font-bold text-blue-700">
-                        {Math.round(achievementPercentage)}%
-                      </div>
+                      <div className="text-center mt-1 text-sm font-bold text-blue-700">{Math.round(achievementPercentage)}%</div>
                     )}
                   </div>
                 )}
-
-                {/* Achievement Badge */}
                 {revenueStats.targetAchieved && (
                   <div className="mt-3 bg-green-100 border-2 border-green-500 rounded-lg p-2 text-center">
                     <div className="text-green-800 font-bold flex items-center justify-center gap-2">
-                      <span className="text-2xl">🎯</span>
-                      <span>Target Achieved!</span>
+                      <span className="text-2xl">🎯</span><span>Target Achieved!</span>
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Joinings & Quarterly Stats */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-purple-50 rounded-lg p-3 text-center border border-purple-200">
-                  <div className="text-2xl font-bold text-purple-900">
-                    {revenueStats.monthlyJoinings}
-                  </div>
+                  <div className="text-2xl font-bold text-purple-900">{revenueStats.monthlyJoinings}</div>
                   <div className="text-xs text-purple-700 mt-1">Joinings</div>
                 </div>
                 <div className="bg-green-50 rounded-lg p-3 text-center border border-green-200">
-                  <div className="text-2xl font-bold text-green-900">
-                    {formatRevenue(revenueStats.quarterlyRevenue)}
-                  </div>
+                  <div className="text-2xl font-bold text-green-900">{formatRevenue(revenueStats.quarterlyRevenue)}</div>
                   <div className="text-xs text-green-700 mt-1">Quarterly</div>
                 </div>
               </div>
 
-              {/* Annual Revenue */}
               <div className="bg-gradient-to-br from-yellow-50 to-orange-50 rounded-lg p-4 text-center border-2 border-yellow-300">
                 <div className="text-sm text-orange-700 mb-1">Annual Revenue (FY)</div>
-                <div className="text-3xl font-bold text-orange-900">
-                  {formatRevenue(revenueStats.annualRevenue)}
-                </div>
+                <div className="text-3xl font-bold text-orange-900">{formatRevenue(revenueStats.annualRevenue)}</div>
                 <div className="text-xs text-orange-600 mt-1">
                   {new Date().getMonth() >= 3
                     ? `Apr ${new Date().getFullYear()} - Mar ${new Date().getFullYear() + 1}`
-                    : `Apr ${new Date().getFullYear() - 1} - Mar ${new Date().getFullYear()}`
-                  }
+                    : `Apr ${new Date().getFullYear() - 1} - Mar ${new Date().getFullYear()}`}
                 </div>
               </div>
 
-              {/* Achievement Tier Badges — only show if target exists */}
               {revenueStats.monthlyTarget > 0 && (
                 <div className="grid grid-cols-3 gap-2">
                   <div className={`text-center p-3 rounded-lg ${achievementPercentage >= 100 ? 'bg-blue-100 border-2 border-blue-500' : 'bg-gray-50'}`}>
@@ -447,24 +381,15 @@ export default function RecruiterDashboard() {
             </div>
           </div>
 
-          {/* AI Prediction */}
           <div className="card bg-gradient-to-br from-purple-50 to-blue-50 border-2 border-purple-200">
-            <h3 className="text-lg font-semibold text-purple-900 mb-4 text-center">
-              🤖 AI-Powered Prediction
-            </h3>
-
+            <h3 className="text-lg font-semibold text-purple-900 mb-4 text-center">🤖 AI-Powered Prediction</h3>
             {aiPrediction && (
               <div className="space-y-4">
                 <div className="text-center">
                   <div className="text-sm text-purple-700 mb-1">Predicted joinings by month-end</div>
-                  <div className="text-5xl font-bold text-purple-900 mb-1">
-                    {aiPrediction.predicted_joinings}
-                  </div>
-                  <div className="text-xs text-purple-600">
-                    Confidence: {(aiPrediction.confidence * 100).toFixed(0)}%
-                  </div>
+                  <div className="text-5xl font-bold text-purple-900 mb-1">{aiPrediction.predicted_joinings}</div>
+                  <div className="text-xs text-purple-600">Confidence: {(aiPrediction.confidence * 100).toFixed(0)}%</div>
                 </div>
-
                 <div className="bg-white rounded-lg p-4 space-y-2">
                   <div className="text-sm font-semibold text-gray-900 mb-2">Based on:</div>
                   <div className="grid grid-cols-2 gap-3 text-xs">
@@ -486,15 +411,11 @@ export default function RecruiterDashboard() {
                     </div>
                   </div>
                 </div>
-
                 {monthlyTarget && aiPrediction.predicted_joinings >= monthlyTarget?.target_joinings && (
                   <div className="bg-green-100 border border-green-300 rounded-lg p-3 text-center">
-                    <div className="text-sm font-bold text-green-900">
-                      🎯 You&apos;re on track to hit your target!
-                    </div>
+                    <div className="text-sm font-bold text-green-900">🎯 You&apos;re on track to hit your target!</div>
                   </div>
                 )}
-
                 {monthlyTarget && aiPrediction.predicted_joinings < monthlyTarget?.target_joinings && (
                   <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-3 text-center">
                     <div className="text-sm font-bold text-yellow-900">
@@ -507,25 +428,22 @@ export default function RecruiterDashboard() {
           </div>
         </div>
 
-        {/* Main Stats Grid */}
+        {/* Main Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="kpi-card text-center">
             <div className="kpi-title">Total Pipeline</div>
             <div className="kpi-value">{stats.total}</div>
           </div>
-
           <div className="kpi-card kpi-warning text-center">
             <div className="kpi-title">This Week</div>
             <div className="kpi-value">{stats.thisWeek}</div>
             <div className="text-xs text-gray-500">CVs Sourced</div>
           </div>
-
           <div className="kpi-card kpi-success text-center">
             <div className="kpi-title">This Month</div>
             <div className="kpi-value">{stats.thisMonth}</div>
             <div className="text-xs text-gray-500">Joinings</div>
           </div>
-
           <div className="kpi-card text-center">
             <div className="kpi-title">Offers Accepted</div>
             <div className="kpi-value">{stats.offersAccepted}</div>
@@ -533,11 +451,9 @@ export default function RecruiterDashboard() {
           </div>
         </div>
 
-        {/* Pipeline Stages */}
+        {/* Pipeline Breakdown */}
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
-            Pipeline Breakdown
-          </h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">Pipeline Breakdown</h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="text-center p-4 bg-gray-50 rounded-lg">
               <div className="text-2xl font-bold text-gray-700">{stats.sourced}</div>
@@ -545,7 +461,7 @@ export default function RecruiterDashboard() {
             </div>
             <div className="text-center p-4 bg-yellow-50 rounded-lg">
               <div className="text-2xl font-bold text-yellow-700">{stats.screening}</div>
-              <div className="text-xs text-yellow-600 mt-1">Screening</div>
+              <div className="text-xs text-yellow-600 mt-1">Sent to Client</div>
             </div>
             <div className="text-center p-4 bg-purple-50 rounded-lg">
               <div className="text-2xl font-bold text-purple-700">{stats.interview}</div>
@@ -565,26 +481,16 @@ export default function RecruiterDashboard() {
         {/* Recent Achievements */}
         {achievements.length > 0 && (
           <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
-              🏅 Recent Achievements
-            </h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">🏅 Recent Achievements</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {achievements.slice(0, 6).map(achievement => (
-                <div
-                  key={achievement.id}
-                  className={`bg-gradient-to-br ${getAchievementBadgeStyle(achievement.badge_color)} text-white rounded-lg p-4 text-center shadow-md`}
-                >
+                <div key={achievement.id}
+                  className={`bg-gradient-to-br ${getAchievementBadgeStyle(achievement.badge_color)} text-white rounded-lg p-4 text-center shadow-md`}>
                   <div className="text-4xl mb-2">{achievement.badge_icon}</div>
-                  <div className="font-bold mb-1 text-sm">
-                    {achievement.achievement_title}
-                  </div>
-                  <div className="text-xs opacity-90">
-                    {achievement.achievement_description}
-                  </div>
+                  <div className="font-bold mb-1 text-sm">{achievement.achievement_title}</div>
+                  <div className="text-xs opacity-90">{achievement.achievement_description}</div>
                   {achievement.month_year && (
-                    <div className="text-xs opacity-75 mt-2">
-                      {achievement.month_year}
-                    </div>
+                    <div className="text-xs opacity-75 mt-2">{achievement.month_year}</div>
                   )}
                 </div>
               ))}
@@ -595,54 +501,43 @@ export default function RecruiterDashboard() {
         {/* Recent Candidates */}
         <div className="card">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">
-              Recent Candidates
-            </h3>
-            <button
-              onClick={() => router.push('/recruiter/candidates')}
-              className="text-sm text-blue-600 hover:text-blue-800"
-            >
+            <h3 className="text-lg font-semibold text-gray-900">Recent Candidates</h3>
+            <button onClick={() => router.push('/recruiter/candidates')} className="text-sm text-blue-600 hover:text-blue-800">
               View All →
             </button>
           </div>
-
           {recentCandidates.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <p className="mb-3">No candidates yet</p>
-              <button
-                onClick={() => router.push('/recruiter/candidates/add')}
-                className="btn-primary"
-              >
+              <button onClick={() => router.push('/recruiter/candidates/add')} className="btn-primary">
                 Add Your First Candidate
               </button>
             </div>
           ) : (
             <div className="space-y-3">
               {recentCandidates.map(candidate => (
-                <div
-                  key={candidate.id}
+                <div key={candidate.id}
                   onClick={() => router.push(`/recruiter/candidates/${candidate.id}`)}
-                  className="p-3 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-sm cursor-pointer transition"
-                >
+                  className="p-3 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-sm cursor-pointer transition">
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900">
-                        {candidate.full_name}
-                      </div>
+                      <div className="font-medium text-gray-900">{candidate.full_name}</div>
                       <div className="text-sm text-gray-600">
                         {candidate.jobs?.job_title} • {candidate.jobs?.clients?.company_name}
                       </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {candidate.jobs?.job_code}
-                      </div>
+                      <div className="text-xs text-gray-500 mt-1">{candidate.jobs?.job_code}</div>
                     </div>
+                    {/* ✅ FIX: explicit stage checks — no .includes() */}
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      candidate.current_stage === 'joined' ? 'bg-green-100 text-green-700' :
-                      candidate.current_stage.includes('interview') ? 'bg-purple-100 text-purple-700' :
-                      candidate.current_stage.includes('offer') ? 'bg-indigo-100 text-indigo-700' :
-                      'bg-gray-100 text-gray-700'
+                      candidate.current_stage === 'joined'
+                        ? 'bg-green-100 text-green-700'
+                        : ['interview_scheduled', 'interview_completed'].includes(candidate.current_stage)
+                        ? 'bg-purple-100 text-purple-700'
+                        : ['offer_extended', 'offer_accepted'].includes(candidate.current_stage)
+                        ? 'bg-indigo-100 text-indigo-700'
+                        : 'bg-gray-100 text-gray-700'
                     }`}>
-                      {candidate.current_stage.replace('_', ' ')}
+                      {candidate.current_stage.replace(/_/g, ' ')}
                     </span>
                   </div>
                 </div>
@@ -653,35 +548,25 @@ export default function RecruiterDashboard() {
 
         {/* Quick Actions */}
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
-            Quick Actions
-          </h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">Quick Actions</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <button
-              onClick={() => router.push('/recruiter/candidates/add')}
-              className="p-4 bg-blue-50 hover:bg-blue-100 rounded-lg text-center transition"
-            >
+            <button onClick={() => router.push('/recruiter/candidates/add')}
+              className="p-4 bg-blue-50 hover:bg-blue-100 rounded-lg text-center transition">
               <div className="text-3xl mb-2">➕</div>
               <div className="font-medium text-blue-900">Add Candidate</div>
             </button>
-            <button
-              onClick={() => router.push('/recruiter/candidates')}
-              className="p-4 bg-purple-50 hover:bg-purple-100 rounded-lg text-center transition"
-            >
+            <button onClick={() => router.push('/recruiter/candidates')}
+              className="p-4 bg-purple-50 hover:bg-purple-100 rounded-lg text-center transition">
               <div className="text-3xl mb-2">📋</div>
               <div className="font-medium text-purple-900">View Pipeline</div>
             </button>
-            <button
-              onClick={() => router.push('/recruiter/jobs')}
-              className="p-4 bg-green-50 hover:bg-green-100 rounded-lg text-center transition"
-            >
+            <button onClick={() => router.push('/recruiter/jobs')}
+              className="p-4 bg-green-50 hover:bg-green-100 rounded-lg text-center transition">
               <div className="text-3xl mb-2">💼</div>
               <div className="font-medium text-green-900">My Jobs</div>
             </button>
-            <button
-              onClick={() => router.push('/recruiter/candidates?stage=interview')}
-              className="p-4 bg-orange-50 hover:bg-orange-100 rounded-lg text-center transition"
-            >
+            <button onClick={() => router.push('/recruiter/candidates?stage=interview')}
+              className="p-4 bg-orange-50 hover:bg-orange-100 rounded-lg text-center transition">
               <div className="text-3xl mb-2">📅</div>
               <div className="font-medium text-orange-900">Interviews</div>
             </button>

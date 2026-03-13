@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { PIPELINE_STAGES, getStageBadge, getStageLabel } from '@/lib/pipelineStages'
 
 export default function TLCandidatesPage() {
   const router = useRouter()
@@ -50,7 +51,6 @@ export default function TLCandidatesPage() {
   const loadCandidates = async () => {
     setLoading(true)
     try {
-      // Get team members under this TL
       const { data: teamData } = await supabase
         .from('users')
         .select('id')
@@ -98,21 +98,6 @@ export default function TLCandidatesPage() {
     }
   }
 
-  const getStatusBadge = (stage: string) => {
-    const badges: { [key: string]: string } = {
-      sourced: 'bg-gray-100 text-gray-800',
-      screening: 'bg-yellow-100 text-yellow-800',
-      interview_scheduled: 'bg-blue-100 text-blue-800',
-      interview_completed: 'bg-purple-100 text-purple-800',
-      offer_extended: 'bg-orange-100 text-orange-800',
-      offer_accepted: 'bg-green-100 text-green-800',
-      joined: 'bg-green-600 text-white',
-      rejected: 'bg-red-100 text-red-800',
-      dropped: 'bg-gray-100 text-gray-800',
-    }
-    return badges[stage] || 'bg-gray-100 text-gray-800'
-  }
-
   if (!user) {
     return (
       <DashboardLayout>
@@ -152,15 +137,9 @@ export default function TLCandidatesPage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Stage</label>
               <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="input">
                 <option value="all">All Stages</option>
-                <option value="sourced">Sourced</option>
-                <option value="screening">Screening</option>
-                <option value="interview_scheduled">Interview Scheduled</option>
-                <option value="interview_completed">Interview Completed</option>
-                <option value="offer_extended">Offer Extended</option>
-                <option value="offer_accepted">Offer Accepted</option>
-                <option value="joined">Joined</option>
-                <option value="rejected">Rejected</option>
-                <option value="dropped">Dropped</option>
+                {PIPELINE_STAGES.map(stage => (
+                  <option key={stage} value={stage}>{getStageLabel(stage)}</option>
+                ))}
               </select>
             </div>
             <div>
@@ -228,8 +207,8 @@ export default function TLCandidatesPage() {
                       <div className="text-xs text-gray-500">{candidate.jobs?.clients?.company_name || 'N/A'}</div>
                     </td>
                     <td>
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusBadge(candidate.current_stage)}`}>
-                        {candidate.current_stage?.replace(/_/g, ' ').toUpperCase()}
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStageBadge(candidate.current_stage)}`}>
+                        {getStageLabel(candidate.current_stage)}
                       </span>
                     </td>
                     <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}</td>

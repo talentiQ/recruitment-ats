@@ -48,7 +48,7 @@ export default function RenegeModal({ offer, onSuccess, onCancel }: RenegeModalP
 
       // 1. Update candidate
       await supabase.from('candidates').update({
-        current_stage: 'dropped',
+        current_stage: 'renege',
         is_renege: true,
         renege_date: renegeDate,
         renege_reason: fullReason,

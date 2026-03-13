@@ -15,7 +15,7 @@ interface MemberProgress {
   cv_submitted: number
   interview_scheduled: number
   interview_completed: number
-  rejected: number
+  interview_rejected: number
   offer_extended: number
   offer_accepted: number
   joined: number
@@ -30,7 +30,7 @@ interface ClientProgress {
   cv_submitted: number
   interview_scheduled: number
   interview_completed: number
-  rejected: number
+  interview_rejected: number
   offer_extended: number
   offer_accepted: number
   joined: number
@@ -47,7 +47,7 @@ interface JobProgress {
   cv_submitted: number
   interview_scheduled: number
   interview_completed: number
-  rejected: number
+  interview_rejected: number
   offer_extended: number
   offer_accepted: number
   joined: number
@@ -70,7 +70,7 @@ const PIPELINE_COLS = [
   { key: 'cv_submitted',        label: 'CV Submitted',        color: 'text-blue-600',   bg: 'bg-blue-100',   text: 'text-blue-800'   },
   { key: 'interview_scheduled', label: 'Interview Scheduled', color: 'text-indigo-600', bg: 'bg-indigo-100', text: 'text-indigo-800' },
   { key: 'interview_completed', label: 'Interview Completed', color: 'text-purple-600', bg: 'bg-purple-100', text: 'text-purple-800' },
-  { key: 'rejected',            label: 'Rejected',            color: 'text-red-600',    bg: 'bg-red-100',    text: 'text-red-800'    },
+  { key: 'interview_rejected',            label: 'Interview Rejected',            color: 'text-red-600',    bg: 'bg-red-100',    text: 'text-red-800'    },
   { key: 'offer_extended',      label: 'Offer Extended',      color: 'text-orange-600', bg: 'bg-orange-100', text: 'text-orange-800' },
   { key: 'offer_accepted',      label: 'Offer Accepted',      color: 'text-green-600',  bg: 'bg-green-100',  text: 'text-green-800'  },
   { key: 'joined',              label: 'Joined',              color: 'text-emerald-600',bg: 'bg-emerald-100',text: 'text-emerald-800'},
@@ -88,7 +88,7 @@ function countFromCandidates(candidates: any[], start: string, end: string) {
   const endTs   = new Date(end).getTime()
 
   let cv_submitted = 0, interview_scheduled = 0, interview_completed = 0
-  let rejected = 0, offer_extended = 0, offer_accepted = 0
+  let interview_rejected = 0, offer_extended = 0, offer_accepted = 0
   let joined = 0, renege_dropped = 0
 
   candidates.forEach((c: any) => {
@@ -101,15 +101,15 @@ function countFromCandidates(candidates: any[], start: string, end: string) {
     if (lastActivityTs >= startTs && lastActivityTs <= endTs) {
       if (stage === 'interview_scheduled')                    interview_scheduled++
       if (stage === 'interview_completed')                    interview_completed++
-      if (stage === 'rejected')                               rejected++
-      if (stage === 'offer_extended')                         offer_extended++
-      if (stage === 'offer_accepted')                         offer_accepted++
-      if (stage === 'joined')                                 joined++
-      if (stage === 'renege_dropped' || stage === 'dropped')  renege_dropped++
+      if (stage === 'interview_rejected')                                    interview_rejected++
+      if (stage === 'offer_extended')                                        offer_extended++
+      if (stage === 'offer_accepted')                                        offer_accepted++
+      if (stage === 'joined')                                                joined++
+      if (stage === 'renege')                                                renege_dropped++
     }
   })
 
-  return { cv_submitted, interview_scheduled, interview_completed, rejected, offer_extended, offer_accepted, joined, renege_dropped }
+  return { cv_submitted, interview_scheduled, interview_completed, interview_rejected, offer_extended, offer_accepted, joined, renege_dropped }
 }
 
 export default function SrTLAnalytics() {
@@ -129,7 +129,7 @@ export default function SrTLAnalytics() {
 
   const [totals, setTotals] = useState({
     total_cv_submitted: 0, total_interview_scheduled: 0, total_interview_completed: 0,
-    total_rejected: 0, total_offer_extended: 0, total_offer_accepted: 0,
+    total_interview_rejected: 0, total_offer_extended: 0, total_offer_accepted: 0,
     total_joined: 0, total_renege_dropped: 0, overall_conversion: 0,
   })
 
@@ -239,7 +239,7 @@ export default function SrTLAnalytics() {
       total_cv_submitted:        counts.cv_submitted,
       total_interview_scheduled: counts.interview_scheduled,
       total_interview_completed: counts.interview_completed,
-      total_rejected:            counts.rejected,
+      total_interview_rejected:            counts.interview_rejected,
       total_offer_extended:      counts.offer_extended,
       total_offer_accepted:      counts.offer_accepted,
       total_joined:              counts.joined,
@@ -353,27 +353,27 @@ export default function SrTLAnalytics() {
   }
 
   // ── Totals row reducers ────────────────────────────────────────────────────
-  const memberTotals  = memberProgress.reduce((a,m)=>({jobs_assigned:a.jobs_assigned+m.jobs_assigned,cv_submitted:a.cv_submitted+m.cv_submitted,interview_scheduled:a.interview_scheduled+m.interview_scheduled,interview_completed:a.interview_completed+m.interview_completed,rejected:a.rejected+m.rejected,offer_extended:a.offer_extended+m.offer_extended,offer_accepted:a.offer_accepted+m.offer_accepted,joined:a.joined+m.joined,renege_dropped:a.renege_dropped+m.renege_dropped}),{jobs_assigned:0,cv_submitted:0,interview_scheduled:0,interview_completed:0,rejected:0,offer_extended:0,offer_accepted:0,joined:0,renege_dropped:0})
-  const clientTotals  = clientProgress.reduce((a,c)=>({new_jobs_added:a.new_jobs_added+c.new_jobs_added,cv_submitted:a.cv_submitted+c.cv_submitted,interview_scheduled:a.interview_scheduled+c.interview_scheduled,interview_completed:a.interview_completed+c.interview_completed,rejected:a.rejected+c.rejected,offer_extended:a.offer_extended+c.offer_extended,offer_accepted:a.offer_accepted+c.offer_accepted,joined:a.joined+c.joined,renege_dropped:a.renege_dropped+c.renege_dropped}),{new_jobs_added:0,cv_submitted:0,interview_scheduled:0,interview_completed:0,rejected:0,offer_extended:0,offer_accepted:0,joined:0,renege_dropped:0})
-  const jobTotals     = jobProgress.reduce((a,j)=>({positions:a.positions+j.positions,cv_submitted:a.cv_submitted+j.cv_submitted,interview_scheduled:a.interview_scheduled+j.interview_scheduled,interview_completed:a.interview_completed+j.interview_completed,rejected:a.rejected+j.rejected,offer_extended:a.offer_extended+j.offer_extended,offer_accepted:a.offer_accepted+j.offer_accepted,joined:a.joined+j.joined,renege_dropped:a.renege_dropped+j.renege_dropped}),{positions:0,cv_submitted:0,interview_scheduled:0,interview_completed:0,rejected:0,offer_extended:0,offer_accepted:0,joined:0,renege_dropped:0})
+  const memberTotals  = memberProgress.reduce((a,m)=>({jobs_assigned:a.jobs_assigned+m.jobs_assigned,cv_submitted:a.cv_submitted+m.cv_submitted,interview_scheduled:a.interview_scheduled+m.interview_scheduled,interview_completed:a.interview_completed+m.interview_completed,interview_rejected:a.interview_rejected+m.interview_rejected,offer_extended:a.offer_extended+m.offer_extended,offer_accepted:a.offer_accepted+m.offer_accepted,joined:a.joined+m.joined,renege_dropped:a.renege_dropped+m.renege_dropped}),{jobs_assigned:0,cv_submitted:0,interview_scheduled:0,interview_completed:0,interview_rejected:0,offer_extended:0,offer_accepted:0,joined:0,renege_dropped:0})
+  const clientTotals  = clientProgress.reduce((a,c)=>({new_jobs_added:a.new_jobs_added+c.new_jobs_added,cv_submitted:a.cv_submitted+c.cv_submitted,interview_scheduled:a.interview_scheduled+c.interview_scheduled,interview_completed:a.interview_completed+c.interview_completed,interview_rejected:a.interview_rejected+c.interview_rejected,offer_extended:a.offer_extended+c.offer_extended,offer_accepted:a.offer_accepted+c.offer_accepted,joined:a.joined+c.joined,renege_dropped:a.renege_dropped+c.renege_dropped}),{new_jobs_added:0,cv_submitted:0,interview_scheduled:0,interview_completed:0,interview_rejected:0,offer_extended:0,offer_accepted:0,joined:0,renege_dropped:0})
+  const jobTotals     = jobProgress.reduce((a,j)=>({positions:a.positions+j.positions,cv_submitted:a.cv_submitted+j.cv_submitted,interview_scheduled:a.interview_scheduled+j.interview_scheduled,interview_completed:a.interview_completed+j.interview_completed,interview_rejected:a.interview_rejected+j.interview_rejected,offer_extended:a.offer_extended+j.offer_extended,offer_accepted:a.offer_accepted+j.offer_accepted,joined:a.joined+j.joined,renege_dropped:a.renege_dropped+j.renege_dropped}),{positions:0,cv_submitted:0,interview_scheduled:0,interview_completed:0,interview_rejected:0,offer_extended:0,offer_accepted:0,joined:0,renege_dropped:0})
 
   // ── Excel Export ───────────────────────────────────────────────────────────
   const exportToExcel = () => {
     setExporting(true)
     try {
       const wb = XLSX.utils.book_new(); const period = getPeriodLabel()
-      const wsSummary = XLSX.utils.aoa_to_sheet([[`Team Pipeline Analytics — ${user?.full_name} — ${period}`],[`Generated on: ${new Date().toLocaleString()}`],[],['Metric','Count'],['CV Submitted',totals.total_cv_submitted],['Interview Scheduled',totals.total_interview_scheduled],['Interview Completed',totals.total_interview_completed],['Rejected',totals.total_rejected],['Offer Extended',totals.total_offer_extended],['Offer Accepted',totals.total_offer_accepted],['Joined',totals.total_joined],['Renege / Dropped',totals.total_renege_dropped],['Overall Conversion %',`${totals.overall_conversion}%`]])
+      const wsSummary = XLSX.utils.aoa_to_sheet([[`Team Pipeline Analytics — ${user?.full_name} — ${period}`],[`Generated on: ${new Date().toLocaleString()}`],[],['Metric','Count'],['CV Submitted',totals.total_cv_submitted],['Interview Scheduled',totals.total_interview_scheduled],['Interview Completed',totals.total_interview_completed],['Interview Rejected',totals.total_interview_rejected],['Offer Extended',totals.total_offer_extended],['Offer Accepted',totals.total_offer_accepted],['Joined',totals.total_joined],['Renege / Dropped',totals.total_renege_dropped],['Overall Conversion %',`${totals.overall_conversion}%`]])
       wsSummary['!cols']=[{wch:28},{wch:16}]; XLSX.utils.book_append_sheet(wb,wsSummary,'Overall Summary')
-      const mH=['Member','Role','Reports To','Jobs Assigned','CV Submitted','Interview Scheduled','Interview Completed','Rejected','Offer Extended','Offer Accepted','Joined','Renege/Dropped','Conversion %']
-      const mR=memberProgress.map(m=>[m.member_name,m.role==='team_leader'?'Team Leader':'Recruiter',m.reports_to_name,m.jobs_assigned,m.cv_submitted,m.interview_scheduled,m.interview_completed,m.rejected,m.offer_extended,m.offer_accepted,m.joined,m.renege_dropped,`${m.conversion_rate}%`])
-      mR.push(['TOTAL','','',memberTotals.jobs_assigned,memberTotals.cv_submitted,memberTotals.interview_scheduled,memberTotals.interview_completed,memberTotals.rejected,memberTotals.offer_extended,memberTotals.offer_accepted,memberTotals.joined,memberTotals.renege_dropped,memberTotals.cv_submitted>0?`${Math.round(memberTotals.joined/memberTotals.cv_submitted*100)}%`:'0%'])
+      const mH=['Member','Role','Reports To','Jobs Assigned','CV Submitted','Interview Scheduled','Interview Completed','Interview Rejected','Offer Extended','Offer Accepted','Joined','Renege/Dropped','Conversion %']
+      const mR=memberProgress.map(m=>[m.member_name,m.role==='team_leader'?'Team Leader':'Recruiter',m.reports_to_name,m.jobs_assigned,m.cv_submitted,m.interview_scheduled,m.interview_completed,m.interview_rejected,m.offer_extended,m.offer_accepted,m.joined,m.renege_dropped,`${m.conversion_rate}%`])
+      mR.push(['TOTAL','','',memberTotals.jobs_assigned,memberTotals.cv_submitted,memberTotals.interview_scheduled,memberTotals.interview_completed,memberTotals.interview_rejected,memberTotals.offer_extended,memberTotals.offer_accepted,memberTotals.joined,memberTotals.renege_dropped,memberTotals.cv_submitted>0?`${Math.round(memberTotals.joined/memberTotals.cv_submitted*100)}%`:'0%'])
       const wsM=XLSX.utils.aoa_to_sheet([mH,...mR]); wsM['!cols']=[{wch:22},{wch:14},{wch:20},...Array(10).fill({wch:20})]; XLSX.utils.book_append_sheet(wb,wsM,'Member Progress')
-      const cH=['Client','New Jobs','CV Submitted','Interview Scheduled','Interview Completed','Rejected','Offer Extended','Offer Accepted','Joined','Renege/Dropped','Conversion %']
-      const cR=clientProgress.map(c=>[c.client_name,c.new_jobs_added,c.cv_submitted,c.interview_scheduled,c.interview_completed,c.rejected,c.offer_extended,c.offer_accepted,c.joined,c.renege_dropped,`${c.conversion_rate}%`])
-      cR.push(['TOTAL',clientTotals.new_jobs_added,clientTotals.cv_submitted,clientTotals.interview_scheduled,clientTotals.interview_completed,clientTotals.rejected,clientTotals.offer_extended,clientTotals.offer_accepted,clientTotals.joined,clientTotals.renege_dropped,clientTotals.cv_submitted>0?`${Math.round(clientTotals.joined/clientTotals.cv_submitted*100)}%`:'0%'])
+      const cH=['Client','New Jobs','CV Submitted','Interview Scheduled','Interview Completed','Interview Rejected','Offer Extended','Offer Accepted','Joined','Renege/Dropped','Conversion %']
+      const cR=clientProgress.map(c=>[c.client_name,c.new_jobs_added,c.cv_submitted,c.interview_scheduled,c.interview_completed,c.interview_rejected,c.offer_extended,c.offer_accepted,c.joined,c.renege_dropped,`${c.conversion_rate}%`])
+      cR.push(['TOTAL',clientTotals.new_jobs_added,clientTotals.cv_submitted,clientTotals.interview_scheduled,clientTotals.interview_completed,clientTotals.interview_rejected,clientTotals.offer_extended,clientTotals.offer_accepted,clientTotals.joined,clientTotals.renege_dropped,clientTotals.cv_submitted>0?`${Math.round(clientTotals.joined/clientTotals.cv_submitted*100)}%`:'0%'])
       const wsC=XLSX.utils.aoa_to_sheet([cH,...cR]); wsC['!cols']=[{wch:28},...Array(10).fill({wch:20})]; XLSX.utils.book_append_sheet(wb,wsC,'Client Progress')
-      const jH=['Job Code','Job Title','Client','Positions','CV Submitted','Interview Scheduled','Interview Completed','Rejected','Offer Extended','Offer Accepted','Joined','Renege/Dropped','Filled %']
-      const jR=jobProgress.map(j=>[j.job_code,j.job_title,j.client_name,j.positions,j.cv_submitted,j.interview_scheduled,j.interview_completed,j.rejected,j.offer_extended,j.offer_accepted,j.joined,j.renege_dropped,`${j.filled_rate}%`])
+      const jH=['Job Code','Job Title','Client','Positions','CV Submitted','Interview Scheduled','Interview Completed','Interview Rejected','Offer Extended','Offer Accepted','Joined','Renege/Dropped','Filled %']
+      const jR=jobProgress.map(j=>[j.job_code,j.job_title,j.client_name,j.positions,j.cv_submitted,j.interview_scheduled,j.interview_completed,j.interview_rejected,j.offer_extended,j.offer_accepted,j.joined,j.renege_dropped,`${j.filled_rate}%`])
       const wsJ=XLSX.utils.aoa_to_sheet([jH,...jR]); wsJ['!cols']=[{wch:12},{wch:28},{wch:24},...Array(10).fill({wch:18})]; XLSX.utils.book_append_sheet(wb,wsJ,'Job Progress')
       XLSX.writeFile(wb,`Team_Analytics_${user?.full_name?.replace(/\s+/g,'_')}_${period.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`)
     } catch(err){ console.error('Export error:',err); alert('Export failed.') } finally { setExporting(false) }

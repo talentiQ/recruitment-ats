@@ -6,6 +6,13 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
+const JOB_STATUS_OPTIONS = [
+  { value: 'open',        label: 'Open',        color: 'bg-green-100 text-green-800 border-green-300',   dot: 'bg-green-500'  },
+  { value: 'in_progress', label: 'In Progress',  color: 'bg-yellow-100 text-yellow-800 border-yellow-300', dot: 'bg-yellow-500' },
+  { value: 'on_hold',     label: 'On Hold',      color: 'bg-gray-100 text-gray-700 border-gray-300',     dot: 'bg-gray-500'   },
+  { value: 'closed',      label: 'Closed',       color: 'bg-blue-100 text-blue-800 border-blue-300',     dot: 'bg-blue-500'   },
+]
+
 export default function JobDetailPage() {
   const router = useRouter()
   const params = useParams()
@@ -15,6 +22,9 @@ export default function JobDetailPage() {
   const [saving, setSaving] = useState(false)
   const [teamMembers, setTeamMembers] = useState<any[]>([])
   const [assignedRecruiters, setAssignedRecruiters] = useState<string[]>([])
+  const [updatingStatus, setUpdatingStatus] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  const [statusSuccess, setStatusSuccess] = useState('')
 
   useEffect(() => {
     if (params.id) {
@@ -42,13 +52,12 @@ export default function JobDetailPage() {
 
       if (error) throw error
       setJob(data)
-      
-      // Load candidates to see who's working on this job
+
       const { data: candidates } = await supabase
         .from('candidates')
         .select('assigned_to')
         .eq('job_id', id)
-      
+
       if (candidates) {
         const uniqueRecruiters = [...new Set(candidates.map(c => c.assigned_to))]
         setAssignedRecruiters(uniqueRecruiters as string[])
@@ -69,6 +78,34 @@ export default function JobDetailPage() {
       .eq('role', 'recruiter')
 
     if (data) setTeamMembers(data)
+  }
+
+  const handleStatusChange = (newStatus: string) => {
+    if (newStatus === job.status) return
+    if (newStatus === 'closed') {
+      setConfirmClose(true)
+    } else {
+      applyStatusChange(newStatus)
+    }
+  }
+
+  const applyStatusChange = async (newStatus: string) => {
+    setConfirmClose(false)
+    setUpdatingStatus(true)
+    try {
+      const { error } = await supabase.from('jobs').update({ status: newStatus }).eq('id', params.id)
+      if (error) throw error
+
+      setJob((prev: any) => ({ ...prev, status: newStatus }))
+      const label = JOB_STATUS_OPTIONS.find(o => o.value === newStatus)?.label || newStatus
+      setStatusSuccess(`Status updated to "${label}"`)
+      setTimeout(() => setStatusSuccess(''), 3000)
+    } catch (error) {
+      console.error('Error updating status:', error)
+      alert('Failed to update status. Please try again.')
+    } finally {
+      setUpdatingStatus(false)
+    }
   }
 
   const handleUpdate = async () => {
@@ -93,7 +130,6 @@ export default function JobDetailPage() {
         .eq('id', job.id)
 
       if (error) throw error
-      
       alert('✅ Job updated successfully!')
       setEditing(false)
       loadJob(job.id)
@@ -124,11 +160,14 @@ export default function JobDetailPage() {
     )
   }
 
+  const currentStatusOpt = JOB_STATUS_OPTIONS.find(o => o.value === job.status)
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
+
         {/* Header */}
-        <div className="flex justify-between items-start">
+        <div className="flex justify-between items-start flex-wrap gap-4">
           <div>
             <button
               onClick={() => router.push('/tl/jobs')}
@@ -139,7 +178,12 @@ export default function JobDetailPage() {
             <h2 className="text-2xl font-bold text-gray-900">{job.job_title}</h2>
             <p className="text-gray-600">{job.clients?.company_name}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Current status badge */}
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold border ${currentStatusOpt?.color}`}>
+              <span className={`w-2 h-2 rounded-full ${currentStatusOpt?.dot}`}></span>
+              {currentStatusOpt?.label || job.status}
+            </span>
             {!editing ? (
               <button onClick={() => setEditing(true)} className="btn-primary">
                 Edit Job
@@ -149,7 +193,7 @@ export default function JobDetailPage() {
                 <button onClick={handleUpdate} disabled={saving} className="btn-primary">
                   {saving ? 'Saving...' : 'Save Changes'}
                 </button>
-                <button onClick={() => setEditing(false)} className="bg-gray-200 px-4 py-2 rounded-lg">
+                <button onClick={() => setEditing(false)} className="bg-gray-200 px-4 py-2 rounded-lg font-medium">
                   Cancel
                 </button>
               </>
@@ -157,28 +201,66 @@ export default function JobDetailPage() {
           </div>
         </div>
 
+        {/* ── Status Management ── */}
+        <div className="card border-2 border-blue-100">
+          <h3 className="font-semibold text-gray-900 mb-4">⚙️ Update Job Status</h3>
+
+          {statusSuccess && (
+            <div className="mb-4 px-4 py-2.5 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800 font-medium">
+              ✅ {statusSuccess}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-3">
+            {JOB_STATUS_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                disabled={updatingStatus || job.status === opt.value}
+                onClick={() => handleStatusChange(opt.value)}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold border-2 transition
+                  ${job.status === opt.value
+                    ? `${opt.color} border-current opacity-100 cursor-default ring-2 ring-offset-1 ring-current`
+                    : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400 hover:text-gray-900 disabled:opacity-50'
+                  }`}
+              >
+                {updatingStatus && job.status !== opt.value ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="animate-spin rounded-full h-3 w-3 border-b-2 border-current"></span>
+                    {opt.label}
+                  </span>
+                ) : (
+                  <>{job.status === opt.value && '✓ '}{opt.label}</>
+                )}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-3">
+            Closing a job will prevent recruiters from adding new candidates to it.
+          </p>
+        </div>
+
         {/* Job Stats */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="kpi-card">
             <div className="kpi-title">Positions</div>
             <div className="kpi-value">{job.positions_filled}/{job.positions}</div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-title">Candidates</div>
-            <div className="kpi-value">{assignedRecruiters.length * 10}</div>
+            <div className="kpi-title">Recruiters Active</div>
+            <div className="kpi-value">{assignedRecruiters.length}</div>
           </div>
           <div className="kpi-card">
             <div className="kpi-title">Priority</div>
-            <div className="kpi-value text-xl">{job.priority.toUpperCase()}</div>
+            <div className="kpi-value text-xl">{job.priority?.toUpperCase()}</div>
           </div>
           <div className="kpi-card">
             <div className="kpi-title">Status</div>
-            <div className="kpi-value text-xl">{job.status.toUpperCase()}</div>
+            <div className="kpi-value text-xl">{currentStatusOpt?.label || job.status}</div>
           </div>
         </div>
 
         {/* Job Details */}
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="card">
             <h3 className="card-title">Job Information</h3>
             <dl className="space-y-3">
@@ -189,7 +271,7 @@ export default function JobDetailPage() {
                     <input
                       type="text"
                       value={job.department || ''}
-                      onChange={e => setJob({...job, department: e.target.value})}
+                      onChange={e => setJob({ ...job, department: e.target.value })}
                       className="input"
                     />
                   ) : (
@@ -204,7 +286,7 @@ export default function JobDetailPage() {
                     <input
                       type="text"
                       value={job.location}
-                      onChange={e => setJob({...job, location: e.target.value})}
+                      onChange={e => setJob({ ...job, location: e.target.value })}
                       className="input"
                     />
                   ) : (
@@ -214,15 +296,11 @@ export default function JobDetailPage() {
               </div>
               <div>
                 <dt className="text-sm font-medium text-gray-500">Experience Range</dt>
-                <dd className="mt-1 text-sm text-gray-900">
-                  {job.experience_min}-{job.experience_max} years
-                </dd>
+                <dd className="mt-1 text-sm text-gray-900">{job.experience_min}-{job.experience_max} years</dd>
               </div>
               <div>
                 <dt className="text-sm font-medium text-gray-500">CTC Range</dt>
-                <dd className="mt-1 text-sm text-gray-900">
-                  ₹{job.min_ctc}-{job.max_ctc} Lakhs
-                </dd>
+                <dd className="mt-1 text-sm text-gray-900">₹{job.min_ctc}-{job.max_ctc} Lakhs</dd>
               </div>
             </dl>
           </div>
@@ -256,7 +334,7 @@ export default function JobDetailPage() {
           {editing ? (
             <textarea
               value={job.job_description || ''}
-              onChange={e => setJob({...job, job_description: e.target.value})}
+              onChange={e => setJob({ ...job, job_description: e.target.value })}
               rows={6}
               className="input"
             />
@@ -273,7 +351,7 @@ export default function JobDetailPage() {
           {editing ? (
             <textarea
               value={job.key_skills || ''}
-              onChange={e => setJob({...job, key_skills: e.target.value})}
+              onChange={e => setJob({ ...job, key_skills: e.target.value })}
               rows={3}
               className="input"
               placeholder="e.g., Java, Spring Boot, Microservices, AWS"
@@ -302,6 +380,38 @@ export default function JobDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Confirm Close Modal ── */}
+      {confirmClose && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="text-center mb-4">
+              <div className="text-4xl mb-3">⚠️</div>
+              <h3 className="text-lg font-bold text-gray-900">Close this job?</h3>
+              <p className="text-sm text-gray-600 mt-2">
+                <span className="font-semibold">{job.job_title}</span> will be marked as{' '}
+                <span className="font-semibold text-blue-700">Closed</span>.
+                Recruiters will no longer be able to add candidates to it.
+              </p>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setConfirmClose(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => applyStatusChange('closed')}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition"
+              >
+                Yes, Close Job
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </DashboardLayout>
   )
 }

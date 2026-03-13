@@ -5,6 +5,7 @@ import { Suspense, useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { PIPELINE_STAGES, getStageBadge, getStageLabel, isActiveStage } from '@/lib/pipelineStages'
 
 function CandidatesTable() {
   const router = useRouter()
@@ -35,26 +36,17 @@ function CandidatesTable() {
 
   const loadTeamMembersUsingReportsTo = async (currentUser: any) => {
     try {
-      console.log('🔵 Loading team for Sr.TL:', currentUser.full_name, currentUser.id)
-
       // STEP 1: Get direct reports (TLs and Recruiters who report directly to this Sr.TL)
       const { data: directReports, error: directError } = await supabase
         .from('users')
         .select('id, full_name, role, team_id')
-        .eq('reports_to', currentUser.id)  // ✅ Only THIS Sr.TL's direct reports
+        .eq('reports_to', currentUser.id)
         .eq('is_active', true)
 
-      if (directError) {
-        console.error('❌ Error loading direct reports:', directError)
-        throw directError
-      }
-
-      console.log('✅ Direct reports:', directReports?.length || 0)
-      console.table(directReports)
+      if (directError) throw directError
 
       // STEP 2: Get TL IDs from direct reports
       const tlIds = directReports?.filter(m => m.role === 'team_leader').map(m => m.id) || []
-      console.log('🟢 TL IDs under this Sr.TL:', tlIds)
 
       // STEP 3: Get recruiters who report to those TLs
       let indirectRecruiters: any[] = []
@@ -62,32 +54,22 @@ function CandidatesTable() {
         const { data: recruiterReports, error: recError } = await supabase
           .from('users')
           .select('id, full_name, role, team_id')
-          .in('reports_to', tlIds)  // Recruiters reporting to the TLs
+          .in('reports_to', tlIds)
           .eq('role', 'recruiter')
           .eq('is_active', true)
 
-        if (recError) {
-          console.error('❌ Error loading indirect recruiters:', recError)
-        } else {
-          indirectRecruiters = recruiterReports || []
-          console.log('✅ Indirect recruiters (via TLs):', indirectRecruiters.length)
-          console.table(indirectRecruiters)
-        }
+        if (!recError) indirectRecruiters = recruiterReports || []
       }
 
       // STEP 4: Combine direct reports + indirect recruiters
       const allTeamMembers = [...(directReports || []), ...indirectRecruiters]
-      console.log('📊 TOTAL team members:', allTeamMembers.length)
-
       setTeamMembers(allTeamMembers)
 
-      // Get unique teams
       const uniqueTeams = [...new Set(allTeamMembers.map(u => u.team_id).filter(Boolean))]
-      console.log('🏢 Unique teams:', uniqueTeams)
       setAllTeams(uniqueTeams)
 
     } catch (error) {
-      console.error('❌ Fatal error loading team members:', error)
+      console.error('Error loading team members:', error)
       setTeamMembers([])
     }
   }
@@ -97,7 +79,6 @@ function CandidatesTable() {
     try {
       let teamMemberIds = teamMembers.map(m => m.id)
 
-      // Filter by specific team if selected
       if (teamFilter !== 'all') {
         teamMemberIds = teamMembers
           .filter(m => m.team_id === teamFilter)
@@ -109,8 +90,6 @@ function CandidatesTable() {
         setLoading(false)
         return
       }
-
-      console.log('📥 Loading candidates for', teamMemberIds.length, 'team members')
 
       let query = supabase
         .from('candidates')
@@ -130,43 +109,20 @@ function CandidatesTable() {
         .in('assigned_to', teamMemberIds)
         .order('created_at', { ascending: false })
 
-      if (stageFilter !== 'all') {
-        query = query.eq('current_stage', stageFilter)
-      }
-
-      if (recruiterFilter !== 'all') {
-        query = query.eq('assigned_to', recruiterFilter)
-      }
-
+      if (stageFilter !== 'all') query = query.eq('current_stage', stageFilter)
+      if (recruiterFilter !== 'all') query = query.eq('assigned_to', recruiterFilter)
       if (searchQuery) {
         query = query.or(`full_name.ilike.%${searchQuery}%,phone.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`)
       }
 
       const { data, error } = await query
       if (error) throw error
-      
-      console.log('✅ Loaded candidates:', data?.length || 0)
       setCandidates(data || [])
     } catch (error) {
-      console.error('❌ Error loading candidates:', error)
+      console.error('Error loading candidates:', error)
     } finally {
       setLoading(false)
     }
-  }
-
-  const getStatusBadge = (stage: string) => {
-    const badges: { [key: string]: string } = {
-      sourced: 'bg-gray-100 text-gray-800',
-      screening: 'bg-yellow-100 text-yellow-800',
-      interview_scheduled: 'bg-blue-100 text-blue-800',
-      interview_completed: 'bg-purple-100 text-purple-800',
-      offer_extended: 'bg-orange-100 text-orange-800',
-      offer_accepted: 'bg-green-100 text-green-800',
-      joined: 'bg-green-600 text-white',
-      rejected: 'bg-red-100 text-red-800',
-      dropped: 'bg-gray-100 text-gray-800',
-    }
-    return badges[stage] || 'bg-gray-100 text-gray-800'
   }
 
   if (!user) {
@@ -177,7 +133,6 @@ function CandidatesTable() {
     )
   }
 
-  // Count candidates per team for dropdown
   const candidatesByTeam = allTeams.map(teamId => ({
     teamId,
     count: candidates.filter(c => c.users?.team_id === teamId).length
@@ -214,7 +169,7 @@ function CandidatesTable() {
         <div className="kpi-card kpi-success text-center">
           <div className="kpi-title">Active Pipelines</div>
           <div className="kpi-value">
-            {candidates.filter(c => !['rejected', 'dropped', 'joined'].includes(c.current_stage)).length}
+            {candidates.filter(c => isActiveStage(c.current_stage)).length}
           </div>
         </div>
       </div>
@@ -238,10 +193,9 @@ function CandidatesTable() {
               <option value="all">All Teams ({allTeams.length})</option>
               {allTeams.map(teamId => {
                 const teamCount = candidatesByTeam.find(t => t.teamId === teamId)?.count || 0
-                const teamName = teamId.slice(0, 20)
                 return (
                   <option key={teamId} value={teamId}>
-                    Team {teamName}... ({teamCount})
+                    Team {teamId.slice(0, 20)}... ({teamCount})
                   </option>
                 )
               })}
@@ -251,15 +205,9 @@ function CandidatesTable() {
             <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Stage</label>
             <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="input">
               <option value="all">All Stages</option>
-              <option value="sourced">Sourced</option>
-              <option value="screening">Screening</option>
-              <option value="interview_scheduled">Interview Scheduled</option>
-              <option value="interview_completed">Interview Completed</option>
-              <option value="offer_extended">Offer Extended</option>
-              <option value="offer_accepted">Offer Accepted</option>
-              <option value="joined">Joined</option>
-              <option value="rejected">Rejected</option>
-              <option value="dropped">Dropped</option>
+              {PIPELINE_STAGES.map(stage => (
+                <option key={stage} value={stage}>{getStageLabel(stage)}</option>
+              ))}
             </select>
           </div>
           <div>
@@ -277,17 +225,10 @@ function CandidatesTable() {
       </div>
 
       <div className="flex items-center justify-between text-sm text-gray-600">
-        <div>
-          Showing <strong>{candidates.length}</strong> candidates
-        </div>
+        <div>Showing <strong>{candidates.length}</strong> candidates</div>
         {(stageFilter !== 'all' || searchQuery || recruiterFilter !== 'all' || teamFilter !== 'all') && (
           <button
-            onClick={() => {
-              setStageFilter('all')
-              setSearchQuery('')
-              setRecruiterFilter('all')
-              setTeamFilter('all')
-            }}
+            onClick={() => { setStageFilter('all'); setSearchQuery(''); setRecruiterFilter('all'); setTeamFilter('all') }}
             className="text-blue-600 hover:text-blue-800 font-medium"
           >
             Clear all filters
@@ -302,9 +243,7 @@ function CandidatesTable() {
       ) : candidates.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-gray-600">No candidates found</p>
-          <div className="text-sm text-gray-500 mt-2">
-            Team members: {teamMembers.length} • Check console (F12) for debugging
-          </div>
+          <div className="text-sm text-gray-500 mt-2">Team members: {teamMembers.length}</div>
         </div>
       ) : (
         <div className="card overflow-x-auto">
@@ -335,8 +274,8 @@ function CandidatesTable() {
                     <div className="text-xs text-gray-500">{candidate.jobs?.clients?.company_name || 'N/A'}</div>
                   </td>
                   <td>
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusBadge(candidate.current_stage)}`}>
-                      {candidate.current_stage?.replace(/_/g, ' ').toUpperCase()}
+                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStageBadge(candidate.current_stage)}`}>
+                      {getStageLabel(candidate.current_stage)}
                     </span>
                   </td>
                   <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}</td>

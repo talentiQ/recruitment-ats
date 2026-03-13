@@ -33,14 +33,14 @@ interface InterviewSchedulerProps {
 // Completed      → stage: interview_completed
 // Cancel         → NO stage change
 
-type SchedulerMode = 'schedule' | 'reschedule' | 'next_round' | 'hold' | 'rejected' | 'completed' | 'cancel'
+type SchedulerMode = 'schedule' | 'reschedule' | 'next_round' | 'hold' | 'interview_rejected' | 'completed' | 'cancel'
 
 const MODE_CONFIG: Record<SchedulerMode, { label: string; icon: string; color: string; activeColor: string }> = {
   schedule:   { label: 'Schedule',         icon: '📅', color: 'border-gray-200 text-gray-600 hover:border-blue-300',    activeColor: 'bg-blue-600 text-white border-blue-600' },
   reschedule: { label: 'Reschedule',       icon: '🔄', color: 'border-gray-200 text-gray-600 hover:border-blue-300',    activeColor: 'bg-blue-600 text-white border-blue-600' },
   next_round: { label: 'Next Round',       icon: '➡️', color: 'border-gray-200 text-gray-600 hover:border-indigo-300',  activeColor: 'bg-indigo-600 text-white border-indigo-600' },
   hold:       { label: 'Client Hold',      icon: '⏸️', color: 'border-gray-200 text-gray-600 hover:border-orange-300',  activeColor: 'bg-orange-500 text-white border-orange-500' },
-  rejected:   { label: 'Interview Rejected',         icon: '❌', color: 'border-gray-200 text-gray-600 hover:border-red-300',     activeColor: 'bg-red-600 text-white border-red-600' },
+  interview_rejected:   { label: 'Interview Rejected',         icon: '❌', color: 'border-gray-200 text-gray-600 hover:border-red-300',     activeColor: 'bg-red-600 text-white border-red-600' },
   completed:  { label: 'Selected / Done',  icon: '✅', color: 'border-gray-200 text-gray-600 hover:border-green-300',   activeColor: 'bg-green-600 text-white border-green-600' },
   cancel:     { label: 'Cancel Interview', icon: '🚫', color: 'border-gray-200 text-gray-600 hover:border-red-300',     activeColor: 'bg-red-600 text-white border-red-600' },
 }
@@ -283,7 +283,7 @@ export default function InterviewScheduler({
       const userData = getUser()
 
       await supabase.from('interviews').update({
-        status: 'rejected',
+        status: 'interview_rejected',
         cancel_reason: reason,
         cancelled_at: new Date().toISOString(),
       }).eq('id', existingInterview.id)
@@ -479,7 +479,7 @@ export default function InterviewScheduler({
       {/* Mode tabs */}
       {existingInterview && (
         <div className="flex gap-2 flex-wrap">
-          {(['reschedule', 'next_round', 'hold', 'rejected', 'completed', 'cancel'] as SchedulerMode[]).map(m => {
+          {(['reschedule', 'next_round', 'hold', 'interview_rejected', 'completed', 'cancel'] as SchedulerMode[]).map(m => {
             const cfg = MODE_CONFIG[m]
             return (
               <button key={m} onClick={() => { setMode(m); setReason(''); setHoldNotes('') }}
@@ -593,15 +593,15 @@ export default function InterviewScheduler({
       )}
 
       {/* ── REJECTED ── */}
-      {mode === 'rejected' && (
+      {mode === 'interview_rejected' && (
         <div className="space-y-4">
-          <StageBadge to="Rejected" />
+          <StageBadge to="Interview Rejected" />
           <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-start gap-3">
             <span className="text-2xl">❌</span>
             <div>
               <div className="font-bold text-red-900">Candidate Rejected</div>
               <div className="text-sm text-red-700 mt-1">
-                Stage will move to <strong>Rejected</strong>. This is a final action for this interview cycle.
+                Stage will move to <strong>Interview Rejected</strong>. This is a final action for this interview cycle.
               </div>
             </div>
           </div>

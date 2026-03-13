@@ -7,6 +7,10 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import StaleCandidatesBanner from '@/components/StaleCandidatesBanner'
 
+// Terminal/rejected stages — used consistently throughout
+const TERMINAL_STAGES = ['joined', 'screening_rejected', 'interview_rejected', 'offer_rejected', 'renege']
+const ALL_REJECTED_STAGES = ['screening_rejected', 'interview_rejected', 'offer_rejected', 'renege']
+
 interface RecruiterDetail {
   id: string
   name: string
@@ -32,8 +36,8 @@ interface RecruiterDetail {
   offerAccepted: number
   documentation: number
   joined: number
-  rejected: number
-  dropped: number
+  rejected: number   // all 3 rejection stages combined
+  renege: number     // renege (replaces old 'dropped')
   onHold: number
   
   // Metrics
@@ -76,7 +80,7 @@ interface DashboardStats {
   totalInterview: number
   totalOffered: number
   totalJoined: number
-  totalDropped: number
+  totalRejected: number  // all rejection stages
   
   // Recruiter details
   recruiterDetails: RecruiterDetail[]
@@ -115,7 +119,7 @@ export default function TLDashboard() {
     if (userData) {
       const parsedUser = JSON.parse(userData)
       setUser(parsedUser)
-      loadDashboardStats(parsedUser.id) // Use user ID, not team_id
+      loadDashboardStats(parsedUser.id)
     }
   }, [])
 
@@ -132,21 +136,16 @@ export default function TLDashboard() {
   const loadDashboardStats = async (userId: string) => {
     setLoading(true)
     try {
-      // Get user and their direct reports using RPC function
       const { data: teamMembers, error: teamMembersError } = await supabase
         .rpc('get_user_and_direct_reports', { p_user_id: userId })
-      
-      console.log('Team members found:', teamMembers?.length, teamMembers?.map((m: TeamMember) => ({ name: m.full_name, role: m.role })))
       
       if (teamMembersError) {
         console.error('Error fetching team members:', teamMembersError)
       }
 
-      // Get current user's team_id for fetching candidates
       const currentUser = teamMembers?.find((m: TeamMember) => m.id === userId)
       const teamId = currentUser ? await getUserTeamId(userId) : null
 
-      // Get all candidates assigned to user and their direct reports
       const memberIds = teamMembers?.map((m: TeamMember) => m.id) || []
       
       const { data: candidates } = await supabase
@@ -162,7 +161,7 @@ export default function TLDashboard() {
             role
           )
         `)
-        .in('assigned_to', memberIds) // Only candidates assigned to these users
+        .in('assigned_to', memberIds)
 
       const now = new Date()
       const currentYear = now.getFullYear()
@@ -171,14 +170,13 @@ export default function TLDashboard() {
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
 
-      // Calculate business quarter
+      // Business quarter
       let businessQuarter: number
       if (currentMonth >= 4 && currentMonth <= 6) businessQuarter = 1
       else if (currentMonth >= 7 && currentMonth <= 9) businessQuarter = 2
       else if (currentMonth >= 10 && currentMonth <= 12) businessQuarter = 3
       else businessQuarter = 4
 
-      // Quarter date ranges
       let quarterStartMonth: number, quarterEndMonth: number
       let quarterStartYear: number, quarterEndYear: number
 
@@ -199,82 +197,85 @@ export default function TLDashboard() {
       const quarterStart = `${quarterStartYear}-${String(quarterStartMonth).padStart(2, '0')}-01`
       const quarterEnd = `${quarterEndYear}-${String(quarterEndMonth).padStart(2, '0')}-01`
 
-      // Annual date range (fiscal year)
       const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
       const annualStart = `${fiscalYearStart}-04-01`
       const annualEnd = `${fiscalYearStart + 1}-04-01`
 
-      // Team-level calculations
+      // Team-level time-based joinings
       const todayJoinings = candidates?.filter(c => c.date_joined?.startsWith(today)).length || 0
       const thisWeekJoinings = candidates?.filter(c => c.date_joined && c.date_joined >= weekAgo).length || 0
       const thisMonthJoinings = candidates?.filter(c => c.date_joined && c.date_joined >= monthStart).length || 0
 
       const totalCandidates = candidates?.length || 0
-      const activeCandidates = candidates?.filter(c => 
-        !['joined', 'rejected', 'dropped'].includes(c.current_stage)
+
+      // Active = not in any terminal/rejection stage
+      const activeCandidates = candidates?.filter(c =>
+        !TERMINAL_STAGES.includes(c.current_stage)
       ).length || 0
 
-      // Team pipeline totals
+      // Pipeline totals
       const totalSourced = candidates?.filter(c => c.current_stage === 'sourced').length || 0
       const totalScreening = candidates?.filter(c => c.current_stage === 'screening').length || 0
-      const totalInterview = candidates?.filter(c => 
+      const totalInterview = candidates?.filter(c =>
         ['interview_scheduled', 'interview_completed'].includes(c.current_stage)
       ).length || 0
-      const totalOffered = candidates?.filter(c => 
+      const totalOffered = candidates?.filter(c =>
         ['offer_extended', 'offer_accepted'].includes(c.current_stage)
       ).length || 0
       const totalJoined = candidates?.filter(c => c.current_stage === 'joined').length || 0
-      const totalDropped = candidates?.filter(c => 
-        ['rejected', 'dropped'].includes(c.current_stage)
+      const totalRejected = candidates?.filter(c =>
+        ALL_REJECTED_STAGES.includes(c.current_stage)
       ).length || 0
 
-      // Build detailed recruiter stats
+      // Per-member stats
       const recruiterDetails: RecruiterDetail[] = teamMembers.map((member: TeamMember) => {
         const memberCandidates = candidates?.filter(c => c.assigned_to === member.id) || []
         
-        // Monthly joinings and revenue
-        const monthlyJoined = memberCandidates.filter(c => 
+        const monthlyJoined = memberCandidates.filter(c =>
           c.current_stage === 'joined' && c.date_joined && c.date_joined >= monthStart
         )
         const monthlyRevenue = monthlyJoined.reduce((sum, c) => sum + (c.revenue_earned || 0), 0)
         const monthlyJoinings = monthlyJoined.length
         
-        // Quarterly revenue
-        const quarterlyJoined = memberCandidates.filter(c => 
-          c.current_stage === 'joined' && c.date_joined && c.date_joined >= quarterStart && c.date_joined < quarterEnd
-        )
-        const quarterlyRevenue = quarterlyJoined.reduce((sum, c) => sum + (c.revenue_earned || 0), 0)
+        const quarterlyRevenue = memberCandidates
+          .filter(c => c.current_stage === 'joined' && c.date_joined && c.date_joined >= quarterStart && c.date_joined < quarterEnd)
+          .reduce((sum, c) => sum + (c.revenue_earned || 0), 0)
         
-        // Annual revenue
-        const annualJoined = memberCandidates.filter(c => 
-          c.current_stage === 'joined' && c.date_joined && c.date_joined >= annualStart && c.date_joined < annualEnd
-        )
-        const annualRevenue = annualJoined.reduce((sum, c) => sum + (c.revenue_earned || 0), 0)
+        const annualRevenue = memberCandidates
+          .filter(c => c.current_stage === 'joined' && c.date_joined && c.date_joined >= annualStart && c.date_joined < annualEnd)
+          .reduce((sum, c) => sum + (c.revenue_earned || 0), 0)
         
-        // Pipeline breakdown by stage
-        const sourced = memberCandidates.filter(c => c.current_stage === 'sourced').length
-        const screening = memberCandidates.filter(c => c.current_stage === 'screening').length
-        const interviewScheduled = memberCandidates.filter(c => c.current_stage === 'interview_scheduled').length
-        const interviewCompleted = memberCandidates.filter(c => c.current_stage === 'interview_completed').length
-        const offerExtended = memberCandidates.filter(c => c.current_stage === 'offer_extended').length
-        const offerAccepted = memberCandidates.filter(c => c.current_stage === 'offer_accepted').length
-        const documentation = memberCandidates.filter(c => c.current_stage === 'documentation').length
-        const joined = memberCandidates.filter(c => c.current_stage === 'joined').length
-        const rejected = memberCandidates.filter(c => c.current_stage === 'rejected').length
-        const dropped = memberCandidates.filter(c => c.current_stage === 'dropped').length
-        const onHold = memberCandidates.filter(c => c.current_stage === 'on_hold').length
-        
-        // Metrics
-        const totalCandidates = memberCandidates.length
-        const activeCandidates = memberCandidates.filter(c => 
-          !['joined', 'rejected', 'dropped'].includes(c.current_stage)
+        // Pipeline by stage
+        const sourced             = memberCandidates.filter(c => c.current_stage === 'sourced').length
+        const screening           = memberCandidates.filter(c => c.current_stage === 'screening').length
+        const interviewScheduled  = memberCandidates.filter(c => c.current_stage === 'interview_scheduled').length
+        const interviewCompleted  = memberCandidates.filter(c => c.current_stage === 'interview_completed').length
+        const offerExtended       = memberCandidates.filter(c => c.current_stage === 'offer_extended').length
+        const offerAccepted       = memberCandidates.filter(c => c.current_stage === 'offer_accepted').length
+        const documentation       = memberCandidates.filter(c => c.current_stage === 'documentation').length
+        const joined              = memberCandidates.filter(c => c.current_stage === 'joined').length
+        const onHold              = memberCandidates.filter(c => c.current_stage === 'on_hold').length
+
+        // All 3 rejection stages combined into 'rejected' bucket
+        const rejected = memberCandidates.filter(c =>
+          ['screening_rejected', 'interview_rejected', 'offer_rejected'].includes(c.current_stage)
         ).length
+        // Renege replaces old 'dropped'
+        const renege = memberCandidates.filter(c => c.current_stage === 'renege').length
+        
+        const totalCandidates = memberCandidates.length
+
+        // Active = not in any terminal/rejection stage
+        const activeCandidates = memberCandidates.filter(c =>
+          !TERMINAL_STAGES.includes(c.current_stage)
+        ).length
+
         const totalJoined = joined
         const conversionRate = totalCandidates > 0 ? Math.round((totalJoined / totalCandidates) * 100) : 0
         
-        // Critical alerts
+        // Stale = active candidates not updated in 30 days
         const staleCount = memberCandidates.filter(c => {
-          if (['joined', 'rejected', 'dropped'].includes(c.current_stage)) return false
+          if (TERMINAL_STAGES.includes(c.current_stage)) return false
           const daysSinceSourced = Math.floor(
             (now.getTime() - new Date(c.date_sourced).getTime()) / (1000 * 60 * 60 * 24)
           )
@@ -284,8 +285,8 @@ export default function TLDashboard() {
         const pendingInterviews = interviewScheduled
         const pendingOffers = offerExtended
         
-        const monthlyTarget = member.monthly_target ? Number(member.monthly_target) : 
-                            (['team_leader', 'sr_team_leader'].includes(member.role) ? 5 : 2)
+        const monthlyTarget = member.monthly_target ? Number(member.monthly_target) :
+                              (['team_leader', 'sr_team_leader'].includes(member.role) ? 5 : 2)
         const monthlyAchievement = monthlyTarget > 0 ? Math.round((monthlyRevenue / monthlyTarget) * 100) : 0
         
         return {
@@ -308,7 +309,7 @@ export default function TLDashboard() {
           documentation,
           joined,
           rejected,
-          dropped,
+          renege,
           onHold,
           totalCandidates,
           activeCandidates,
@@ -319,15 +320,13 @@ export default function TLDashboard() {
         }
       }).sort((a: RecruiterDetail, b: RecruiterDetail) => b.monthlyRevenue - a.monthlyRevenue) || []
 
-      // Team totals
-      const teamMonthlyRevenue = recruiterDetails.reduce((sum, r) => sum + r.monthlyRevenue, 0)
-      const teamMonthlyTarget = recruiterDetails.reduce((sum, r) => sum + r.monthlyTarget, 0)
-      const teamAchievement = teamMonthlyTarget > 0 ? Math.round((teamMonthlyRevenue / teamMonthlyTarget) * 100) : 0
+      const teamMonthlyRevenue  = recruiterDetails.reduce((sum, r) => sum + r.monthlyRevenue, 0)
+      const teamMonthlyTarget   = recruiterDetails.reduce((sum, r) => sum + r.monthlyTarget, 0)
+      const teamAchievement     = teamMonthlyTarget > 0 ? Math.round((teamMonthlyRevenue / teamMonthlyTarget) * 100) : 0
       const teamQuarterlyRevenue = recruiterDetails.reduce((sum, r) => sum + r.quarterlyRevenue, 0)
-      const teamAnnualRevenue = recruiterDetails.reduce((sum, r) => sum + r.annualRevenue, 0)
+      const teamAnnualRevenue   = recruiterDetails.reduce((sum, r) => sum + r.annualRevenue, 0)
       const teamMonthlyJoinings = recruiterDetails.reduce((sum, r) => sum + r.monthlyJoinings, 0)
 
-      // Client stats
       const clientMap = new Map()
       candidates?.forEach(c => {
         const clientName = c.jobs?.clients?.company_name || 'Unknown'
@@ -354,7 +353,7 @@ export default function TLDashboard() {
         totalInterview,
         totalOffered,
         totalJoined,
-        totalDropped,
+        totalRejected,
         recruiterDetails,
         clientStats,
         todayJoinings,
@@ -523,7 +522,6 @@ export default function TLDashboard() {
                     )}
                   </div>
 
-                  {/* Expand/Collapse Icon */}
                   <div className="text-gray-400">
                     {expandedRecruiters.has(recruiter.id) ? '▼' : '▶'}
                   </div>
@@ -532,7 +530,6 @@ export default function TLDashboard() {
                 {/* Detailed Pipeline Breakdown - Collapsible */}
                 {expandedRecruiters.has(recruiter.id) && (
                   <div className="mt-4 pt-4 border-t border-gray-200">
-                    {/* Pipeline Stages */}
                     <div className="mb-4">
                       <h4 className="text-sm font-semibold text-gray-700 mb-3">Pipeline Breakdown by Stage</h4>
                       <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -541,7 +538,7 @@ export default function TLDashboard() {
                           <div className="text-xl font-bold text-gray-900">{recruiter.sourced}</div>
                         </div>
                         <div className="bg-yellow-50 p-3 rounded-lg">
-                          <div className="text-xs text-yellow-700 mb-1">Screening</div>
+                          <div className="text-xs text-yellow-700 mb-1">Sent to Client</div>
                           <div className="text-xl font-bold text-yellow-700">{recruiter.screening}</div>
                         </div>
                         <div className="bg-purple-50 p-3 rounded-lg">
@@ -572,9 +569,9 @@ export default function TLDashboard() {
                           <div className="text-xs text-red-700 mb-1">Rejected</div>
                           <div className="text-xl font-bold text-red-700">{recruiter.rejected}</div>
                         </div>
-                        <div className="bg-red-50 p-3 rounded-lg">
-                          <div className="text-xs text-red-700 mb-1">Dropped</div>
-                          <div className="text-xl font-bold text-red-700">{recruiter.dropped}</div>
+                        <div className="bg-orange-50 p-3 rounded-lg">
+                          <div className="text-xs text-orange-700 mb-1">Renege</div>
+                          <div className="text-xl font-bold text-orange-700">{recruiter.renege}</div>
                         </div>
                         <div className="bg-gray-50 p-3 rounded-lg">
                           <div className="text-xs text-gray-600 mb-1">On Hold</div>
@@ -674,7 +671,7 @@ export default function TLDashboard() {
               <div className="text-2xl font-bold text-gray-900">{stats.totalSourced}</div>
             </div>
             <div className="card bg-yellow-50">
-              <div className="text-sm text-yellow-700 mb-1">Screening</div>
+              <div className="text-sm text-yellow-700 mb-1">Sent to Client</div>
               <div className="text-2xl font-bold text-yellow-700">{stats.totalScreening}</div>
             </div>
             <div className="card bg-purple-50">
@@ -690,8 +687,8 @@ export default function TLDashboard() {
               <div className="text-2xl font-bold text-green-700">{stats.totalJoined}</div>
             </div>
             <div className="card bg-red-50">
-              <div className="text-sm text-red-700 mb-1">Dropped</div>
-              <div className="text-2xl font-bold text-red-700">{stats.totalDropped}</div>
+              <div className="text-sm text-red-700 mb-1">Rejected / Renege</div>
+              <div className="text-2xl font-bold text-red-700">{stats.totalRejected}</div>
             </div>
           </div>
         </div>
@@ -707,13 +704,13 @@ export default function TLDashboard() {
                 <tr>
                   <th>Member</th>
                   <th className="text-center">Sourced</th>
-                  <th className="text-center">Screening</th>
+                  <th className="text-center">Sent to Client</th>
                   <th className="text-center">Interview</th>
                   <th className="text-center">Offered</th>
                   <th className="text-center">Documentation</th>
                   <th className="text-center">Joined</th>
                   <th className="text-center">Rejected</th>
-                  <th className="text-center">Dropped</th>
+                  <th className="text-center">Renege</th>
                   <th className="text-center">On Hold</th>
                   <th className="text-center">Total</th>
                 </tr>
@@ -768,12 +765,12 @@ export default function TLDashboard() {
                       </span>
                     </td>
                     <td className="text-center">
-                      <span className={`font-medium ${recruiter.dropped > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                        {recruiter.dropped}
+                      <span className={`font-medium ${recruiter.renege > 0 ? 'text-orange-600' : 'text-gray-400'}`}>
+                        {recruiter.renege}
                       </span>
                     </td>
                     <td className="text-center">
-                      <span className={`font-medium ${recruiter.onHold > 0 ? 'text-orange-600' : 'text-gray-400'}`}>
+                      <span className={`font-medium ${recruiter.onHold > 0 ? 'text-gray-600' : 'text-gray-400'}`}>
                         {recruiter.onHold}
                       </span>
                     </td>
@@ -800,8 +797,10 @@ export default function TLDashboard() {
                   <td className="text-center text-red-600">
                     {stats.recruiterDetails.reduce((sum, r) => sum + r.rejected, 0)}
                   </td>
-                  <td className="text-center text-red-600">{stats.totalDropped}</td>
                   <td className="text-center text-orange-600">
+                    {stats.recruiterDetails.reduce((sum, r) => sum + r.renege, 0)}
+                  </td>
+                  <td className="text-center text-gray-600">
                     {stats.recruiterDetails.reduce((sum, r) => sum + r.onHold, 0)}
                   </td>
                   <td className="text-center text-gray-900">{stats.totalCandidates}</td>

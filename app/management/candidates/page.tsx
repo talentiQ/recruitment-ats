@@ -5,6 +5,13 @@ import { Suspense, useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useRouter } from 'next/navigation'
 import { supabase as supabaseAdmin } from '@/lib/supabase'
+import {
+  PIPELINE_STAGES,
+  getStageBadge,
+  getStageLabel,
+  isActiveStage,
+  isRejectedStage,
+} from '@/lib/pipelineStages'
 
 function CandidatesTable() {
   const router = useRouter()
@@ -111,28 +118,25 @@ function CandidatesTable() {
 
   const getStageBadge = (stage: string) => {
     const map: Record<string, string> = {
-      sourced:             'bg-gray-100 text-gray-800',
-      screening:           'bg-yellow-100 text-yellow-800',
-      interview_scheduled: 'bg-blue-100 text-blue-800',
-      interview_completed: 'bg-purple-100 text-purple-800',
-      interview_rejected : 'bg-red-200 text-red-800',
-      offer_extended:      'bg-orange-100 text-orange-800',
-      offer_accepted:      'bg-green-100 text-green-800',
-      negotiation:         'bg-amber-100 text-amber-800',
-      joined:              'bg-green-600 text-white',
-      rejected:            'bg-red-100 text-red-800',
-      dropped:             'bg-gray-200 text-gray-600',
-      on_hold:             'bg-gray-100 text-gray-700',
-      renege:              'bg-orange-100 text-orange-700',
+      sourced:              'bg-gray-100 text-gray-800',
+      screening:            'bg-yellow-100 text-yellow-800',
+      interview_scheduled:  'bg-blue-100 text-blue-800',
+      interview_completed:  'bg-purple-100 text-purple-800',
+      interview_rejected:   'bg-red-200 text-red-800',
+      offer_extended:       'bg-orange-100 text-orange-800',
+      offer_accepted:       'bg-green-100 text-green-800',
+      negotiation:          'bg-amber-100 text-amber-800',
+      joined:               'bg-green-600 text-white',
+      rejected:             'bg-red-100 text-red-800',
+      dropped:              'bg-gray-200 text-gray-600',
+      on_hold:              'bg-gray-100 text-gray-700',
+      renege:               'bg-orange-100 text-orange-700',
     }
     return map[stage] || 'bg-gray-100 text-gray-700'
   }
 
-  const STAGES = [
-    'sourced', 'screening', 'interview_scheduled', 'interview_completed',
-    'shortlisted', 'offer_sent', 'offer_extended', 'offer_accepted',
-    'negotiation', 'joined', 'rejected', 'dropped', 'on_hold', 'renege',
-  ]
+  // ── Stage dropdown — interview_rejected added after interview_completed ──────
+  const STAGES = PIPELINE_STAGES  // ← directly use the lib export
 
   if (!user) return (
     <div className="flex items-center justify-center h-64">
@@ -140,9 +144,9 @@ function CandidatesTable() {
     </div>
   )
 
-  const activeCount   = candidates.filter(c => !['rejected', 'dropped', 'joined', 'renege'].includes(c.current_stage)).length
-  const joinedCount   = candidates.filter(c => c.current_stage === 'joined').length
-  const rejectedCount = candidates.filter(c => c.current_stage === 'rejected').length
+  const activeCount   = candidates.filter(c => isActiveStage(c.current_stage)).length
+  const joinedCount   = candidates.filter(c => c.current_stage === 'joined').length  // ← add this back
+  const rejectedCount = candidates.filter(c => isRejectedStage(c.current_stage)).length
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -211,8 +215,8 @@ function CandidatesTable() {
               <option value="all">All Stages</option>
               {STAGES.map(s => (
                 <option key={s} value={s}>
-                  {s.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-                </option>
+                  {getStageLabel(s)}
+                  </option>
               ))}
             </select>
           </div>

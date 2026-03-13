@@ -19,13 +19,11 @@ interface Interview {
   interviewer_name: string | null
   interviewer_email: string | null
   notes: string | null
-  // Flag fields
   client_hold: boolean
   more_interviews_in_progress: boolean
   hold_notes: string | null
   cancel_reason: string | null
   reschedule_reason: string | null
-  // Joined
   _candidateName: string
   _jobTitle: string
   _clientName: string
@@ -36,16 +34,23 @@ interface Interview {
 }
 
 type ViewMode = 'list' | 'day' | 'week' | 'month'
-type TabMode = 'active' | 'past'
+type TabMode  = 'active' | 'past'
 
-// Stages that move interview to "Past" tab
+// ✅ FIX: removed dead stages (rejected, hold, dropped, renege_dropped)
+//         added new stages (screening_rejected, offer_rejected)
 const PAST_STAGES = [
-  'rejected', 'interview_rejected', 'hold', 'interview_completed',
-  'offer_extended', 'offer_accepted', 'joined', 'renege',
-  'dropped', 'renege_dropped', 'on_hold',
+  'screening_rejected',
+  'interview_rejected',
+  'offer_rejected',
+  'interview_completed',
+  'offer_extended',
+  'offer_accepted',
+  'joined',
+  'renege',
+  'on_hold',
 ]
 
-const TYPE_ICONS: Record<string, string>  = { phone: '📞', video: '🎥', in_person: '🏢' }
+const TYPE_ICONS:  Record<string, string> = { phone: '📞', video: '🎥', in_person: '🏢' }
 const TYPE_LABELS: Record<string, string> = { phone: 'Phone', video: 'Video', in_person: 'In Person' }
 const TYPE_COLORS: Record<string, string> = {
   phone: 'bg-sky-500', video: 'bg-violet-500', in_person: 'bg-emerald-500',
@@ -64,30 +69,43 @@ const STATUS_COLORS: Record<string, string> = {
   on_hold:     'bg-orange-100 text-orange-800',
   rejected:    'bg-red-100 text-red-800',
 }
+
+// ✅ FIX: removed dead keys (shortlisted, hold, offer_sent, negotiation, dropped, renege_dropped, rejected)
+//         added new stages
 const STAGE_LABELS: Record<string, string> = {
-  sourced: 'Sourced', screening: 'Screening', shortlisted: 'Shortlisted',
-  interview_scheduled: 'Interview Scheduled', interview_completed: 'Interview Completed',
-  interview_rejected: 'Interview Rejected',
-  on_hold: 'On Hold', hold: 'Hold',
-  offer_sent: 'Offer Sent', offer_extended: 'Offer Extended',
-  negotiation: 'Negotiation', offer_accepted: 'Offer Accepted',
-  joined: 'Joined', renege: 'Renege', dropped: 'Dropped',
-  renege_dropped: 'Renege Dropped', rejected: 'Rejected',
-}
-const STAGE_COLORS: Record<string, string> = {
-  sourced: 'bg-gray-100 text-gray-700', screening: 'bg-yellow-100 text-yellow-800',
-  shortlisted: 'bg-cyan-100 text-cyan-800',
-  interview_scheduled: 'bg-blue-100 text-blue-700', interview_completed: 'bg-blue-100 text-blue-800',
-  interview_rejected: 'bg-red-100 text-red-800',
-  on_hold: 'bg-orange-100 text-orange-800', hold: 'bg-gray-100 text-gray-700',
-  offer_sent: 'bg-purple-100 text-purple-800', offer_extended: 'bg-indigo-100 text-indigo-800',
-  negotiation: 'bg-amber-100 text-amber-800', offer_accepted: 'bg-violet-100 text-violet-800',
-  joined: 'bg-green-100 text-green-800', renege: 'bg-orange-100 text-orange-800',
-  dropped: 'bg-red-100 text-red-700', renege_dropped: 'bg-orange-100 text-orange-700',
-  rejected: 'bg-red-200 text-red-900',
+  sourced:             'Sourced',
+  screening:           'Sent to Client',
+  screening_rejected:  'CV Rejected',
+  interview_scheduled: 'Interview Scheduled',
+  interview_completed: 'Interview Completed',
+  interview_rejected:  'Interview Rejected',
+  documentation:       'Documentation',
+  offer_extended:      'Offer Extended',
+  offer_accepted:      'Offer Accepted',
+  offer_rejected:      'Offer Rejected',
+  joined:              'Joined',
+  renege:              'Renege',
+  on_hold:             'On Hold',
 }
 
-const isoDate = (d: Date) => d.toISOString().slice(0, 10)
+// ✅ FIX: removed dead keys, added new stages
+const STAGE_COLORS: Record<string, string> = {
+  sourced:             'bg-gray-100 text-gray-700',
+  screening:           'bg-yellow-100 text-yellow-800',
+  screening_rejected:  'bg-orange-100 text-orange-800',
+  interview_scheduled: 'bg-blue-100 text-blue-700',
+  interview_completed: 'bg-blue-100 text-blue-800',
+  interview_rejected:  'bg-red-100 text-red-800',
+  documentation:       'bg-cyan-100 text-cyan-800',
+  offer_extended:      'bg-indigo-100 text-indigo-800',
+  offer_accepted:      'bg-violet-100 text-violet-800',
+  offer_rejected:      'bg-rose-100 text-rose-800',
+  joined:              'bg-green-100 text-green-800',
+  renege:              'bg-orange-100 text-orange-800',
+  on_hold:             'bg-gray-100 text-gray-700',
+}
+
+const isoDate  = (d: Date) => d.toISOString().slice(0, 10)
 const todayStr = isoDate(new Date())
 
 const MIPBadge = () => (
@@ -132,14 +150,13 @@ export default function RecruiterInterviewsPage() {
     loadAll(parsedUser)
   }, [])
 
-  // ── Data loader — Recruiter sees only their own interviews ────────────────
+  // ── Data loader ───────────────────────────────────────────────────────────
   const loadAll = async (currentUser?: any) => {
     const me = currentUser || user
     setLoading(true)
     try {
       if (!me) { setLoading(false); return }
 
-      // Fetch interviews by recruiter_id
       const { data: raw } = await supabaseAdmin
         .from('interviews')
         .select('*, recruiter:recruiter_id(full_name)')
@@ -167,21 +184,21 @@ export default function RecruiterInterviewsPage() {
           interview_type:   iv.interview_type || 'phone',
           interview_round:  iv.interview_round || 1,
           status:           iv.status || 'scheduled',
-          interviewer_name: iv.interviewer_name || null,
+          interviewer_name:  iv.interviewer_name || null,
           interviewer_email: iv.interviewer_email || null,
-          notes:            iv.notes || null,
-          client_hold:               iv.client_hold || false,
+          notes:             iv.notes || null,
+          client_hold:                iv.client_hold || false,
           more_interviews_in_progress: iv.more_interviews_in_progress || cand?.more_interviews_in_progress || false,
-          hold_notes:       iv.hold_notes || null,
-          cancel_reason:    iv.cancel_reason || null,
+          hold_notes:        iv.hold_notes || null,
+          cancel_reason:     iv.cancel_reason || null,
           reschedule_reason: iv.reschedule_reason || null,
-          _candidateName:   cand?.full_name || '—',
-          _jobTitle:        cand?.jobs?.job_title || '—',
-          _jobCode:         cand?.jobs?.job_code || '',
-          _clientName:      cand?.jobs?.clients?.company_name || '—',
-          _recruiterName:   me.full_name,
-          _candidateStage:  cand?.current_stage || '',
-          _jobId:           cand?.jobs?.id || '',
+          _candidateName:  cand?.full_name || '—',
+          _jobTitle:       cand?.jobs?.job_title || '—',
+          _jobCode:        cand?.jobs?.job_code || '',
+          _clientName:     cand?.jobs?.clients?.company_name || '—',
+          _recruiterName:  me.full_name,
+          _candidateStage: cand?.current_stage || '',
+          _jobId:          cand?.jobs?.id || '',
         }
       })
 
@@ -196,7 +213,7 @@ export default function RecruiterInterviewsPage() {
   // ── Split active vs past ───────────────────────────────────────────────────
   const { activeInterviews, pastInterviews } = useMemo(() => {
     const active: Interview[] = []
-    const past: Interview[]   = []
+    const past:   Interview[] = []
     allInterviews.forEach(iv => {
       if (
         PAST_STAGES.includes(iv._candidateStage) ||
@@ -228,7 +245,7 @@ export default function RecruiterInterviewsPage() {
       const t = new Date(); t.setDate(t.getDate() + 1); return i.interview_date === isoDate(t)
     }).length,
     thisWeek: activeInterviews.filter(i => {
-      const d = new Date(i.interview_date)
+      const d  = new Date(i.interview_date)
       const ws = new Date(); ws.setDate(ws.getDate() - ws.getDay())
       const we = new Date(ws); we.setDate(ws.getDate() + 6)
       return d >= ws && d <= we
@@ -261,9 +278,9 @@ export default function RecruiterInterviewsPage() {
 
   const navCalendar = (dir: number) => {
     const d = new Date(calDate)
-    if (viewMode === 'month')      d.setMonth(d.getMonth() + dir)
-    else if (viewMode === 'week')  d.setDate(d.getDate() + dir * 7)
-    else if (viewMode === 'day')   d.setDate(d.getDate() + dir)
+    if (viewMode === 'month')     d.setMonth(d.getMonth() + dir)
+    else if (viewMode === 'week') d.setDate(d.getDate() + dir * 7)
+    else if (viewMode === 'day')  d.setDate(d.getDate() + dir)
     setCalDate(d)
   }
 
@@ -278,7 +295,7 @@ export default function RecruiterInterviewsPage() {
 
   const CalendarDayCell = ({ date, interviews }: { date: Date | null; interviews: Interview[] }) => {
     if (!date) return <div className="min-h-[100px] bg-gray-50 rounded-lg" />
-    const ds = isoDate(date)
+    const ds      = isoDate(date)
     const isToday = ds === todayStr
     const isPast  = ds < todayStr
     return (
@@ -317,21 +334,21 @@ export default function RecruiterInterviewsPage() {
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-5 pb-8">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="bg-gradient-to-r from-teal-600 to-emerald-600 rounded-xl p-6 text-white">
           <h1 className="text-3xl font-bold mb-1">🗓️ My Interviews</h1>
           <p className="text-teal-200">Your candidates · Schedule, manage & track</p>
         </div>
 
-        {/* ── KPI Strip ── */}
+        {/* KPI Strip */}
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
           {[
-            { label: 'Total',     value: kpis.total,    color: 'text-gray-900' },
-            { label: 'Active',    value: kpis.active,   color: 'text-blue-700' },
-            { label: 'Today',     value: kpis.today,    color: 'text-green-700' },
+            { label: 'Total',     value: kpis.total,    color: 'text-gray-900'   },
+            { label: 'Active',    value: kpis.active,   color: 'text-blue-700'   },
+            { label: 'Today',     value: kpis.today,    color: 'text-green-700'  },
             { label: 'Tomorrow',  value: kpis.tomorrow, color: 'text-indigo-700' },
             { label: 'This Week', value: kpis.thisWeek, color: 'text-violet-700' },
-            { label: 'Past',      value: kpis.past,     color: 'text-gray-500' },
+            { label: 'Past',      value: kpis.past,     color: 'text-gray-500'   },
           ].map(({ label, value, color }) => (
             <div key={label} className="bg-white rounded-xl p-4 shadow-sm text-center border border-gray-100">
               <div className="text-xs text-gray-500 mb-1">{label}</div>
@@ -340,7 +357,7 @@ export default function RecruiterInterviewsPage() {
           ))}
         </div>
 
-        {/* ── Filters ── */}
+        {/* Filters */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex flex-wrap gap-3 items-end">
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Status</label>
@@ -375,7 +392,7 @@ export default function RecruiterInterviewsPage() {
           <div className="ml-auto text-sm text-gray-400">{filtered.length} interviews</div>
         </div>
 
-        {/* ── Tabs + View Mode ── */}
+        {/* Tabs + View Mode */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
             <button onClick={() => setTab('active')}
@@ -406,7 +423,7 @@ export default function RecruiterInterviewsPage() {
           </div>
         </div>
 
-        {/* ══════════════════ LIST VIEW ══════════════════ */}
+        {/* ══ LIST VIEW ══ */}
         {viewMode === 'list' && (
           <div className="space-y-3">
             {filtered.length === 0 ? (
@@ -425,13 +442,13 @@ export default function RecruiterInterviewsPage() {
                 return Object.entries(grouped)
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([date, ivs]) => {
-                    const d = new Date(date + 'T00:00:00')
+                    const d          = new Date(date + 'T00:00:00')
                     const isToday    = date === todayStr
                     const isTomorrow = date === isoDate(new Date(Date.now() + 86400000))
                     const isPast     = date < todayStr
-                    const label = isToday ? '🔵 Today' :
+                    const label = isToday    ? '🔵 Today' :
                       isTomorrow ? '🟢 Tomorrow' :
-                      isPast ? '📁 ' + d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) :
+                      isPast     ? '📁 ' + d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) :
                       d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
                     return (
                       <div key={date}>
@@ -451,7 +468,6 @@ export default function RecruiterInterviewsPage() {
                                 ${iv.more_interviews_in_progress ? 'ring-1 ring-orange-200' : ''}
                                 ${iv.client_hold ? 'ring-1 ring-amber-200' : ''}`}>
 
-                              {/* Time */}
                               <div className="text-center min-w-[52px]">
                                 <div className="text-sm font-bold text-gray-800">{iv.interview_time ? iv.interview_time.slice(0, 5) : '—'}</div>
                                 <div className={`text-xs mt-0.5 px-1.5 py-0.5 rounded font-medium ${TYPE_LIGHT[iv.interview_type]}`}>
@@ -460,7 +476,6 @@ export default function RecruiterInterviewsPage() {
                               </div>
                               <div className="w-px self-stretch bg-gray-100 hidden sm:block" />
 
-                              {/* Main info */}
                               <div className="flex-1 min-w-0" onClick={() => setSelectedInterview(iv)}>
                                 <div className="flex items-center gap-2 flex-wrap mb-1">
                                   <span className="font-bold text-gray-900">{iv._candidateName}</span>
@@ -491,7 +506,6 @@ export default function RecruiterInterviewsPage() {
                                 )}
                               </div>
 
-                              {/* Right — action button */}
                               <div className="text-right text-sm min-w-[120px] flex flex-col gap-2 items-end">
                                 {iv.interviewer_name && (
                                   <div className="text-xs text-gray-400">Int: {iv.interviewer_name}</div>
@@ -515,7 +529,7 @@ export default function RecruiterInterviewsPage() {
           </div>
         )}
 
-        {/* ══════════════════ CALENDAR VIEWS ══════════════════ */}
+        {/* ══ CALENDAR VIEWS ══ */}
         {viewMode !== 'list' && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
@@ -531,7 +545,7 @@ export default function RecruiterInterviewsPage() {
             {viewMode === 'month' && (
               <div className="p-4">
                 <div className="grid grid-cols-7 mb-2">
-                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                  {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
                     <div key={d} className="text-center text-xs font-bold text-gray-400 uppercase py-2">{d}</div>
                   ))}
                 </div>
@@ -555,9 +569,9 @@ export default function RecruiterInterviewsPage() {
               <div className="p-4">
                 <div className="grid grid-cols-7 gap-2">
                   {weekDays.map(date => {
-                    const ds = isoDate(date)
+                    const ds      = isoDate(date)
                     const isToday = ds === todayStr
-                    const ivs = interviewsByDate[ds] || []
+                    const ivs     = interviewsByDate[ds] || []
                     return (
                       <div key={ds}>
                         <div className={`text-center py-2 mb-2 rounded-lg text-sm font-bold ${isToday ? 'bg-teal-600 text-white' : 'text-gray-600'}`}>
@@ -598,7 +612,7 @@ export default function RecruiterInterviewsPage() {
                   </span>
                 </div>
                 {(() => {
-                  const ds = isoDate(calDate)
+                  const ds  = isoDate(calDate)
                   const ivs = interviewsByDate[ds] || []
                   if (ivs.length === 0) return (
                     <div className="text-center py-16 text-gray-400">
@@ -637,7 +651,7 @@ export default function RecruiterInterviewsPage() {
         )}
       </div>
 
-      {/* ════════════════ DETAIL MODAL ════════════════ */}
+      {/* DETAIL MODAL */}
       {selectedInterview && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedInterview(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
@@ -760,7 +774,7 @@ export default function RecruiterInterviewsPage() {
         </div>
       )}
 
-      {/* ════════════════ MANAGE MODAL ════════════════ */}
+      {/* MANAGE MODAL */}
       {schedulerInterview && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setSchedulerInterview(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
