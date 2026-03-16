@@ -11,6 +11,7 @@ import MatchScorePanel from '@/components/MatchScorePanel'
 import {
   PIPELINE_STAGES,
   STAGE_LABEL,
+  LOCKED_STAGES,         // ← CHANGE 1: added import
   getStageLabel,
   isRejectedStage,
 } from '@/lib/pipelineStages'
@@ -202,14 +203,12 @@ export default function CandidateDetailView({
         if (updateError) throw updateError
 
         // ── Sync offer status when relevant ────────────────────────────────
-        // Only stages that directly relate to an offer touch the offers table.
-        // screening_rejected / interview_rejected → no offer exists yet, skip.
         let offerStatus: string | null = null
         switch (newStage) {
           case 'offer_extended':  offerStatus = 'extended'; break
           case 'offer_accepted':  offerStatus = 'accepted'; break
-          case 'offer_rejected':  offerStatus = 'rejected'; break  // ← NEW: candidate declines
-          case 'renege':          offerStatus = 'renege';   break  // ← was 'dropped'
+          case 'offer_rejected':  offerStatus = 'rejected'; break
+          case 'renege':          offerStatus = 'renege';   break
         }
 
         if (offerStatus) {
@@ -353,7 +352,6 @@ export default function CandidateDetailView({
   }
 
   // ── Renege ───────────────────────────────────────────────────────────────────
-  // FIX: was setting current_stage:'dropped' — now correctly uses 'renege'
 
   const handleRenege = async () => {
     if (!candidate) return
@@ -380,7 +378,6 @@ export default function CandidateDetailView({
         ? new Date() <= new Date(candidate.guarantee_period_ends)
         : false
 
-      // ✅ FIX: was 'dropped' — now 'renege' (matches standard 13 stages)
       const { error: candidateError } = await supabase
         .from('candidates')
         .update({
@@ -436,7 +433,8 @@ export default function CandidateDetailView({
   // ── Offer helpers ────────────────────────────────────────────────────────────
 
   const canCreateOffer = () => {
-    if (candidate?.current_stage !== 'interview_completed') return false
+    // CHANGE 2: check 'documentation' instead of 'interview_completed'
+    if (candidate?.current_stage !== 'documentation') return false
     if (activeOffer) return false
     const userData    = localStorage.getItem('user')
     const currentUser = userData ? JSON.parse(userData) : null
@@ -612,7 +610,7 @@ export default function CandidateDetailView({
   }
 
   // ── Interview scheduler gate ───────────────────────────────────────────────
-  // Disable scheduling once candidate is past interview or terminal
+
   const isInterviewDisabled = () => {
     const disabledStages = [
       'offer_extended', 'offer_accepted', 'offer_rejected',
@@ -700,18 +698,28 @@ export default function CandidateDetailView({
         <div className="flex items-center gap-4 flex-wrap">
           <div className="flex-1 min-w-[200px]">
             <label className="block text-sm font-medium text-gray-700 mb-2">Current Stage</label>
-            {/* ✅ PIPELINE_STAGES from lib — single source of truth */}
+
+            {/* CHANGE 3: locked stages are disabled with a lock prefix and tooltip */}
             <select
               value={candidate.current_stage}
               onChange={e => handleStageUpdate(e.target.value)}
               disabled={updatingStage}
               className="input"
             >
-              {PIPELINE_STAGES.map(stage => (
-                <option key={stage} value={stage}>
-                  {STAGE_LABEL[stage]}
-                </option>
-              ))}
+              {PIPELINE_STAGES.map(stage => {
+                const isLocked = LOCKED_STAGES.includes(stage)
+                return (
+                  <option
+                    key={stage}
+                    value={stage}
+                    disabled={isLocked}
+                    title={isLocked ? 'This stage is set automatically by the system' : undefined}
+                    style={isLocked ? { color: '#9ca3af' } : undefined}
+                  >
+                    {isLocked ? `🔒 ${STAGE_LABEL[stage]}` : STAGE_LABEL[stage]}
+                  </option>
+                )
+              })}
             </select>
           </div>
 

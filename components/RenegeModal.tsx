@@ -110,7 +110,7 @@ export default function RenegeModal({ offer, onSuccess, onCancel }: RenegeModalP
           </p>
           <ul className="text-sm text-red-700 mt-2 space-y-1 list-disc list-inside">
             <li>Set revenue to ₹0 (was ₹{(offer.fixed_ctc * 0.0833).toFixed(2)}L)</li>
-            <li>Mark candidate stage as "Dropped"</li>
+            <li>Mark candidate stage as "Renege"</li>
             <li>Remove from placement safety tracking</li>
           </ul>
         </div>

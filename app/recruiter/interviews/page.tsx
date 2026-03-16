@@ -43,6 +43,7 @@ const PAST_STAGES = [
   'interview_rejected',
   'offer_rejected',
   'interview_completed',
+  'documentation', 
   'offer_extended',
   'offer_accepted',
   'joined',

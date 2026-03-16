@@ -29,20 +29,20 @@ interface InterviewSchedulerProps {
 // Reschedule     → NO stage change
 // Next Round     → NO stage change (mark current complete, create new interview)
 // Client Hold    → stage: on_hold
-// Rejected       → stage: rejected
-// Completed      → stage: interview_completed
+// Rejected       → stage: interview_rejected
+// Completed      → stage: documentation  ← CHANGED from interview_completed
 // Cancel         → NO stage change
 
 type SchedulerMode = 'schedule' | 'reschedule' | 'next_round' | 'hold' | 'interview_rejected' | 'completed' | 'cancel'
 
 const MODE_CONFIG: Record<SchedulerMode, { label: string; icon: string; color: string; activeColor: string }> = {
-  schedule:   { label: 'Schedule',         icon: '📅', color: 'border-gray-200 text-gray-600 hover:border-blue-300',    activeColor: 'bg-blue-600 text-white border-blue-600' },
-  reschedule: { label: 'Reschedule',       icon: '🔄', color: 'border-gray-200 text-gray-600 hover:border-blue-300',    activeColor: 'bg-blue-600 text-white border-blue-600' },
-  next_round: { label: 'Next Round',       icon: '➡️', color: 'border-gray-200 text-gray-600 hover:border-indigo-300',  activeColor: 'bg-indigo-600 text-white border-indigo-600' },
-  hold:       { label: 'Client Hold',      icon: '⏸️', color: 'border-gray-200 text-gray-600 hover:border-orange-300',  activeColor: 'bg-orange-500 text-white border-orange-500' },
-  interview_rejected:   { label: 'Interview Rejected',         icon: '❌', color: 'border-gray-200 text-gray-600 hover:border-red-300',     activeColor: 'bg-red-600 text-white border-red-600' },
-  completed:  { label: 'Selected / Done',  icon: '✅', color: 'border-gray-200 text-gray-600 hover:border-green-300',   activeColor: 'bg-green-600 text-white border-green-600' },
-  cancel:     { label: 'Cancel Interview', icon: '🚫', color: 'border-gray-200 text-gray-600 hover:border-red-300',     activeColor: 'bg-red-600 text-white border-red-600' },
+  schedule:          { label: 'Schedule',         icon: '📅', color: 'border-gray-200 text-gray-600 hover:border-blue-300',    activeColor: 'bg-blue-600 text-white border-blue-600' },
+  reschedule:        { label: 'Reschedule',        icon: '🔄', color: 'border-gray-200 text-gray-600 hover:border-blue-300',    activeColor: 'bg-blue-600 text-white border-blue-600' },
+  next_round:        { label: 'Next Round',        icon: '➡️', color: 'border-gray-200 text-gray-600 hover:border-indigo-300',  activeColor: 'bg-indigo-600 text-white border-indigo-600' },
+  hold:              { label: 'Client Hold',       icon: '⏸️', color: 'border-gray-200 text-gray-600 hover:border-orange-300',  activeColor: 'bg-orange-500 text-white border-orange-500' },
+  interview_rejected:{ label: 'Interview Rejected',icon: '❌', color: 'border-gray-200 text-gray-600 hover:border-red-300',     activeColor: 'bg-red-600 text-white border-red-600' },
+  completed:         { label: 'Selected / Done',   icon: '✅', color: 'border-gray-200 text-gray-600 hover:border-green-300',   activeColor: 'bg-green-600 text-white border-green-600' },
+  cancel:            { label: 'Cancel Interview',  icon: '🚫', color: 'border-gray-200 text-gray-600 hover:border-red-300',     activeColor: 'bg-red-600 text-white border-red-600' },
 }
 
 export default function InterviewScheduler({
@@ -56,27 +56,27 @@ export default function InterviewScheduler({
   const [mode, setMode] = useState<SchedulerMode>(existingInterview ? 'reschedule' : 'schedule')
 
   const [formData, setFormData] = useState({
-    interview_date: '',
-    interview_time: '',
-    interview_round: '1',
-    interview_type: 'video',
-    interviewer_name: '',
+    interview_date:    '',
+    interview_time:    '',
+    interview_round:   '1',
+    interview_type:    'video',
+    interviewer_name:  '',
     interviewer_email: '',
   })
 
-  const [reason, setReason] = useState('')
-  const [holdNotes, setHoldNotes] = useState('')
+  const [reason, setReason]                                   = useState('')
+  const [holdNotes, setHoldNotes]                             = useState('')
   const [moreInterviewsInProgress, setMoreInterviewsInProgress] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
+  const [submitting, setSubmitting]                           = useState(false)
 
   useEffect(() => {
     if (existingInterview) {
       setFormData({
-        interview_date:   existingInterview.interview_date || '',
-        interview_time:   existingInterview.interview_time || '',
-        interview_round:  String(existingInterview.interview_round || '1'),
-        interview_type:   existingInterview.interview_type || 'video',
-        interviewer_name: existingInterview.interviewer_name || '',
+        interview_date:    existingInterview.interview_date || '',
+        interview_time:    existingInterview.interview_time || '',
+        interview_round:   String(existingInterview.interview_round || '1'),
+        interview_type:    existingInterview.interview_type || 'video',
+        interviewer_name:  existingInterview.interviewer_name || '',
         interviewer_email: existingInterview.interviewer_email || '',
       })
       setMoreInterviewsInProgress(existingInterview.more_interviews_in_progress || false)
@@ -97,14 +97,14 @@ export default function InterviewScheduler({
     try {
       const userData = getUser()
       const { data, error } = await supabase.from('interviews').insert([{
-        candidate_id:     candidateId,
-        job_id:           jobId,
-        recruiter_id:     userData.id,
-        interview_round:  parseInt(formData.interview_round),
-        interview_date:   formData.interview_date,
-        interview_time:   formData.interview_time,
-        interview_type:   formData.interview_type,
-        interviewer_name: formData.interviewer_name || null,
+        candidate_id:      candidateId,
+        job_id:            jobId,
+        recruiter_id:      userData.id,
+        interview_round:   parseInt(formData.interview_round),
+        interview_date:    formData.interview_date,
+        interview_time:    formData.interview_time,
+        interview_type:    formData.interview_type,
+        interviewer_name:  formData.interviewer_name || null,
         interviewer_email: formData.interviewer_email || null,
         status: 'scheduled',
         more_interviews_in_progress: moreInterviewsInProgress,
@@ -119,11 +119,17 @@ export default function InterviewScheduler({
       }).eq('id', candidateId)
 
       await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidateId,
+        candidate_id:  candidateId,
         activity_type: 'interview_scheduled',
         activity_title: 'Interview Scheduled',
         activity_description: `Round ${formData.interview_round} ${formData.interview_type} interview scheduled for ${formData.interview_date} at ${formData.interview_time}${moreInterviewsInProgress ? ' — Client is interviewing multiple candidates' : ''}`,
-        metadata: { interview_id: data[0].id, interview_round: formData.interview_round, interview_date: formData.interview_date, interview_time: formData.interview_time, more_interviews_in_progress: moreInterviewsInProgress },
+        metadata: {
+          interview_id:                data[0].id,
+          interview_round:             formData.interview_round,
+          interview_date:              formData.interview_date,
+          interview_time:              formData.interview_time,
+          more_interviews_in_progress: moreInterviewsInProgress,
+        },
         performed_by: userData.id,
       }])
 
@@ -146,15 +152,15 @@ export default function InterviewScheduler({
       const userData = getUser()
 
       await supabase.from('interviews').update({
-        interview_date:   formData.interview_date,
-        interview_time:   formData.interview_time,
-        interview_type:   formData.interview_type,
-        interview_round:  parseInt(formData.interview_round),
-        interviewer_name: formData.interviewer_name || null,
+        interview_date:    formData.interview_date,
+        interview_time:    formData.interview_time,
+        interview_type:    formData.interview_type,
+        interview_round:   parseInt(formData.interview_round),
+        interviewer_name:  formData.interviewer_name || null,
         interviewer_email: formData.interviewer_email || null,
         status: 'rescheduled',
         reschedule_reason: reason || null,
-        rescheduled_at: new Date().toISOString(),
+        rescheduled_at:    new Date().toISOString(),
         more_interviews_in_progress: moreInterviewsInProgress,
       }).eq('id', existingInterview.id)
 
@@ -165,11 +171,16 @@ export default function InterviewScheduler({
       }).eq('id', candidateId)
 
       await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidateId,
+        candidate_id:  candidateId,
         activity_type: 'interview_rescheduled',
         activity_title: 'Interview Rescheduled',
         activity_description: `Round ${formData.interview_round} rescheduled to ${formData.interview_date} at ${formData.interview_time}${reason ? '. Reason: ' + reason : ''}`,
-        metadata: { interview_id: existingInterview.id, new_date: formData.interview_date, new_time: formData.interview_time, reschedule_reason: reason },
+        metadata: {
+          interview_id:      existingInterview.id,
+          new_date:          formData.interview_date,
+          new_time:          formData.interview_time,
+          reschedule_reason: reason,
+        },
         performed_by: userData.id,
       }])
 
@@ -189,20 +200,20 @@ export default function InterviewScheduler({
     if (!existingInterview) return
     setSubmitting(true)
     try {
-      const userData = getUser()
+      const userData  = getUser()
       const nextRound = existingInterview.interview_round + 1
 
       await supabase.from('interviews').update({ status: 'completed' }).eq('id', existingInterview.id)
 
       const { data: newIv, error } = await supabase.from('interviews').insert([{
-        candidate_id:     candidateId,
-        job_id:           jobId,
-        recruiter_id:     userData.id,
-        interview_round:  nextRound,
-        interview_date:   formData.interview_date,
-        interview_time:   formData.interview_time,
-        interview_type:   formData.interview_type,
-        interviewer_name: formData.interviewer_name || null,
+        candidate_id:      candidateId,
+        job_id:            jobId,
+        recruiter_id:      userData.id,
+        interview_round:   nextRound,
+        interview_date:    formData.interview_date,
+        interview_time:    formData.interview_time,
+        interview_type:    formData.interview_type,
+        interviewer_name:  formData.interviewer_name || null,
         interviewer_email: formData.interviewer_email || null,
         status: 'scheduled',
         more_interviews_in_progress: false,
@@ -216,11 +227,16 @@ export default function InterviewScheduler({
       }).eq('id', candidateId)
 
       await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidateId,
+        candidate_id:  candidateId,
         activity_type: 'next_round_scheduled',
         activity_title: `Round ${nextRound} Interview Scheduled`,
         activity_description: `Cleared Round ${existingInterview.interview_round}. Round ${nextRound} ${formData.interview_type} interview scheduled for ${formData.interview_date} at ${formData.interview_time}`,
-        metadata: { previous_interview_id: existingInterview.id, new_interview_id: newIv[0].id, previous_round: existingInterview.interview_round, next_round: nextRound },
+        metadata: {
+          previous_interview_id: existingInterview.id,
+          new_interview_id:      newIv[0].id,
+          previous_round:        existingInterview.interview_round,
+          next_round:            nextRound,
+        },
         performed_by: userData.id,
       }])
 
@@ -242,10 +258,10 @@ export default function InterviewScheduler({
       const userData = getUser()
 
       await supabase.from('interviews').update({
-        status: 'on_hold',
+        status:     'on_hold',
         client_hold: true,
         more_interviews_in_progress: true,
-        hold_notes: holdNotes || null,
+        hold_notes:  holdNotes || null,
         hold_set_at: new Date().toISOString(),
       }).eq('id', existingInterview.id)
 
@@ -256,11 +272,15 @@ export default function InterviewScheduler({
       }).eq('id', candidateId)
 
       await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidateId,
+        candidate_id:  candidateId,
         activity_type: 'client_hold',
         activity_title: '⏸️ Client Hold — More Interviews in Progress',
         activity_description: `Client is interviewing more candidates before final decision.${holdNotes ? ' Notes: ' + holdNotes : ''}`,
-        metadata: { interview_id: existingInterview.id, more_interviews_in_progress: true, hold_notes: holdNotes },
+        metadata: {
+          interview_id:                existingInterview.id,
+          more_interviews_in_progress: true,
+          hold_notes:                  holdNotes,
+        },
         performed_by: userData.id,
       }])
 
@@ -274,7 +294,7 @@ export default function InterviewScheduler({
   }
 
   // ── 5. REJECTED ───────────────────────────────────────────────────────────
-  // Stage → rejected
+  // Stage → interview_rejected
   const handleRejected = async () => {
     if (!existingInterview) return
     if (!reason.trim()) { alert('Please provide a rejection reason.'); return }
@@ -283,9 +303,9 @@ export default function InterviewScheduler({
       const userData = getUser()
 
       await supabase.from('interviews').update({
-        status: 'interview_rejected',
+        status:       'interview_rejected',
         cancel_reason: reason,
-        cancelled_at: new Date().toISOString(),
+        cancelled_at:  new Date().toISOString(),
       }).eq('id', existingInterview.id)
 
       await supabase.from('candidates').update({
@@ -294,7 +314,7 @@ export default function InterviewScheduler({
       }).eq('id', candidateId)
 
       await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidateId,
+        candidate_id:  candidateId,
         activity_type: 'interview_rejected',
         activity_title: '❌ Interview Rejected',
         activity_description: `Round ${existingInterview.interview_round} — Candidate interview rejected. Reason: ${reason}`,
@@ -312,7 +332,7 @@ export default function InterviewScheduler({
   }
 
   // ── 6. COMPLETED / SELECTED ───────────────────────────────────────────────
-  // Stage → interview_completed
+  // Stage → documentation  ← CHANGED from interview_completed
   const handleCompleted = async () => {
     if (!existingInterview) return
     setSubmitting(true)
@@ -321,21 +341,22 @@ export default function InterviewScheduler({
 
       await supabase.from('interviews').update({ status: 'completed' }).eq('id', existingInterview.id)
 
+      // CHANGE: was 'interview_completed' — now 'documentation' per confirmed stage map
       await supabase.from('candidates').update({
-        current_stage: 'interview_completed',
+        current_stage: 'documentation',
         last_activity_date: new Date().toISOString(),
       }).eq('id', candidateId)
 
       await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidateId,
+        candidate_id:  candidateId,
         activity_type: 'interview_completed',
         activity_title: '✅ Interview Completed — Selected',
-        activity_description: `Round ${existingInterview.interview_round} cleared. Candidate selected — moving to offer stage.${reason ? ' Notes: ' + reason : ''}`,
+        activity_description: `Round ${existingInterview.interview_round} cleared. Candidate selected — moving to documentation stage.${reason ? ' Notes: ' + reason : ''}`,
         metadata: { interview_id: existingInterview.id, notes: reason },
         performed_by: userData.id,
       }])
 
-      alert('Candidate marked as Selected. Moving to offer stage.')
+      alert('Candidate marked as Selected. Moving to Documentation stage.')
       onScheduled()
     } catch (error: any) {
       alert('Error completing interview: ' + (error.message || 'Unknown error'))
@@ -354,9 +375,9 @@ export default function InterviewScheduler({
       const userData = getUser()
 
       await supabase.from('interviews').update({
-        status: 'cancelled',
+        status:       'cancelled',
         cancel_reason: reason,
-        cancelled_at: new Date().toISOString(),
+        cancelled_at:  new Date().toISOString(),
       }).eq('id', existingInterview.id)
 
       // NO stage change
@@ -365,7 +386,7 @@ export default function InterviewScheduler({
       }).eq('id', candidateId)
 
       await supabase.from('candidate_timeline').insert([{
-        candidate_id: candidateId,
+        candidate_id:  candidateId,
         activity_type: 'interview_cancelled',
         activity_title: '🚫 Interview Cancelled',
         activity_description: `Round ${existingInterview.interview_round} interview cancelled. Reason: ${reason}`,
@@ -461,6 +482,7 @@ export default function InterviewScheduler({
 
   return (
     <div className="space-y-4">
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -561,13 +583,13 @@ export default function InterviewScheduler({
       {/* ── CLIENT HOLD ── */}
       {mode === 'hold' && (
         <div className="space-y-4">
-          <StageBadge to="On Hold" />
+          <StageBadge to="On Hold / Dropped" />
           <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-4 flex items-start gap-3">
             <span className="text-2xl">⏸️</span>
             <div>
               <div className="font-bold text-orange-900">Client Hold — More Interviews in Progress</div>
               <div className="text-sm text-orange-700 mt-1">
-                Client is evaluating more candidates. Stage moves to <strong>On Hold</strong>.
+                Client is evaluating more candidates. Stage moves to <strong>On Hold / Dropped</strong>.
               </div>
             </div>
           </div>
@@ -629,13 +651,14 @@ export default function InterviewScheduler({
       {/* ── COMPLETED / SELECTED ── */}
       {mode === 'completed' && (
         <div className="space-y-4">
-          <StageBadge to="Interview Completed" />
+          {/* CHANGE: badge and description now say Documentation, not Interview Completed */}
+          <StageBadge to="Documentation" />
           <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4 flex items-start gap-3">
             <span className="text-2xl">✅</span>
             <div>
               <div className="font-bold text-green-900">Candidate Selected / Interview Completed</div>
               <div className="text-sm text-green-700 mt-1">
-                Candidate has cleared all rounds. Stage moves to <strong>Interview Completed</strong> — ready for offer.
+                Candidate has cleared all rounds. Stage moves to <strong>Documentation</strong> — ready for offer.
               </div>
             </div>
           </div>

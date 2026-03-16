@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase as supabaseAdmin } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
+import InterviewScheduler from '@/components/InterviewScheduler'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Interview {
@@ -16,14 +17,13 @@ interface Interview {
   interview_round: number
   status: string
   interviewer_name: string | null
+  interviewer_email: string | null
   notes: string | null
-  // Flag fields
   client_hold: boolean
   more_interviews_in_progress: boolean
   hold_notes: string | null
   cancel_reason: string | null
   reschedule_reason: string | null
-  // Joined
   _candidateName: string
   _jobTitle: string
   _clientName: string
@@ -31,18 +31,28 @@ interface Interview {
   _teamName: string
   _candidateStage: string
   _jobCode: string
+  _jobId: string
 }
 
 type ViewMode = 'list' | 'day' | 'week' | 'month'
-type TabMode = 'active' | 'past'
+type TabMode  = 'active' | 'past'
 
-// Stages that move interview to "Past"
+// CHANGE: removed dead keys (rejected, hold, dropped, renege_dropped)
+//         added missing keys (screening_rejected, interview_rejected, offer_rejected, documentation)
 const PAST_STAGES = [
-  'rejected', 'interview_rejected', 'hold', 'interview_completed', 'offer_extended',
-  'offer_accepted', 'joined', 'renege', 'dropped', 'renege_dropped', 'on_hold',
+  'screening_rejected',
+  'interview_rejected',
+  'offer_rejected',
+  'interview_completed',
+  'documentation',
+  'offer_extended',
+  'offer_accepted',
+  'joined',
+  'renege',
+  'on_hold',
 ]
 
-const TYPE_ICONS: Record<string, string>  = { phone: '📞', video: '🎥', in_person: '🏢' }
+const TYPE_ICONS:  Record<string, string> = { phone: '📞', video: '🎥', in_person: '🏢' }
 const TYPE_LABELS: Record<string, string> = { phone: 'Phone', video: 'Video', in_person: 'In Person' }
 const TYPE_COLORS: Record<string, string> = {
   phone:     'bg-sky-500',
@@ -63,35 +73,42 @@ const STATUS_COLORS: Record<string, string> = {
   on_hold:     'bg-orange-100 text-orange-800',
   rejected:    'bg-red-100 text-red-800',
 }
+
+// CHANGE: replaced dead stage keys with standard 13
 const STAGE_LABELS: Record<string, string> = {
-  rejected: 'Rejected', hold: 'On Hold', interview_completed: 'Interview Completed',
-  offer_extended: 'Offer Extended', offer_accepted: 'Offer Accepted',
-  joined: 'Joined', renege: 'Renege', dropped: 'Dropped',
-  renege_dropped: 'Renege Dropped', on_hold: 'On Hold',
-  screening: 'Screening', interview_scheduled: 'Interview Scheduled',
-  shortlisted: 'Shortlisted', offer_sent: 'Offer Sent', negotiation: 'Negotiation',
-  interview_rejected: 'Interview Rejected',
-}
-const STAGE_COLORS: Record<string, string> = {
-  rejected: 'bg-red-100 text-red-800',
-  hold: 'bg-gray-100 text-gray-700',
-  on_hold: 'bg-gray-100 text-gray-700',
-  interview_completed: 'bg-blue-100 text-blue-800',
-  offer_extended: 'bg-indigo-100 text-indigo-800',
-  offer_accepted: 'bg-violet-100 text-violet-800',
-  joined: 'bg-green-100 text-green-800',
-  renege: 'bg-orange-100 text-orange-800',
-  dropped: 'bg-red-100 text-red-700',
-  renege_dropped: 'bg-orange-100 text-orange-700',
-  screening: 'bg-yellow-100 text-yellow-800',
-  interview_scheduled: 'bg-blue-100 text-blue-700',
-  shortlisted: 'bg-cyan-100 text-cyan-800',
-  offer_sent: 'bg-purple-100 text-purple-800',
-  negotiation: 'bg-amber-100 text-amber-800',
-  interview_rejected: 'bg-red-100 text-red-800',
+  sourced:             'CV Sourced',
+  screening:           'Sent to Client',
+  screening_rejected:  'CV Rejected',
+  interview_scheduled: 'Interview Scheduled',
+  interview_completed: 'Interview Completed',
+  interview_rejected:  'Interview Rejected',
+  documentation:       'Documentation',
+  offer_extended:      'Offer Extended',
+  offer_accepted:      'Offer Accepted',
+  offer_rejected:      'Offer Rejected',
+  joined:              'Joined',
+  renege:              'Renege',
+  on_hold:             'On Hold / Dropped',
 }
 
-const isoDate = (d: Date) => d.toISOString().slice(0, 10)
+// CHANGE: replaced dead stage keys with standard 13
+const STAGE_COLORS: Record<string, string> = {
+  sourced:             'bg-gray-100 text-gray-700',
+  screening:           'bg-yellow-100 text-yellow-800',
+  screening_rejected:  'bg-orange-100 text-orange-800',
+  interview_scheduled: 'bg-blue-100 text-blue-700',
+  interview_completed: 'bg-blue-100 text-blue-800',
+  interview_rejected:  'bg-red-100 text-red-800',
+  documentation:       'bg-cyan-100 text-cyan-800',
+  offer_extended:      'bg-indigo-100 text-indigo-800',
+  offer_accepted:      'bg-violet-100 text-violet-800',
+  offer_rejected:      'bg-rose-100 text-rose-800',
+  joined:              'bg-green-100 text-green-800',
+  renege:              'bg-orange-100 text-orange-800',
+  on_hold:             'bg-gray-100 text-gray-700',
+}
+
+const isoDate  = (d: Date) => d.toISOString().slice(0, 10)
 const todayStr = isoDate(new Date())
 
 const MIPBadge = () => (
@@ -108,28 +125,24 @@ const ClientHoldBadge = () => (
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ManagementInterviewsPage() {
   const router = useRouter()
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser]       = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   const [allInterviews, setAllInterviews] = useState<Interview[]>([])
-  const [tab, setTab] = useState<TabMode>('active')
+  const [tab, setTab]           = useState<TabMode>('active')
   const [viewMode, setViewMode] = useState<ViewMode>('list')
 
-  // Filters
   const [teamFilter, setTeamFilter]     = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [dateFrom, setDateFrom]         = useState('')
   const [dateTo, setDateTo]             = useState('')
   const [flagFilter, setFlagFilter]     = useState<'all' | 'mip' | 'hold'>('all')
 
-  // Calendar nav
   const [calDate, setCalDate] = useState(new Date())
+  const [teams, setTeams]     = useState<string[]>([])
 
-  // Teams list for filter dropdown
-  const [teams, setTeams] = useState<string[]>([])
-
-  // Detail modal
-  const [selectedInterview, setSelectedInterview] = useState<Interview | null>(null)
+  const [selectedInterview, setSelectedInterview]   = useState<Interview | null>(null)
+  const [schedulerInterview, setSchedulerInterview] = useState<Interview | null>(null)
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -170,7 +183,7 @@ export default function ManagementInterviewsPage() {
 
       const { data: teamCandidates } = await supabaseAdmin
         .from('candidates')
-        .select('id, full_name, current_stage, assigned_to, more_interviews_in_progress, jobs(job_title, job_code, clients(company_name))')
+        .select('id, full_name, current_stage, assigned_to, more_interviews_in_progress, jobs(id, job_title, job_code, clients(company_name))')
         .in('assigned_to', allRecruiterIds)
 
       if (!teamCandidates || teamCandidates.length === 0) {
@@ -189,7 +202,7 @@ export default function ManagementInterviewsPage() {
         .order('interview_time', { ascending: true })
 
       const mapped: Interview[] = (raw || []).map((iv: any) => {
-        const cand = candidateMap[iv.candidate_id]
+        const cand        = candidateMap[iv.candidate_id]
         const recruiterId = iv.recruiter_id || cand?.assigned_to
         return {
           id:               iv.id,
@@ -199,20 +212,22 @@ export default function ManagementInterviewsPage() {
           interview_type:   iv.interview_type || 'phone',
           interview_round:  iv.interview_round || 1,
           status:           iv.status || 'scheduled',
-          interviewer_name: iv.interviewer_name || null,
-          notes:            iv.notes || null,
-          client_hold:               iv.client_hold || false,
+          interviewer_name:  iv.interviewer_name || null,
+          interviewer_email: iv.interviewer_email || null,
+          notes:             iv.notes || null,
+          client_hold:                iv.client_hold || false,
           more_interviews_in_progress: iv.more_interviews_in_progress || cand?.more_interviews_in_progress || false,
-          hold_notes:       iv.hold_notes || null,
-          cancel_reason:    iv.cancel_reason || null,
+          hold_notes:        iv.hold_notes || null,
+          cancel_reason:     iv.cancel_reason || null,
           reschedule_reason: iv.reschedule_reason || null,
-          _candidateName:   cand?.full_name || '—',
-          _jobTitle:        cand?.jobs?.job_title || '—',
-          _jobCode:         cand?.jobs?.job_code || '',
-          _clientName:      cand?.jobs?.clients?.company_name || '—',
-          _recruiterName:   iv.recruiter?.full_name || uMap[recruiterId]?.full_name || '—',
-          _teamName:        recruiterId ? resolveTeam(recruiterId) : '—',
-          _candidateStage:  cand?.current_stage || '',
+          _candidateName:  cand?.full_name || '—',
+          _jobTitle:       cand?.jobs?.job_title || '—',
+          _jobCode:        cand?.jobs?.job_code || '',
+          _clientName:     cand?.jobs?.clients?.company_name || '—',
+          _recruiterName:  iv.recruiter?.full_name || uMap[recruiterId]?.full_name || '—',
+          _teamName:       recruiterId ? resolveTeam(recruiterId) : '—',
+          _candidateStage: cand?.current_stage || '',
+          _jobId:          cand?.jobs?.id || '',
         }
       })
 
@@ -230,7 +245,7 @@ export default function ManagementInterviewsPage() {
   // ── Split active vs past ───────────────────────────────────────────────────
   const { activeInterviews, pastInterviews } = useMemo(() => {
     const active: Interview[] = []
-    const past: Interview[]   = []
+    const past:   Interview[] = []
     allInterviews.forEach(iv => {
       if (
         PAST_STAGES.includes(iv._candidateStage) ||
@@ -262,11 +277,10 @@ export default function ManagementInterviewsPage() {
     active:          activeInterviews.length,
     today:           activeInterviews.filter(i => i.interview_date === todayStr).length,
     tomorrow:        activeInterviews.filter(i => {
-      const t = new Date(); t.setDate(t.getDate() + 1)
-      return i.interview_date === isoDate(t)
+      const t = new Date(); t.setDate(t.getDate() + 1); return i.interview_date === isoDate(t)
     }).length,
     thisWeek:        activeInterviews.filter(i => {
-      const d = new Date(i.interview_date)
+      const d  = new Date(i.interview_date)
       const ws = new Date(); ws.setDate(ws.getDate() - ws.getDay())
       const we = new Date(ws); we.setDate(ws.getDate() + 6)
       return d >= ws && d <= we
@@ -318,7 +332,7 @@ export default function ManagementInterviewsPage() {
 
   const CalendarDayCell = ({ date, interviews }: { date: Date | null; interviews: Interview[] }) => {
     if (!date) return <div className="min-h-[100px] bg-gray-50 rounded-lg" />
-    const ds = isoDate(date)
+    const ds      = isoDate(date)
     const isToday = ds === todayStr
     const isPast  = ds < todayStr
     return (
@@ -357,13 +371,13 @@ export default function ManagementInterviewsPage() {
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-5 pb-8">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="bg-gradient-to-r from-indigo-700 to-blue-700 rounded-xl p-6 text-white">
           <h1 className="text-3xl font-bold mb-1">🗓️ Company-Wide Interviews</h1>
           <p className="text-indigo-200">All teams · Full organisation view · Schedule & history</p>
         </div>
 
-        {/* ── KPI Strip ── */}
+        {/* KPI Strip */}
         <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
           {[
             { label: 'Total',          value: kpis.total,           color: 'text-gray-900',   highlight: false },
@@ -389,7 +403,7 @@ export default function ManagementInterviewsPage() {
           ))}
         </div>
 
-        {/* ── Active flag banner ── */}
+        {/* Active flag banner */}
         {flagFilter !== 'all' && (
           <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5">
             <span className="text-sm font-semibold text-orange-800">
@@ -401,7 +415,7 @@ export default function ManagementInterviewsPage() {
           </div>
         )}
 
-        {/* ── Filters ── */}
+        {/* Filters */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex flex-wrap gap-3 items-end">
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Team</label>
@@ -444,7 +458,7 @@ export default function ManagementInterviewsPage() {
           <div className="ml-auto text-sm text-gray-400">{filtered.length} interviews</div>
         </div>
 
-        {/* ── Tabs + View Mode ── */}
+        {/* Tabs + View Mode */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
             <button onClick={() => setTab('active')}
@@ -475,7 +489,7 @@ export default function ManagementInterviewsPage() {
           </div>
         </div>
 
-        {/* ══════════════════ LIST VIEW ══════════════════ */}
+        {/* ══ LIST VIEW ══ */}
         {viewMode === 'list' && (
           <div className="space-y-3">
             {filtered.length === 0 ? (
@@ -494,7 +508,7 @@ export default function ManagementInterviewsPage() {
                 return Object.entries(grouped)
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([date, ivs]) => {
-                    const d = new Date(date + 'T00:00:00')
+                    const d          = new Date(date + 'T00:00:00')
                     const isToday    = date === todayStr
                     const isTomorrow = date === isoDate(new Date(Date.now() + 86400000))
                     const isPast     = date < todayStr
@@ -515,13 +529,11 @@ export default function ManagementInterviewsPage() {
                         <div className="space-y-2">
                           {ivs.sort((a, b) => (a.interview_time || '').localeCompare(b.interview_time || '')).map(iv => (
                             <div key={iv.id}
-                              onClick={() => setSelectedInterview(iv)}
                               className={`bg-white rounded-xl border-l-4 border shadow-sm hover:shadow-md transition cursor-pointer p-4 flex items-start gap-4 flex-wrap
                                 ${iv.interview_type === 'phone' ? 'border-l-sky-400' : iv.interview_type === 'video' ? 'border-l-violet-400' : 'border-l-emerald-400'}
                                 ${iv.more_interviews_in_progress ? 'ring-1 ring-orange-200' : ''}
                                 ${iv.client_hold ? 'ring-1 ring-amber-200' : ''}`}>
 
-                              {/* Time */}
                               <div className="text-center min-w-[52px]">
                                 <div className="text-sm font-bold text-gray-800">{iv.interview_time ? iv.interview_time.slice(0, 5) : '—'}</div>
                                 <div className={`text-xs mt-0.5 px-1.5 py-0.5 rounded font-medium ${TYPE_LIGHT[iv.interview_type]}`}>
@@ -530,8 +542,7 @@ export default function ManagementInterviewsPage() {
                               </div>
                               <div className="w-px self-stretch bg-gray-100 hidden sm:block" />
 
-                              {/* Main info */}
-                              <div className="flex-1 min-w-0">
+                              <div className="flex-1 min-w-0" onClick={() => setSelectedInterview(iv)}>
                                 <div className="flex items-center gap-2 flex-wrap mb-1">
                                   <span className="font-bold text-gray-900">{iv._candidateName}</span>
                                   <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${STATUS_COLORS[iv.status] || 'bg-gray-100 text-gray-600'}`}>
@@ -561,11 +572,17 @@ export default function ManagementInterviewsPage() {
                                 )}
                               </div>
 
-                              {/* Right info */}
-                              <div className="text-right text-sm min-w-[140px]">
+                              <div className="text-right text-sm min-w-[140px] flex flex-col gap-2 items-end">
                                 <div className="text-gray-700 font-medium">👤 {iv._recruiterName}</div>
-                                <div className="text-gray-500 text-xs mt-0.5">👥 {iv._teamName}</div>
-                                {iv.interviewer_name && <div className="text-xs text-gray-400 mt-0.5">Int: {iv.interviewer_name}</div>}
+                                <div className="text-gray-500 text-xs">👥 {iv._teamName}</div>
+                                {iv.interviewer_name && <div className="text-xs text-gray-400">Int: {iv.interviewer_name}</div>}
+                                {!['cancelled', 'completed', 'no_show', 'rejected'].includes(iv.status) && tab === 'active' && (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); setSchedulerInterview(iv) }}
+                                    className="text-xs px-2 py-1 border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50 font-medium transition">
+                                    ⚙️ Manage
+                                  </button>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -578,7 +595,7 @@ export default function ManagementInterviewsPage() {
           </div>
         )}
 
-        {/* ══════════════════ CALENDAR VIEWS ══════════════════ */}
+        {/* ══ CALENDAR VIEWS ══ */}
         {viewMode !== 'list' && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
@@ -594,7 +611,7 @@ export default function ManagementInterviewsPage() {
             {viewMode === 'month' && (
               <div className="p-4">
                 <div className="grid grid-cols-7 mb-2">
-                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                  {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
                     <div key={d} className="text-center text-xs font-bold text-gray-400 uppercase py-2">{d}</div>
                   ))}
                 </div>
@@ -619,9 +636,9 @@ export default function ManagementInterviewsPage() {
               <div className="p-4">
                 <div className="grid grid-cols-7 gap-2">
                   {weekDays.map(date => {
-                    const ds = isoDate(date)
+                    const ds      = isoDate(date)
                     const isToday = ds === todayStr
-                    const ivs = interviewsByDate[ds] || []
+                    const ivs     = interviewsByDate[ds] || []
                     return (
                       <div key={ds}>
                         <div className={`text-center py-2 mb-2 rounded-lg text-sm font-bold ${isToday ? 'bg-blue-600 text-white' : 'text-gray-600'}`}>
@@ -662,7 +679,7 @@ export default function ManagementInterviewsPage() {
                   </span>
                 </div>
                 {(() => {
-                  const ds = isoDate(calDate)
+                  const ds  = isoDate(calDate)
                   const ivs = interviewsByDate[ds] || []
                   if (ivs.length === 0) return (
                     <div className="text-center py-16 text-gray-400">
@@ -703,7 +720,7 @@ export default function ManagementInterviewsPage() {
         )}
       </div>
 
-      {/* ════════════════ DETAIL MODAL ════════════════ */}
+      {/* ══ DETAIL MODAL ══ */}
       {selectedInterview && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedInterview(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
@@ -735,7 +752,6 @@ export default function ManagementInterviewsPage() {
                 </div>
               )}
             </div>
-
             <div className="p-5 space-y-3">
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div className="bg-gray-50 rounded-lg p-3">
@@ -775,9 +791,9 @@ export default function ManagementInterviewsPage() {
                 <div className="bg-gray-50 rounded-lg p-3">
                   <div className="text-xs text-gray-400 uppercase font-semibold mb-1">Interviewer</div>
                   <div className="font-medium text-gray-800">{selectedInterview.interviewer_name || '—'}</div>
+                  {selectedInterview.interviewer_email && <div className="text-xs text-gray-500">{selectedInterview.interviewer_email}</div>}
                 </div>
               </div>
-
               {selectedInterview.hold_notes && (
                 <div className="bg-orange-50 rounded-lg p-3 border border-orange-200">
                   <div className="text-xs text-orange-700 font-semibold uppercase mb-1">⏸️ Hold Notes</div>
@@ -804,18 +820,42 @@ export default function ManagementInterviewsPage() {
                   <p className="text-sm text-gray-700">{selectedInterview.notes}</p>
                 </div>
               )}
-
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={() => { router.push(`/management/candidates/${selectedInterview.candidate_id}`); setSelectedInterview(null) }}
                   className="flex-1 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition">
                   View Candidate Profile →
                 </button>
+                {!['cancelled', 'completed', 'no_show', 'rejected'].includes(selectedInterview.status) && tab === 'active' && (
+                  <button
+                    onClick={() => { setSchedulerInterview(selectedInterview); setSelectedInterview(null) }}
+                    className="px-4 py-2.5 bg-teal-50 border border-teal-300 text-teal-700 rounded-lg text-sm font-semibold hover:bg-teal-100 transition">
+                    ⚙️ Manage
+                  </button>
+                )}
                 <button onClick={() => setSelectedInterview(null)}
                   className="px-4 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition">
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ MANAGE MODAL ══ */}
+      {schedulerInterview && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setSchedulerInterview(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-6">
+              <InterviewScheduler
+                candidateId={schedulerInterview.candidate_id}
+                candidateName={schedulerInterview._candidateName}
+                jobId={schedulerInterview._jobId}
+                existingInterview={schedulerInterview}
+                onScheduled={() => { setSchedulerInterview(null); loadAll() }}
+                onCancel={() => setSchedulerInterview(null)}
+              />
             </div>
           </div>
         </div>

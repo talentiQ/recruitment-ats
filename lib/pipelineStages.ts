@@ -43,7 +43,7 @@ export const STAGE_LABEL: Record<PipelineStage, string> = {
   offer_rejected:       'Offer Rejected',
   joined:               'Joined',
   renege:               'Renege',
-  on_hold:              'On Hold',
+  on_hold:              'On Hold / Dropped',
 }
 
 // ── 3. Tailwind badge classes (bg + text colour) ──────────────────────────────
@@ -63,6 +63,19 @@ export const STAGE_BADGE: Record<PipelineStage, string> = {
   renege:               'bg-orange-200 text-orange-900',
   on_hold:              'bg-gray-200 text-gray-600',
 }
+
+/** Stages that are set automatically by modules — not manually selectable */
+export const LOCKED_STAGES: PipelineStage[] = [
+  'interview_scheduled',
+  'interview_completed',
+  'interview_rejected',
+  'documentation',
+  'offer_extended',
+  'offer_accepted',
+  'offer_rejected',
+  'joined',
+  'renege',
+]
 
 // ── 4. Helper groupings ───────────────────────────────────────────────────────
 

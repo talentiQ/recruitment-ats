@@ -42,7 +42,8 @@ export async function POST(req: NextRequest) {
         .from('jobs')
         .select('id, job_title, job_description, key_skills, experience_min, experience_max, min_ctc, max_ctc')
         .eq('id', jobId)
-        .single()
+        .limit(1)
+        .maybeSingle()
 
       if (jobError || !fetched) {
         console.error('[match-resume] Job fetch failed:', jobError?.message, '| jobId:', jobId)
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
         .from('ai_screenings')
         .select('*')
         .match({ ...sourceFilter, job_id: jobId })
-        .single()
+        .maybeSingle()
 
       if (existing) {
         const ageHours = (Date.now() - new Date(existing.created_at).getTime()) / 3_600_000
@@ -140,7 +141,7 @@ export async function POST(req: NextRequest) {
           onConflict: candidateId ? 'candidate_id,job_id' : 'resume_bank_id,job_id',
         })
         .select()
-        .single()
+        .maybeSingle()
 
       return NextResponse.json({ result: saved ?? result, cached: false })
     }
