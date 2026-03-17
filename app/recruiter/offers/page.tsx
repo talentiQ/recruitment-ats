@@ -1,3 +1,4 @@
+//app/recruiter/offers/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'

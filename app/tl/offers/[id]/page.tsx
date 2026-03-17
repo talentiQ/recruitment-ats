@@ -1,18 +1,22 @@
 // app/tl/offers/[id]/page.tsx
+
 'use client'
 export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
+import { sendNotification } from '@/lib/notificationHelper'
 
 export default function TLOfferDetailPage() {
   const params  = useParams()
   const router  = useRouter()
   const offerId = Array.isArray(params.id) ? params.id[0] : params.id
 
-  const [loading, setLoading] = useState(true)
-  const [offer,   setOffer]   = useState<any>(null)
+  const [loading,  setLoading]  = useState(true)
+  const [offer,    setOffer]    = useState<any>(null)
+  const [user,     setUser]     = useState<any>(null)
+  const [updating, setUpdating] = useState(false)
 
   useEffect(() => {
     const userData = localStorage.getItem('user')
@@ -21,6 +25,7 @@ export default function TLOfferDetailPage() {
     if (parsedUser.role !== 'team_leader') {
       alert('Access denied.'); router.push('/'); return
     }
+    setUser(parsedUser)
     loadOffer(parsedUser)
   }, [offerId])
 
@@ -92,11 +97,104 @@ export default function TLOfferDetailPage() {
     }
   }
 
+  // ── Accept Offer ──────────────────────────────────────────────────────────
+  const handleAcceptOffer = async () => {
+    if (!confirm('Mark this offer as ACCEPTED by candidate?')) return
+    setUpdating(true)
+    try {
+      const { error: offerError } = await supabase
+        .from('offers')
+        .update({ status: 'accepted' })
+        .eq('id', offerId)
+      if (offerError) throw offerError
+
+      const { error: candidateError } = await supabase
+        .from('candidates')
+        .update({
+          current_stage:      'offer_accepted',
+          last_activity_date: new Date().toISOString(),
+        })
+        .eq('id', offer.candidates.id)
+      if (candidateError) throw candidateError
+
+      await supabase.from('candidate_timeline').insert([{
+        candidate_id:  offer.candidates.id,
+        activity_type: 'offer_accepted',
+        activity_title: 'Offer Accepted ✅',
+        activity_description: `Candidate accepted the offer of ₹${offer.offered_ctc}. Stage updated to OFFER ACCEPTED.`,
+        performed_by: user.id,
+      }])
+
+      // ── NOTIFICATION: Offer Accepted ──────────────────────────────────────
+      await sendNotification({
+        event:         'offer_accepted',
+        recruiterId:   offer.recruiter_id || user.id,
+        recruiterName: user.full_name,
+        candidateId:   offer.candidates.id,
+        candidateName: offer.candidates.full_name,
+      })
+
+      alert('✅ Offer marked as accepted and stage updated!')
+      loadOffer(user)
+
+    } catch (error: any) {
+      alert('Error: ' + error.message)
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  // ── Reject Offer ──────────────────────────────────────────────────────────
+  const handleRejectOffer = async () => {
+    const reason = prompt('Reason for offer rejection?')
+    if (!reason) return
+    setUpdating(true)
+    try {
+      const { error } = await supabase
+        .from('offers')
+        .update({ status: 'rejected', notes: reason })
+        .eq('id', offerId)
+      if (error) throw error
+
+      await supabase.from('candidates').update({
+        current_stage: 'offer_rejected',
+      }).eq('id', offer.candidates.id)
+
+      await supabase.from('candidate_timeline').insert([{
+        candidate_id:  offer.candidates.id,
+        activity_type: 'offer_rejected',
+        activity_title: 'Offer Rejected ❌',
+        activity_description: `Candidate rejected offer. Reason: ${reason}`,
+        performed_by: user.id,
+      }])
+
+      // ── NOTIFICATION: Offer Rejected ──────────────────────────────────────
+      await sendNotification({
+        event:         'offer_rejected',
+        recruiterId:   offer.recruiter_id || user.id,
+        recruiterName: user.full_name,
+        candidateId:   offer.candidates.id,
+        candidateName: offer.candidates.full_name,
+      })
+
+      alert('Offer marked as rejected.')
+      loadOffer(user)
+
+    } catch (error: any) {
+      alert('Error: ' + error.message)
+    } finally {
+      setUpdating(false)
+    }
+  }
+
   const getStatusBadge = (status: string) => {
     const map: Record<string, string> = {
-      extended: 'bg-blue-100 text-blue-800',   accepted: 'bg-green-100 text-green-800',
-      rejected: 'bg-red-100 text-red-800',     expired:  'bg-gray-100 text-gray-800',
-      joined:   'bg-purple-100 text-purple-800', renege: 'bg-orange-100 text-orange-800',
+      extended: 'bg-blue-100 text-blue-800',
+      accepted: 'bg-green-100 text-green-800',
+      rejected: 'bg-red-100 text-red-800',
+      expired:  'bg-gray-100 text-gray-800',
+      joined:   'bg-purple-100 text-purple-800',
+      renege:   'bg-orange-100 text-orange-800',
     }
     return map[status] || 'bg-gray-100 text-gray-800'
   }
@@ -137,7 +235,11 @@ export default function TLOfferDetailPage() {
               </p>
               <div className="flex flex-wrap gap-3 mt-1 text-sm text-gray-500">
                 <span>👤 <strong>{offer._recruiterName}</strong></span>
-                {offer._isSelf && <span className="px-2 py-0.5 bg-teal-50 text-teal-700 rounded text-xs font-medium">Your own placement</span>}
+                {offer._isSelf && (
+                  <span className="px-2 py-0.5 bg-teal-50 text-teal-700 rounded text-xs font-medium">
+                    Your own placement
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -184,11 +286,71 @@ export default function TLOfferDetailPage() {
           </div>
         )}
 
-        {/* ── Read-Only Notice ── */}
-        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800 flex items-center gap-2">
-          <span>👁️</span>
-          <span>Team Leader view — read only. Offer actions are managed by the recruiter who owns this placement.</span>
-        </div>
+        {/* ── Action Buttons (extended status) ── */}
+        {offer.status === 'extended' && (
+          <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-5">
+            <h3 className="font-semibold text-blue-900 mb-3">📋 Update Offer Status</h3>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleAcceptOffer}
+                disabled={updating}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 font-medium disabled:opacity-50"
+              >
+                ✅ Candidate Accepted
+              </button>
+              <button
+                onClick={handleRejectOffer}
+                disabled={updating}
+                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 font-medium disabled:opacity-50"
+              >
+                ❌ Candidate Rejected
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Accepted next steps ── */}
+        {offer.status === 'accepted' && (
+          <div className="bg-green-50 border-2 border-green-200 rounded-lg p-5">
+            <h3 className="font-semibold text-green-900 mb-3">🎉 Offer Accepted — Next Steps</h3>
+            <p className="text-sm text-green-800 mb-4">
+              Use the candidate detail page to mark as joined or renege.
+            </p>
+            <button
+              onClick={() => router.push(`/tl/candidates/${offer.candidates.id}`)}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium"
+            >
+              Go to Candidate Details
+            </button>
+          </div>
+        )}
+
+        {/* ── Joined status ── */}
+        {offer.status === 'joined' && (
+          <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-5">
+            <h3 className="font-semibold text-purple-900 mb-3">✅ Candidate Joined</h3>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-purple-600">Joined Date:</span>
+                <span className="ml-2 font-medium">
+                  {offer.actual_joining_date
+                    ? new Date(offer.actual_joining_date).toLocaleDateString()
+                    : offer.candidates?.date_joined
+                      ? new Date(offer.candidates.date_joined).toLocaleDateString()
+                      : 'N/A'}
+                </span>
+              </div>
+              <div>
+                <span className="text-purple-600">Safe After:</span>
+                <span className="ml-2 font-medium">
+                  {offer.candidates?.guarantee_period_ends
+                    ? new Date(offer.candidates.guarantee_period_ends).toLocaleDateString()
+                    : 'N/A'}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── CTC Details ── */}
         <div className="bg-white rounded-lg shadow p-6">
@@ -228,7 +390,9 @@ export default function TLOfferDetailPage() {
                 <div className="text-gray-500">Guarantee Ends</div>
                 <div className={`font-semibold ${offer._safetyStatus === 'critical' ? 'text-red-600' : offer._safetyStatus === 'safe' ? 'text-green-600' : 'text-gray-900'}`}>
                   {new Date(offer.candidates.guarantee_period_ends).toLocaleDateString()}
-                  {offer._daysRemaining !== undefined && <span className="ml-2 text-xs text-gray-400">({offer._daysRemaining}d left)</span>}
+                  {offer._daysRemaining !== undefined && (
+                    <span className="ml-2 text-xs text-gray-400">({offer._daysRemaining}d left)</span>
+                  )}
                 </div>
               </div>
             )}

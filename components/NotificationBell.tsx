@@ -30,7 +30,32 @@ export default function NotificationBell({ userId }: { userId: string }) {
   const unreadCount = notifications.filter(n => !n.is_read).length
 
   useEffect(() => {
-    if (userId) loadNotifications()
+    if (!userId) return
+    loadNotifications()
+
+    // ── Supabase Realtime subscription ─────────────────────────────────────
+    // Listens for INSERT events on notifications table filtered to this user.
+    // New notifications appear instantly without page refresh.
+    const channel = supabase
+      .channel(`notifications:${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event:  'INSERT',
+          schema: 'public',
+          table:  'notifications',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          // Prepend new notification to the top of the list
+          setNotifications(prev => [payload.new as Notification, ...prev].slice(0, 20))
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [userId])
 
   // Close dropdown on outside click
@@ -82,6 +107,16 @@ export default function NotificationBell({ userId }: { userId: string }) {
     return 'text-blue-600 bg-blue-100'
   }
 
+  // ── Notification row style based on type ──────────────────────────────────
+  const getRowStyle = (n: Notification) => {
+    if (!n.is_read) {
+      if (n.type === 'celebration') return 'bg-green-50 border-l-4 border-l-green-500'
+      if (n.type === 'loss')        return 'bg-red-50 border-l-4 border-l-red-500'
+      return 'bg-blue-50 border-l-4 border-l-blue-500'
+    }
+    return ''
+  }
+
   const timeAgo = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime()
     const hours = Math.floor(diff / (1000 * 60 * 60))
@@ -112,7 +147,7 @@ export default function NotificationBell({ userId }: { userId: string }) {
       {/* Dropdown */}
       {open && (
         <div className="absolute right-0 top-12 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden">
-          
+
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
             <div className="flex items-center gap-2">
@@ -147,20 +182,23 @@ export default function NotificationBell({ userId }: { userId: string }) {
                 <div
                   key={n.id}
                   onClick={() => markOneRead(n.id)}
-                  className={`px-4 py-3 hover:bg-gray-50 cursor-pointer transition ${!n.is_read ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''}`}
+                  className={`px-4 py-3 hover:bg-gray-50 cursor-pointer transition ${getRowStyle(n)}`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-semibold truncate ${!n.is_read ? 'text-gray-900' : 'text-gray-700'}`}>
                         {n.title}
                       </p>
-                      <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.message}</p>
+                      <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">{n.message}</p>
                       {n.current_stage && (
                         <div className="flex items-center gap-2 mt-1.5">
-                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full
+                            ${n.type === 'celebration' ? 'bg-green-100 text-green-700' :
+                              n.type === 'loss'        ? 'bg-red-100 text-red-700' :
+                                                         'bg-gray-100 text-gray-600'}`}>
                             {formatStage(n.current_stage)}
                           </span>
-                          {n.days_stale && (
+                          {!!n.days_stale && (
                             <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${getDaysColor(n.days_stale)}`}>
                               {n.days_stale}d stale
                             </span>
