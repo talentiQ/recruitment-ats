@@ -13,22 +13,32 @@ jobs:
     steps:
       - name: Call interview reminders API
         run: |
-          RESPONSE=$(curl -s -L \
+          echo "🚀 Calling Interview Reminder API..."
+
+          # Call API and capture HTTP status separately
+          HTTP_STATUS=$(curl -s -o response.json -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
-            -w "\nHTTP_STATUS:%{http_code}" \
-            "https://recruitment-ats.vercel.app/api/cron/interview-reminders")
+            --max-time 15 \
+            --retry 2 \
+            https://recruitment-ats.vercel.app/api/cron/interview-reminders)
 
-          echo "$RESPONSE"
+          echo "📩 Response Body:"
+          cat response.json || echo "No response body"
 
-          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS" | sed 's/.*HTTP_STATUS://')
+          echo ""
+          echo "📊 HTTP Status: $HTTP_STATUS"
 
-          echo "HTTP Status: $HTTP_STATUS"
-
-          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
-            echo "API returned HTTP $HTTP_STATUS"
+          # Validate status code safely
+          if [[ ! "$HTTP_STATUS" =~ ^[0-9]+$ ]]; then
+            echo "❌ Invalid HTTP status received"
             exit 1
           fi
 
-          echo "Success: HTTP $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "❌ API failed with status $HTTP_STATUS"
+            exit 1
+          fi
+
+          echo "✅ Success: API executed correctly"
