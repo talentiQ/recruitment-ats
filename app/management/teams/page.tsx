@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase as supabaseAdmin } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
-import * as XLSX from 'xlsx'
+// ✅ import * as XLSX from 'xlsx' — REMOVED. Using exceljs via dynamic import inside exportToExcel.
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface MemberPerformance {
@@ -196,11 +196,6 @@ export default function ManagementTeams() {
   }
 
   // ── Main data loader ────────────────────────────────────────────────────────
-  // HIERARCHY LOGIC (management sees everything):
-  //   Step 1: Get all Sr-TLs
-  //   Step 2: For each Sr-TL → get their direct reports (TLs + direct recruiters)
-  //   Step 3: For each TL → get their recruiters
-  //   Step 4: Per member → compute revenue, targets, pipeline
   const loadAllTeams = async () => {
     setLoading(true)
     try {
@@ -361,14 +356,17 @@ export default function ManagementTeams() {
     }
   }
 
-  // ── Excel Export ───────────────────────────────────────────────────────────
-  const exportToExcel = () => {
+  // ── Excel Export — exceljs replaces xlsx ───────────────────────────────────
+  const exportToExcel = async () => {
     setExporting(true)
     try {
-      const wb = XLSX.utils.book_new()
+      const ExcelJS = (await import('exceljs')).default
+      const wb = new ExcelJS.Workbook()
 
-      // Sheet 1: Org Summary
-      const summaryRows = [
+      // ── Sheet 1: Org Summary ──────────────────────────────────────────────
+      const wsSummary = wb.addWorksheet('Org Summary')
+      wsSummary.columns = [{ width: 28 }, { width: 18 }, { width: 18 }, { width: 16 }]
+      wsSummary.addRows([
         ['Organisation Team Performance Report'],
         [`Generated on: ${new Date().toLocaleString()}`],
         [],
@@ -384,83 +382,95 @@ export default function ManagementTeams() {
         ['Monthly',   orgStats.org_monthly_target,   orgStats.org_monthly_revenue,   `${orgStats.org_monthly_achievement}%`],
         ['Quarterly', orgStats.org_quarterly_target, orgStats.org_quarterly_revenue, `${orgStats.org_quarterly_achievement}%`],
         ['Annual',    orgStats.org_annual_target,    orgStats.org_annual_revenue,    `${orgStats.org_annual_achievement}%`],
-      ]
-      const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows)
-      wsSummary['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 16 }]
-      XLSX.utils.book_append_sheet(wb, wsSummary, 'Org Summary')
+      ])
 
-      // Sheet 2: Team Performance (one row per Sr-TL team)
-      const teamHeaders = ['Team (Sr-TL)', 'TL Count', 'Recruiter Count', 'Total Candidates', 'Month Joinings', 'Active Jobs',
+      // ── Sheet 2: Team Performance (one row per Sr-TL team) ────────────────
+      const wsTeams = wb.addWorksheet('Team Performance')
+      wsTeams.columns = [{ width: 24 }, ...Array(14).fill({ width: 20 })]
+      wsTeams.addRow([
+        'Team (Sr-TL)', 'TL Count', 'Recruiter Count', 'Total Candidates', 'Month Joinings', 'Active Jobs',
         'Monthly Target (₹)', 'Monthly Revenue (₹)', 'Monthly %',
         'Quarterly Target (₹)', 'Quarterly Revenue (₹)', 'Quarterly %',
-        'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %']
-      const teamRows = teams.map(t => [
-        t.sr_tl_name, t.tl_count, t.recruiter_count, t.total_candidates, t.month_joinings, t.active_jobs,
-        t.monthly_target, t.monthly_revenue, `${t.monthly_achievement}%`,
-        t.quarterly_target, t.quarterly_revenue, `${t.quarterly_achievement}%`,
-        t.annual_target, t.annual_revenue, `${t.annual_achievement}%`,
+        'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %',
       ])
+      teams.forEach(t => wsTeams.addRow([
+        t.sr_tl_name, t.tl_count, t.recruiter_count, t.total_candidates, t.month_joinings, t.active_jobs,
+        t.monthly_target,   t.monthly_revenue,   `${t.monthly_achievement}%`,
+        t.quarterly_target, t.quarterly_revenue, `${t.quarterly_achievement}%`,
+        t.annual_target,    t.annual_revenue,    `${t.annual_achievement}%`,
+      ]))
       // Org total row
-      teamRows.push([
+      wsTeams.addRow([
         'ORG TOTAL',
         orgStats.total_tls, orgStats.total_recruiters, orgStats.total_candidates, orgStats.month_joinings, orgStats.active_jobs,
-        orgStats.org_monthly_target, orgStats.org_monthly_revenue, `${orgStats.org_monthly_achievement}%`,
+        orgStats.org_monthly_target,   orgStats.org_monthly_revenue,   `${orgStats.org_monthly_achievement}%`,
         orgStats.org_quarterly_target, orgStats.org_quarterly_revenue, `${orgStats.org_quarterly_achievement}%`,
-        orgStats.org_annual_target, orgStats.org_annual_revenue, `${orgStats.org_annual_achievement}%`,
+        orgStats.org_annual_target,    orgStats.org_annual_revenue,    `${orgStats.org_annual_achievement}%`,
       ])
-      const wsTeams = XLSX.utils.aoa_to_sheet([teamHeaders, ...teamRows])
-      wsTeams['!cols'] = [{ wch: 24 }, ...Array(14).fill({ wch: 20 })]
-      XLSX.utils.book_append_sheet(wb, wsTeams, 'Team Performance')
 
-      // Sheet 3: All Members
-      const memberHeaders = ['Name', 'Role', 'Team (Sr-TL)', 'Reports To',
+      // ── Sheet 3: All Members ──────────────────────────────────────────────
+      const wsMembers = wb.addWorksheet('All Members')
+      wsMembers.columns = [{ width: 22 }, { width: 14 }, { width: 22 }, { width: 20 }, ...Array(12).fill({ width: 20 })]
+      wsMembers.addRow([
+        'Name', 'Role', 'Team (Sr-TL)', 'Reports To',
         'Candidates', 'Month Joinings', 'Active Pipeline',
         'Monthly Target (₹)', 'Monthly Revenue (₹)', 'Monthly %',
         'Quarterly Target (₹)', 'Quarterly Revenue (₹)', 'Quarterly %',
-        'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %']
-      const memberRows = allMembers.map(m => [
+        'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %',
+      ])
+      allMembers.forEach(m => wsMembers.addRow([
         m.user_name,
         m.role === 'team_leader' ? 'Team Leader' : 'Recruiter',
         m.team_name, m.reports_to_name,
         m.candidates_count, m.this_month_joinings, m.pipeline_count,
-        m.monthly_target, m.monthly_revenue, `${m.monthly_achievement}%`,
+        m.monthly_target,   m.monthly_revenue,   `${m.monthly_achievement}%`,
         m.quarterly_target, m.quarterly_revenue, `${m.quarterly_achievement}%`,
-        m.annual_target, m.annual_revenue, `${m.annual_achievement}%`,
-      ])
-      const wsMembers = XLSX.utils.aoa_to_sheet([memberHeaders, ...memberRows])
-      wsMembers['!cols'] = [{ wch: 22 }, { wch: 14 }, { wch: 22 }, { wch: 20 }, ...Array(12).fill({ wch: 20 })]
-      XLSX.utils.book_append_sheet(wb, wsMembers, 'All Members')
+        m.annual_target,    m.annual_revenue,    `${m.annual_achievement}%`,
+      ]))
 
-      // One sheet per team
+      // ── One sheet per team ────────────────────────────────────────────────
       teams.forEach(team => {
-        const tHeaders = ['Name', 'Role', 'Reports To', 'Candidates', 'Month Joinings', 'Pipeline',
+        // Truncate sheet name to 31 chars (Excel limit)
+        const sheetName = (team.sr_tl_name.slice(0, 28) + ' Team').slice(0, 31)
+        const wsTeam = wb.addWorksheet(sheetName)
+        wsTeam.columns = [{ width: 22 }, { width: 14 }, { width: 20 }, ...Array(12).fill({ width: 18 })]
+        wsTeam.addRow([
+          'Name', 'Role', 'Reports To', 'Candidates', 'Month Joinings', 'Pipeline',
           'Monthly Target (₹)', 'Monthly Revenue (₹)', 'Monthly %',
           'Quarterly Target (₹)', 'Quarterly Revenue (₹)', 'Quarterly %',
-          'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %']
-        const tRows = team.members.map(m => [
-          m.user_name, m.role === 'team_leader' ? 'Team Leader' : 'Recruiter', m.reports_to_name,
-          m.candidates_count, m.this_month_joinings, m.pipeline_count,
-          m.monthly_target, m.monthly_revenue, `${m.monthly_achievement}%`,
-          m.quarterly_target, m.quarterly_revenue, `${m.quarterly_achievement}%`,
-          m.annual_target, m.annual_revenue, `${m.annual_achievement}%`,
+          'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %',
         ])
-        tRows.push([
+        team.members.forEach(m => wsTeam.addRow([
+          m.user_name,
+          m.role === 'team_leader' ? 'Team Leader' : 'Recruiter',
+          m.reports_to_name,
+          m.candidates_count, m.this_month_joinings, m.pipeline_count,
+          m.monthly_target,   m.monthly_revenue,   `${m.monthly_achievement}%`,
+          m.quarterly_target, m.quarterly_revenue, `${m.quarterly_achievement}%`,
+          m.annual_target,    m.annual_revenue,    `${m.annual_achievement}%`,
+        ]))
+        // Team total row
+        wsTeam.addRow([
           'TEAM TOTAL', '', '',
           team.members.reduce((s, m) => s + m.candidates_count, 0),
           team.members.reduce((s, m) => s + m.this_month_joinings, 0),
           team.members.reduce((s, m) => s + m.pipeline_count, 0),
-          team.monthly_target, team.monthly_revenue, `${team.monthly_achievement}%`,
+          team.monthly_target,   team.monthly_revenue,   `${team.monthly_achievement}%`,
           team.quarterly_target, team.quarterly_revenue, `${team.quarterly_achievement}%`,
-          team.annual_target, team.annual_revenue, `${team.annual_achievement}%`,
+          team.annual_target,    team.annual_revenue,    `${team.annual_achievement}%`,
         ])
-        const wsTeam = XLSX.utils.aoa_to_sheet([tHeaders, ...tRows])
-        wsTeam['!cols'] = [{ wch: 22 }, { wch: 14 }, { wch: 20 }, ...Array(12).fill({ wch: 18 })]
-        // Truncate sheet name to 31 chars (Excel limit)
-        const sheetName = team.sr_tl_name.slice(0, 28) + ' Team'
-        XLSX.utils.book_append_sheet(wb, wsTeam, sheetName.slice(0, 31))
       })
 
-      XLSX.writeFile(wb, `Team_Performance_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      // ── Download ──────────────────────────────────────────────────────────
+      const buffer = await wb.xlsx.writeBuffer()
+      const blob   = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url    = URL.createObjectURL(blob)
+      const a      = document.createElement('a')
+      a.href       = url
+      a.download   = `Team_Performance_${new Date().toISOString().slice(0, 10)}.xlsx`
+      document.body.appendChild(a); a.click()
+      document.body.removeChild(a); URL.revokeObjectURL(url)
+
     } catch (err) {
       console.error('Export error:', err)
       alert('Export failed. Please try again.')

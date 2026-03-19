@@ -5,7 +5,8 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
 const STALE_DAYS = 7
-const TERMINAL_STAGES = ['joined', 'rejected', 'dropped', 'renege', 'renege_dropped', 'on_hold']
+const TERMINAL_STAGES = ['joined', 'interview_rejected', 'screening_rejected', 'interview_rejected', 'renege', 'offer_accepted', 'offer_rejected', 'on_hold']
+
 
 const formatStage = (stage: string) =>
   stage?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())

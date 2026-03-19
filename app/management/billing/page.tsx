@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase as supabaseAdmin } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
-import * as XLSX from 'xlsx'
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type InvoiceStatus = 'issued' | 'paid' | 'overdue' | 'on_hold' | 'clawback'
@@ -460,30 +460,57 @@ export default function ManagementBillingPage() {
   }
 
   // ── Excel export ──────────────────────────────────────────────────────────
-  const exportExcel = () => {
+  const exportExcel = async () => {
     setExporting(true)
-    const wb = XLSX.utils.book_new()
-    const headers = [
-      'Invoice #', 'Candidate', 'Client', 'Job', 'Recruiter', 'Team',
-      'Invoice Date', 'Due Date', 'Payment Date', 'Guarantee End',
-      'Base Amount', 'GST (18%)', 'Total Invoice', 'TDS Rate', 'TDS Amount', 'Net Receivable',
-      'Amount Received', 'TDS Credit', 'Status', 'Overdue Days', 'Notes'
-    ]
-    const rows = filtered.map(i => [
-      i.invoice_number, i._candidateName, i._clientName, i._jobTitle, i._recruiterName, i._teamName,
-      i.invoice_date, i.due_date, i.payment_date || '', i.guarantee_end_date || '',
-      i.base_amount, i.gst_amount, i.total_invoice_amount, `${i.tds_rate}%`, i.tds_amount, i.net_receivable,
-      i.amount_received || '', i.tds_credit || '', i.status, i._overdueDays > 0 ? i._overdueDays : '',
-      i.notes || ''
-    ])
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
-    ws['!cols'] = [{ wch: 14 }, { wch: 20 }, { wch: 22 }, { wch: 20 }, { wch: 18 }, { wch: 18 },
-      ...Array(4).fill({ wch: 14 }), ...Array(10).fill({ wch: 16 }), { wch: 10 }, { wch: 30 }]
-    XLSX.utils.book_append_sheet(wb, ws, 'Invoices')
-    XLSX.writeFile(wb, `Billing_${today()}.xlsx`)
-    setExporting(false)
+    try {
+      const ExcelJS = (await import('exceljs')).default
+      const wb      = new ExcelJS.Workbook()
+ 
+      const headers = [
+        'Invoice #','Candidate','Client','Job','Recruiter','Team',
+        'Invoice Date','Due Date','Payment Date','Guarantee End',
+        'Base Amount','GST (18%)','Total Invoice','TDS Rate','TDS Amount','Net Receivable',
+        'Amount Received','TDS Credit','Status','Overdue Days','Notes',
+      ]
+ 
+      const ws = wb.addWorksheet('Invoices')
+      ws.columns = [
+        { width: 14 },{ width: 20 },{ width: 22 },{ width: 20 },{ width: 18 },{ width: 18 },
+        ...Array(4).fill({ width: 14 }),
+        ...Array(10).fill({ width: 16 }),
+        { width: 10 },{ width: 30 },
+      ]
+ 
+      ws.addRow(headers)
+ 
+      filtered.forEach(i => ws.addRow([
+        i.invoice_number, i._candidateName, i._clientName, i._jobTitle,
+        i._recruiterName, i._teamName,
+        i.invoice_date, i.due_date, i.payment_date || '', i.guarantee_end_date || '',
+        i.base_amount, i.gst_amount, i.total_invoice_amount,
+        `${i.tds_rate}%`, i.tds_amount, i.net_receivable,
+        i.amount_received || '', i.tds_credit || '',
+        i.status, i._overdueDays > 0 ? i._overdueDays : '',
+        i.notes || '',
+      ]))
+ 
+      // Download
+      const buffer = await wb.xlsx.writeBuffer()
+      const blob   = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url    = URL.createObjectURL(blob)
+      const a      = document.createElement('a')
+      a.href       = url
+      a.download   = `Billing_${today()}.xlsx`
+      document.body.appendChild(a); a.click()
+      document.body.removeChild(a); URL.revokeObjectURL(url)
+ 
+    } catch(err) {
+      console.error('Export error:', err)
+      alert('Export failed.')
+    } finally {
+      setExporting(false)
+    }
   }
-
   if (loading) return (
     <DashboardLayout>
       <div className="flex items-center justify-center h-64">
