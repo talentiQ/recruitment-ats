@@ -1,23 +1,10 @@
 # .github/workflows/interview-reminders.yml
-#
-# Runs every 5 minutes and calls the interview reminders API.
-# GitHub Actions cron is free and has no plan restrictions.
-#
-# SETUP — add these 2 secrets in your GitHub repo:
-#   Settings → Secrets and variables → Actions → New repository secret
-#
-#   NEXT_PUBLIC_APP_URL  →  https://recruitment-ats.vercel.app/
-#   CRON_SECRET          →  cffd65915cbc254e48c3508bfc9f6e2219e06a76c239b48831645477c47e4eab
 
 name: Interview Reminders
 
 on:
   schedule:
-    # Runs every 5 minutes
-    # GitHub Actions minimum granularity is 5 minutes
     - cron: '*/5 * * * *'
-
-  # Allow manual trigger from GitHub Actions UI for testing
   workflow_dispatch:
 
 jobs:
@@ -28,18 +15,25 @@ jobs:
     steps:
       - name: Call interview reminders API
         run: |
-          curl -s -o response.json -w "\nHTTP_STATUS:%{http_code}" \
+          RESPONSE=$(curl -s -L \
             -X POST \
             -H "Content-Type: application/json" \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.NEXT_PUBLIC_APP_URL }}/api/cron/interview-reminders"
+            -w "\nHTTP_STATUS:%{http_code}" \
+            "${{ secrets.NEXT_PUBLIC_APP_URL }}/api/cron/interview-reminders")
 
-          cat response.json
-          echo ""
+          echo "$RESPONSE"
 
-          # Fail the job if API returned non-2xx
-          STATUS=$(tail -1 response.json | sed 's/.*HTTP_STATUS://')
-          if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 300 ]; then
-            echo "API returned HTTP $STATUS"
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS" | sed 's/.*HTTP_STATUS://')
+
+          if [ -z "$HTTP_STATUS" ]; then
+            echo "Could not determine HTTP status"
             exit 1
           fi
+
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "API returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+
+          echo "Success: HTTP $HTTP_STATUS"

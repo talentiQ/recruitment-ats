@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
       try {
         // ── Send email via Resend ─────────────────────────────────────────
         await resend.emails.send({
-          from:    'Talent IQ <reminders@yourdomain.com>',  // ← change to your verified domain
+          from:    'Talent IQ <reminders@talenti.biz>',  // ← change to your verified domain
           to:      recruiter.email,
           subject: getReminderSubject(reminderType, emailData.candidateName, emailData.clientName),
           html:    getReminderEmailHtml(reminderType, emailData),
