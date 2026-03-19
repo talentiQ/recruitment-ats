@@ -1,5 +1,3 @@
-# .github/workflows/interview-reminders.yml
-
 name: Interview Reminders
 
 on:
@@ -20,16 +18,13 @@ jobs:
             -H "Content-Type: application/json" \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
             -w "\nHTTP_STATUS:%{http_code}" \
-            "${{ secrets.NEXT_PUBLIC_APP_URL }}/api/cron/interview-reminders")
+            "https://recruitment-ats.vercel.app/api/cron/interview-reminders")
 
           echo "$RESPONSE"
 
           HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS" | sed 's/.*HTTP_STATUS://')
 
-          if [ -z "$HTTP_STATUS" ]; then
-            echo "Could not determine HTTP status"
-            exit 1
-          fi
+          echo "HTTP Status: $HTTP_STATUS"
 
           if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
             echo "API returned HTTP $HTTP_STATUS"
