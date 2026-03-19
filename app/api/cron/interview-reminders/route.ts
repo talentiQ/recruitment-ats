@@ -20,7 +20,7 @@ const supabase = createClient(
 )
 
 const resend = new Resend(process.env.RESEND_API_KEY!)
-
+console.log("RESEND KEY PREFIX:", process.env.RESEND_API_KEY?.slice(0, 5))
 // Protect the endpoint — GitHub Actions sends this secret in the header
 const CRON_SECRET = process.env.CRON_SECRET!
 
