@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
         candidates ( id, full_name, jobs ( job_title, clients ( company_name ) ) ),
         users!interviews_recruiter_id_fkey ( id, full_name, email )
       `)
-      .eq('status', 'scheduled')
+      .in('status', ['scheduled', 'rescheduled'])
       .in('interview_date', [today, tomorrow])
       .eq('client_hold', false)
 
