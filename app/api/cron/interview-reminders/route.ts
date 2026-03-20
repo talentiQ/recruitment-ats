@@ -2,9 +2,9 @@
 //
 // Called every 5 minutes by GitHub Actions.
 // 1. Finds interviews scheduled within the next 35-45 min (today only)
-// 2. Inserts notifications for recruiter + full reporting chain (always)
+// 2. Inserts notifications for candidate owner + full reporting chain (always)
 // 3. Marks reminder_30min_sent on the interview row (always)
-// 4. Sends email via Resend (best effort — failure never blocks above steps)
+// 4. Sends email only to candidate owner via Resend (best effort)
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient }              from '@supabase/supabase-js'
@@ -68,17 +68,12 @@ export async function POST(request: NextRequest) {
   const now    = new Date(nowUtc.getTime() + IST_OFFSET_MS)
   const nowMs  = now.getTime()
 
-  console.log('[cron] UTC now :', nowUtc.toISOString())
-  console.log('[cron] IST now :', now.toISOString().replace('T', ' ').slice(0, 19))
-  console.log('[cron] nowMs   :', nowMs)
-
   let sent30 = 0
   let errors = 0
 
   try {
     // ── Fetch today's scheduled interviews only ────────────────────────────
     const today = now.toISOString().slice(0, 10)
-    console.log('[cron] Querying date:', today)
 
     const { data: interviews, error: fetchError } = await supabase
       .from('interviews')
@@ -91,14 +86,12 @@ export async function POST(request: NextRequest) {
         interviewer_name,
         recruiter_id,
         reminder_30min_sent,
-        candidates ( id, full_name, jobs ( job_title, clients ( company_name ) ) ),
+        candidates ( id, full_name, created_by, jobs ( job_title, clients ( company_name ) ) ),
         users!interviews_recruiter_id_fkey ( id, full_name, email )
       `)
       .in('status', ['scheduled', 'rescheduled'])
       .eq('interview_date', today)
       .eq('client_hold', false)
-
-    console.log('[cron] Interviews fetched:', interviews?.length ?? 0)
 
     if (fetchError) {
       console.error('[cron] Fetch error:', fetchError.message)
@@ -113,16 +106,10 @@ export async function POST(request: NextRequest) {
       const { interview_date, interview_time, reminder_30min_sent } = interview
 
       // Skip if reminder already sent
-      if (reminder_30min_sent) {
-        console.log(`[cron] Skipping ${interview_time} — reminder already sent`)
-        continue
-      }
+      if (reminder_30min_sent) continue
 
       // Skip if no interview time stored
-      if (!interview_time) {
-        console.log(`[cron] Skipping interview ${interview.id} — no time stored`)
-        continue
-      }
+      if (!interview_time) continue
 
       const interviewDt = parseInterviewDateTime(interview_date, interview_time)
       if (!interviewDt) {
@@ -131,24 +118,38 @@ export async function POST(request: NextRequest) {
       }
 
       const diffMinutes = (interviewDt.getTime() - nowMs) / 60000
-      console.log(`[cron] ${interview_date} ${interview_time} → interviewDt ms: ${interviewDt.getTime()} | nowMs: ${nowMs} | diff: ${diffMinutes.toFixed(1)} mins | window: 35–45`)
 
       // Window: 35–45 minutes away → send reminder
       if (diffMinutes < 35 || diffMinutes >= 45) continue
 
-      // ── Build email data ─────────────────────────────────────────────────
-      const recruiter = (interview as any).users
+      // ── Resolve people ───────────────────────────────────────────────────
+      const recruiter = (interview as any).users       // whoever scheduled
       const candidate = (interview as any).candidates
       const job       = candidate?.jobs
       const client    = job?.clients
 
-      if (!recruiter?.email) {
-        console.warn('[cron] No recruiter email for interview', interview.id)
+      // Candidate owner is created_by — fallback to interview scheduler
+      const candidateOwnerId = candidate?.created_by || recruiter?.id
+
+      if (!candidateOwnerId) {
+        console.warn('[cron] No candidate owner for interview', interview.id)
+        continue
+      }
+
+      // ── Fetch candidate owner's details for email ────────────────────────
+      const { data: ownerData } = await supabase
+        .from('users')
+        .select('id, full_name, email')
+        .eq('id', candidateOwnerId)
+        .maybeSingle()
+
+      if (!ownerData?.email) {
+        console.warn('[cron] No owner email for interview', interview.id)
         continue
       }
 
       const emailData = {
-        recruiterName:   recruiter.full_name   || 'Recruiter',
+        recruiterName:   ownerData.full_name   || 'Recruiter',
         candidateName:   candidate?.full_name  || 'Candidate',
         jobTitle:        job?.job_title        || 'N/A',
         clientName:      client?.company_name  || 'N/A',
@@ -162,8 +163,8 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        // ── 1. Resolve full reporting chain ──────────────────────────────
-        const recipients = await resolveRecipients(recruiter.id)
+        // ── 1. Resolve full reporting chain from candidate owner ──────────
+        const recipients = await resolveRecipients(candidateOwnerId)
 
         // ── 2. Bulk insert notifications for all recipients (always runs) ─
         const notifRows = recipients.map(userId => ({
@@ -200,18 +201,18 @@ export async function POST(request: NextRequest) {
           console.log('[cron] ✅ reminder_30min_sent marked for interview', interview.id)
         }
 
-        // ── 4. Send email via Resend (best effort — never blocks above) ───
+        // ── 4. Send email to candidate owner only (best effort) ───────────
         try {
           const emailResult = await resend.emails.send({
             from:    'Talent IQ <reminders@talenti.biz>',
-            to:      recruiter.email,
+            to:      ownerData.email,
             subject: getReminderSubject('30min', emailData.candidateName, emailData.clientName),
             html:    getReminderEmailHtml('30min', emailData),
           })
           if (emailResult.error) {
             console.error('[cron] ⚠️ Email failed:', JSON.stringify(emailResult.error))
           } else {
-            console.log('[cron] ✅ Email sent id:', emailResult.data?.id)
+            console.log('[cron] ✅ Email sent to owner:', ownerData.email)
           }
         } catch (emailErr: any) {
           console.error('[cron] ⚠️ Email exception (notifications already sent):', emailErr.message)
