@@ -72,13 +72,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const now    = new Date()
-  const nowMs  = now.getTime()
+  // ── IST offset: interviews are stored in IST, server runs in UTC ────────
+  // IST = UTC + 5h30m = UTC + 19800 seconds
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000
+  const nowUtc  = new Date()
+  const now     = new Date(nowUtc.getTime() + IST_OFFSET_MS)  // current IST time
+  const nowMs   = now.getTime()
   let sent30 = 0
   let errors   = 0
 
+  console.log('[cron] UTC time:', nowUtc.toISOString())
+  console.log('[cron] IST time:', now.toISOString().replace('T', ' ').slice(0, 19))
+
   try {
     // ── Fetch upcoming scheduled interviews (today + tomorrow only) ──────
+    // Use IST date for today/tomorrow
     const today    = now.toISOString().slice(0, 10)
     const tomorrow = new Date(nowMs + 86400000).toISOString().slice(0, 10)
 
