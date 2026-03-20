@@ -5,6 +5,9 @@
 // 2. Inserts a notification into the notifications table (always)
 // 3. Marks reminder_30min_sent on the interview row (always)
 // 4. Sends email via Resend (best effort — failure never blocks above steps)
+//
+// NOTE: Time window temporarily widened to 5 days for testing.
+//       Revert diffMinutes condition to: diffMinutes < 25 || diffMinutes >= 35
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient }              from '@supabase/supabase-js'
@@ -70,13 +73,15 @@ export async function POST(request: NextRequest) {
   console.log('[cron] UTC time:', nowUtc.toISOString())
   console.log('[cron] IST time:', now.toISOString().replace('T', ' ').slice(0, 19))
 
-  let sent30  = 0
+  let sent30 = 0
   let errors  = 0
 
   try {
     // ── Fetch upcoming scheduled interviews (today + tomorrow only) ────────
     const today    = now.toISOString().slice(0, 10)
     const tomorrow = new Date(nowMs + 86400000).toISOString().slice(0, 10)
+
+    console.log('[cron] Querying dates:', today, tomorrow)
 
     const { data: interviews, error: fetchError } = await supabase
       .from('interviews')
@@ -96,6 +101,7 @@ export async function POST(request: NextRequest) {
       .in('interview_date', [today, tomorrow])
       .eq('client_hold', false)
 
+    console.log('[cron] Interviews fetched:', interviews?.length ?? 0)
     if (fetchError) {
       console.error('[cron] Fetch error:', fetchError.message)
       return NextResponse.json({ error: fetchError.message }, { status: 500 })
@@ -108,11 +114,19 @@ export async function POST(request: NextRequest) {
     for (const interview of interviews) {
       const { interview_date, interview_time, reminder_30min_sent } = interview
 
+      console.log(`[cron] Checking interview ${interview.id} | date: ${interview_date} | time: ${interview_time} | reminder_sent: ${reminder_30min_sent}`)
+
       // Skip if reminder already sent
-      if (reminder_30min_sent) continue
+      if (reminder_30min_sent) {
+        console.log('[cron] Skipping — reminder already sent')
+        continue
+      }
 
       // Skip if no interview time stored
-      if (!interview_time) continue
+      if (!interview_time) {
+        console.log('[cron] Skipping — no interview time')
+        continue
+      }
 
       const interviewDt = parseInterviewDateTime(interview_date, interview_time)
       if (!interviewDt) {
@@ -123,8 +137,10 @@ export async function POST(request: NextRequest) {
       const diffMinutes = (interviewDt.getTime() - nowMs) / 60000
       console.log(`[cron] Interview ${interview_date} ${interview_time} → diffMinutes: ${diffMinutes.toFixed(1)}`)
 
-      // Window: 25–35 minutes away → send 30min reminder
-      if (diffMinutes < 0 || diffMinutes >= 7200) continue  // 5 days = 7200 minutes
+      // ── TESTING: widened to 5 days (7200 min) ─────────────────────────
+      // TODO: revert to production window after testing:
+      // if (diffMinutes < 25 || diffMinutes >= 35) continue
+      if (diffMinutes < -7200 || diffMinutes >= 7200) continue
 
       // ── Build email data ─────────────────────────────────────────────────
       const recruiter = (interview as any).users
@@ -136,6 +152,8 @@ export async function POST(request: NextRequest) {
         console.warn('[cron] No recruiter email for interview', interview.id)
         continue
       }
+
+      console.log(`[cron] Processing reminder for ${candidate?.full_name} → ${recruiter.email}`)
 
       const emailData = {
         recruiterName:   recruiter.full_name   || 'Recruiter',
