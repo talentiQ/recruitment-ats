@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY
-const FROM_EMAIL = process.env.NOTIFICATION_FROM_EMAIL || 'TalentIQ <notifications@yourdomain.com>'
+const FROM_EMAIL = process.env.NOTIFICATION_FROM_EMAIL || 'TalentIQ <reminders@talenti.biz>'
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://recruitment-ats.vercel.app'
 
 interface StaleCandidate {

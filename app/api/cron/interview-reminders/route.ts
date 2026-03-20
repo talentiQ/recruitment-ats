@@ -1,25 +1,23 @@
 // app/api/cron/interview-reminders/route.ts
 //
 // Called every 5 minutes by GitHub Actions.
-// 1. Finds interviews scheduled within the next 55-65 min (1hr window)
-//    or within the next 10-20 min (15min window)
-// 2. Sends email to recruiter via Resend
-// 3. Inserts a notification into the notifications table
-// 4. Marks reminder_1hr_sent / reminder_15min_sent on the interview row
-//    so it never sends twice
+// 1. Finds interviews scheduled within the next 25-35 min (30min window)
+// 2. Inserts a notification into the notifications table (always)
+// 3. Marks reminder_30min_sent on the interview row (always)
+// 4. Sends email via Resend (best effort — failure never blocks above steps)
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient }              from '@supabase/supabase-js'
 import { Resend }                    from 'resend'
 import { getReminderEmailHtml, getReminderSubject } from '@/lib/emailTemplates'
 
-// Use service role key so we can update interview rows
+// ── Supabase client ────────────────────────────────────────────────────────
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-// Protect the endpoint — GitHub Actions sends this secret in the header
+// ── Cron secret — GitHub Actions sends this in the request header ──────────
 const CRON_SECRET = process.env.CRON_SECRET!
 
 // ── Parse interview_time (varchar) into a Date ─────────────────────────────
@@ -32,7 +30,6 @@ function parseInterviewDateTime(date: string, time: string): Date | null {
     const cleaned = time.trim().toUpperCase()
 
     if (/AM|PM/.test(cleaned)) {
-      // 12-hour format: "2:30 PM" or "10:00AM"
       const isPM  = cleaned.includes('PM')
       const parts = cleaned.replace(/AM|PM/g, '').trim().split(':')
       hours   = parseInt(parts[0])
@@ -40,16 +37,11 @@ function parseInterviewDateTime(date: string, time: string): Date | null {
       if (isPM && hours !== 12) hours += 12
       if (!isPM && hours === 12) hours = 0
     } else {
-      // 24-hour format: "14:30" or "9:00"
       const parts = cleaned.split(':')
       hours   = parseInt(parts[0])
       minutes = parseInt(parts[1] || '0')
     }
 
-    // Create date as IST by using UTC constructor then subtracting IST offset
-    // new Date(Date.UTC(...)) creates UTC timestamp, then we treat the
-    // interview hours/minutes as IST so no offset needed — the comparison
-    // uses nowUtc adjusted for IST, keeping both in the same frame
     const dt = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0))
     return isNaN(dt.getTime()) ? null : dt
   } catch {
@@ -59,38 +51,30 @@ function parseInterviewDateTime(date: string, time: string): Date | null {
 
 // ── Main handler ───────────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
-  // DEBUG — log env var presence (never logs actual secret values)
-  console.log('[cron] ENV CHECK:')
-  console.log('  RESEND_API_KEY present:', !!process.env.RESEND_API_KEY)
-  console.log('  RESEND_API_KEY prefix:', process.env.RESEND_API_KEY?.slice(0, 6) ?? 'MISSING')
-  console.log('  SUPABASE_SERVICE_ROLE_KEY present:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
-  console.log('  CRON_SECRET present:', !!process.env.CRON_SECRET)
 
-  // Initialise Resend inside handler so key errors are catchable
-  const resend = new Resend(process.env.RESEND_API_KEY!)
-  console.log('[cron] Resend initialised with key prefix:', process.env.RESEND_API_KEY?.slice(0, 8))
-
-  // Verify secret
+  // Verify cron secret
   const secret = request.headers.get('x-cron-secret')
   if (secret !== CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // ── IST offset: interviews are stored in IST, server runs in UTC ────────
-  // IST = UTC + 5h30m = UTC + 19800 seconds
+  // Initialise Resend inside handler so key is always fresh
+  const resend = new Resend(process.env.RESEND_API_KEY!)
+
+  // IST offset: interviews are stored in IST, server runs in UTC
   const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000
-  const nowUtc  = new Date()
-  const now     = new Date(nowUtc.getTime() + IST_OFFSET_MS)  // current IST time
-  const nowMs   = now.getTime()
-  let sent30 = 0
-  let errors   = 0
+  const nowUtc = new Date()
+  const now    = new Date(nowUtc.getTime() + IST_OFFSET_MS)
+  const nowMs  = now.getTime()
 
   console.log('[cron] UTC time:', nowUtc.toISOString())
   console.log('[cron] IST time:', now.toISOString().replace('T', ' ').slice(0, 19))
 
+  let sent30  = 0
+  let errors  = 0
+
   try {
-    // ── Fetch upcoming scheduled interviews (today + tomorrow only) ──────
-    // Use IST date for today/tomorrow
+    // ── Fetch upcoming scheduled interviews (today + tomorrow only) ────────
     const today    = now.toISOString().slice(0, 10)
     const tomorrow = new Date(nowMs + 86400000).toISOString().slice(0, 10)
 
@@ -124,7 +108,7 @@ export async function POST(request: NextRequest) {
     for (const interview of interviews) {
       const { interview_date, interview_time, reminder_30min_sent } = interview
 
-      // Skip if both reminders already sent
+      // Skip if reminder already sent
       if (reminder_30min_sent) continue
 
       // Skip if no interview time stored
@@ -136,21 +120,17 @@ export async function POST(request: NextRequest) {
         continue
       }
 
-      const diffMs      = interviewDt.getTime() - nowMs
-      const diffMinutes = diffMs / 60000
-
+      const diffMinutes = (interviewDt.getTime() - nowMs) / 60000
       console.log(`[cron] Interview ${interview_date} ${interview_time} → diffMinutes: ${diffMinutes.toFixed(1)}`)
 
-      // Window: 25–35 minutes away → 30min reminder
-      const needs30 = !reminder_30min_sent && diffMinutes >= 25 && diffMinutes < 35
+      // Window: 25–35 minutes away → send 30min reminder
+      if (diffMinutes < 25 || diffMinutes >= 35) continue
 
-      if (!needs30) continue
-
-      // ── Build email data ────────────────────────────────────────────────
-      const recruiter    = (interview as any).users
-      const candidate    = (interview as any).candidates
-      const job          = candidate?.jobs
-      const client       = job?.clients
+      // ── Build email data ─────────────────────────────────────────────────
+      const recruiter = (interview as any).users
+      const candidate = (interview as any).candidates
+      const job       = candidate?.jobs
+      const client    = job?.clients
 
       if (!recruiter?.email) {
         console.warn('[cron] No recruiter email for interview', interview.id)
@@ -158,70 +138,81 @@ export async function POST(request: NextRequest) {
       }
 
       const emailData = {
-        recruiterName:   recruiter.full_name  || 'Recruiter',
-        candidateName:   candidate?.full_name || 'Candidate',
-        jobTitle:        job?.job_title       || 'N/A',
-        clientName:      client?.company_name || 'N/A',
+        recruiterName:   recruiter.full_name   || 'Recruiter',
+        candidateName:   candidate?.full_name  || 'Candidate',
+        jobTitle:        job?.job_title        || 'N/A',
+        clientName:      client?.company_name  || 'N/A',
         interviewDate:   new Date(interview_date + 'T00:00:00').toLocaleDateString('en-IN', {
                            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
                          }),
         interviewTime:   interview_time,
-        interviewType:   interview.interview_type || 'Interview',
+        interviewType:   interview.interview_type   || 'Interview',
         interviewerName: interview.interviewer_name || '',
-        round:           interview.interview_round || 1,
+        round:           interview.interview_round  || 1,
       }
 
-      const reminderType = '30min'
-
       try {
-        // ── Send email via Resend ─────────────────────────────────────────
-        const emailResult = await resend.emails.send({
-          from:    'Talent IQ <reminders@talenti.biz>',
-          to:      recruiter.email,
-          subject: getReminderSubject(reminderType, emailData.candidateName, emailData.clientName),
-          html:    getReminderEmailHtml(reminderType, emailData),
-        })
-        if (emailResult.error) {
-          throw new Error(`Resend error: ${JSON.stringify(emailResult.error)}`)
-        }
-        console.log('[cron] ✅ Email sent id:', emailResult.data?.id)
-
-        // ── Insert in-app notification ────────────────────────────────────
-        const notifMessage = `⏰ Interview in 30 minutes — ${emailData.candidateName} · ${emailData.clientName} (Round ${emailData.round})`
-
-        await supabase.from('notifications').insert({
+        // ── 1. Insert in-app notification FIRST (always runs) ────────────
+        const { error: notifError } = await supabase.from('notifications').insert({
           user_id:        recruiter.id,
           type:           'celebration',
           title:          '⏰ Interview in 30 Minutes',
-          message:        notifMessage,
-          candidate_id:   candidate?.id || null,
+          message:        `⏰ Interview in 30 minutes — ${emailData.candidateName} · ${emailData.clientName} (Round ${emailData.round})`,
+          candidate_id:   candidate?.id        || null,
           candidate_name: candidate?.full_name || null,
           current_stage:  'interview_scheduled',
           days_stale:     0,
           is_read:        false,
         })
+        if (notifError) {
+          console.error('[cron] ⚠️ Notification insert error:', notifError.message)
+        } else {
+          console.log('[cron] ✅ Notification inserted for', emailData.candidateName)
+        }
 
-        // ── Mark reminder as sent on the interview row ────────────────────
-        const updatePayload = { reminder_30min_sent: true }
+        // ── 2. Mark reminder as sent (always runs) ───────────────────────
+        const { error: updateError } = await supabase
+          .from('interviews')
+          .update({ reminder_30min_sent: true })
+          .eq('id', interview.id)
+        if (updateError) {
+          console.error('[cron] ⚠️ Interview update error:', updateError.message)
+        } else {
+          console.log('[cron] ✅ reminder_30min_sent marked for interview', interview.id)
+        }
 
-        await supabase.from('interviews').update(updatePayload).eq('id', interview.id)
+        // ── 3. Send email via Resend (best effort — never blocks above) ───
+        try {
+          const emailResult = await resend.emails.send({
+            from:    'Talent IQ <reminders@talenti.biz>',
+            to:      recruiter.email,
+            subject: getReminderSubject('30min', emailData.candidateName, emailData.clientName),
+            html:    getReminderEmailHtml('30min', emailData),
+          })
+          if (emailResult.error) {
+            console.error('[cron] ⚠️ Email failed:', JSON.stringify(emailResult.error))
+          } else {
+            console.log('[cron] ✅ Email sent id:', emailResult.data?.id)
+          }
+        } catch (emailErr: any) {
+          console.error('[cron] ⚠️ Email exception (notification already sent):', emailErr.message)
+        }
 
         sent30++
+        console.log(`[cron] ✅ 30min reminder complete for ${emailData.candidateName}`)
 
-        console.log(`[cron] ✅ 30min reminder sent → ${recruiter.email} for ${emailData.candidateName}`)
-
-      } catch (emailErr: any) {
-        console.error(`[cron] ❌ Failed for interview ${interview.id}:`, emailErr.message)
+      } catch (err: any) {
+        console.error(`[cron] ❌ Failed for interview ${interview.id}:`, err.message)
         errors++
       }
     }
 
     return NextResponse.json({
-      message: 'Reminders processed',
+      message:    'Reminders processed',
       sent_30min: sent30,
       errors,
-      checked:     interviews.length,
-      timestamp:   now.toISOString(),
+      checked:    interviews.length,
+      timestamp:  now.toISOString(),
     })
 
   } catch (err: any) {
@@ -230,7 +221,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Also allow GET so you can test it manually in the browser
+// Allow GET for manual browser testing
 export async function GET(request: NextRequest) {
   return POST(request)
 }

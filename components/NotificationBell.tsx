@@ -32,12 +32,7 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-// Notifications for candidates in these stages are excluded from the bell
-// (mirrors StaleCandidatesBanner logic — terminal/final states need no action)
-const TERMINAL_STAGES = [
-  'joined', 'interview_rejected', 'screening_rejected',
-  'renege', 'offer_accepted', 'offer_rejected', 'on_hold',
-]
+
 
 const PANEL_WIDTH = 380
 
@@ -63,13 +58,14 @@ export default function NotificationBell() {
 
   // ── Fetch ───────────────────────────────────────────────────────────────────
   const fetchNotifications = useCallback(async (uid: string, isRealtime = false) => {
+  
     const { data, error } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('user_id', uid)
-      .not('current_stage', 'in', `(${TERMINAL_STAGES.join(',')})`)
-      .order('created_at', { ascending: false })
-      .limit(50)
+  .from('notifications')
+  .select('*')
+  .eq('user_id', uid)
+  .neq('type', 'stale_candidate')
+  .order('created_at', { ascending: false })
+  .limit(50)
 
     if (error) { console.error('[Bell]', error.message); return }
 
