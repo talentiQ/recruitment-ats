@@ -68,12 +68,17 @@ export async function POST(request: NextRequest) {
   const now    = new Date(nowUtc.getTime() + IST_OFFSET_MS)
   const nowMs  = now.getTime()
 
+  console.log('[cron] UTC now :', nowUtc.toISOString())
+  console.log('[cron] IST now :', now.toISOString().replace('T', ' ').slice(0, 19))
+  console.log('[cron] nowMs   :', nowMs)
+
   let sent30 = 0
   let errors = 0
 
   try {
     // ── Fetch today's scheduled interviews only ────────────────────────────
     const today = now.toISOString().slice(0, 10)
+    console.log('[cron] Querying date:', today)
 
     const { data: interviews, error: fetchError } = await supabase
       .from('interviews')
@@ -93,6 +98,8 @@ export async function POST(request: NextRequest) {
       .eq('interview_date', today)
       .eq('client_hold', false)
 
+    console.log('[cron] Interviews fetched:', interviews?.length ?? 0)
+
     if (fetchError) {
       console.error('[cron] Fetch error:', fetchError.message)
       return NextResponse.json({ error: fetchError.message }, { status: 500 })
@@ -106,10 +113,16 @@ export async function POST(request: NextRequest) {
       const { interview_date, interview_time, reminder_30min_sent } = interview
 
       // Skip if reminder already sent
-      if (reminder_30min_sent) continue
+      if (reminder_30min_sent) {
+        console.log(`[cron] Skipping ${interview_time} — reminder already sent`)
+        continue
+      }
 
       // Skip if no interview time stored
-      if (!interview_time) continue
+      if (!interview_time) {
+        console.log(`[cron] Skipping interview ${interview.id} — no time stored`)
+        continue
+      }
 
       const interviewDt = parseInterviewDateTime(interview_date, interview_time)
       if (!interviewDt) {
@@ -118,6 +131,7 @@ export async function POST(request: NextRequest) {
       }
 
       const diffMinutes = (interviewDt.getTime() - nowMs) / 60000
+      console.log(`[cron] ${interview_date} ${interview_time} → interviewDt ms: ${interviewDt.getTime()} | nowMs: ${nowMs} | diff: ${diffMinutes.toFixed(1)} mins | window: 35–45`)
 
       // Window: 35–45 minutes away → send reminder
       if (diffMinutes < 35 || diffMinutes >= 45) continue
