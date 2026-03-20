@@ -17,8 +17,8 @@ import { getReminderEmailHtml, getReminderSubject } from '@/lib/emailTemplates'
 // ── Supabase client ────────────────────────────────────────────────────────
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-   process.env.SUPABASE_SERVICE_ROLE_KEY!   // ✅ bypasses RLS
-)
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  )
 
 // ── Cron secret — GitHub Actions sends this in the request header ──────────
 const CRON_SECRET = process.env.CRON_SECRET!
