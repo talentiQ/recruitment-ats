@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
       `)
       .in('status', ['scheduled', 'rescheduled'])
       .in('interview_date', [today, tomorrow])
-      .eq('client_hold', false)
+      //.eq('client_hold', false)
 
     console.log('[cron] Interviews fetched:', interviews?.length ?? 0)
     if (fetchError) {
