@@ -16,7 +16,7 @@ import { getReminderEmailHtml, getReminderSubject } from '@/lib/emailTemplates'
 // Use service role key so we can update interview rows
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
 // Protect the endpoint — GitHub Actions sends this secret in the header
