@@ -20,9 +20,7 @@ const supabase = createClient(
 )
 
 const resend = new Resend(process.env.RESEND_API_KEY!)
-console.log('[debug] RESEND_API_KEY length:', process.env.RESEND_API_KEY?.length)
-console.log('[debug] RESEND_API_KEY prefix:', process.env.RESEND_API_KEY?.slice(0, 8))
-console.log('[debug] SUPABASE_URL set:', !!process.env.NEXT_PUBLIC_SUPABASE_URL)
+
 // Protect the endpoint — GitHub Actions sends this secret in the header
 const CRON_SECRET = process.env.CRON_SECRET!
 
@@ -59,7 +57,13 @@ function parseInterviewDateTime(date: string, time: string): Date | null {
 
 // ── Main handler ───────────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
-  console.log("RUNTIME RESEND KEY:", process.env.RESEND_API_KEY?.slice(0,5))
+  // DEBUG — log env var presence (never logs actual secret values)
+  console.log('[cron] ENV CHECK:')
+  console.log('  RESEND_API_KEY present:', !!process.env.RESEND_API_KEY)
+  console.log('  RESEND_API_KEY prefix:', process.env.RESEND_API_KEY?.slice(0, 6) ?? 'MISSING')
+  console.log('  SUPABASE_SERVICE_ROLE_KEY present:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
+  console.log('  CRON_SECRET present:', !!process.env.CRON_SECRET)
+
   // Verify secret
   const secret = request.headers.get('x-cron-secret')
   if (secret !== CRON_SECRET) {
@@ -156,7 +160,7 @@ export async function POST(request: NextRequest) {
       try {
         // ── Send email via Resend ─────────────────────────────────────────
         await resend.emails.send({
-          from:    'Talent IQ <onboarding@resend.dev>',  // ← change to your verified domain
+          from:    'Talent IQ <reminders@talenti.biz>',  // ← change to your verified domain
           to:      recruiter.email,
           subject: getReminderSubject(reminderType, emailData.candidateName, emailData.clientName),
           html:    getReminderEmailHtml(reminderType, emailData),
