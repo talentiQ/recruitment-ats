@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
       console.log(`[cron] Interview ${interview_date} ${interview_time} → diffMinutes: ${diffMinutes.toFixed(1)}`)
 
       // Window: 25–35 minutes away → send 30min reminder
-      if (diffMinutes < 25 || diffMinutes >= 35) continue
+      if (diffMinutes < 0 || diffMinutes >= 7200) continue  // 5 days = 7200 minutes
 
       // ── Build email data ─────────────────────────────────────────────────
       const recruiter = (interview as any).users
