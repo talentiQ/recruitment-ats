@@ -67,8 +67,9 @@ const TEMPLATES: Record<NotificationEvent, {
 // ── Resolve full reporting chain ───────────────────────────────────────────
 // Returns all user IDs who should receive the notification:
 // recruiter → their TL → their Sr.TL → all management roles
+// Exported so it can be reused by the interview reminders cron
 
-async function resolveRecipients(recruiterId: string): Promise<string[]> {
+export async function resolveRecipients(recruiterId: string): Promise<string[]> {
   const recipients = new Set<string>()
 
   // Always include the recruiter themselves
@@ -123,7 +124,7 @@ export async function sendNotification(params: NotifyParams): Promise<void> {
   const { event, recruiterId, recruiterName, candidateId, candidateName } = params
 
   try {
-    const template = TEMPLATES[event]
+    const template   = TEMPLATES[event]
     const recipients = await resolveRecipients(recruiterId)
 
     const rows = recipients.map(userId => ({
