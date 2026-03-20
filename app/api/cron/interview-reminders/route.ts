@@ -46,7 +46,11 @@ function parseInterviewDateTime(date: string, time: string): Date | null {
       minutes = parseInt(parts[1] || '0')
     }
 
-    const dt = new Date(year, month - 1, day, hours, minutes, 0, 0)
+    // Create date as IST by using UTC constructor then subtracting IST offset
+    // new Date(Date.UTC(...)) creates UTC timestamp, then we treat the
+    // interview hours/minutes as IST so no offset needed — the comparison
+    // uses nowUtc adjusted for IST, keeping both in the same frame
+    const dt = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0))
     return isNaN(dt.getTime()) ? null : dt
   } catch {
     return null
@@ -134,6 +138,8 @@ export async function POST(request: NextRequest) {
 
       const diffMs      = interviewDt.getTime() - nowMs
       const diffMinutes = diffMs / 60000
+
+      console.log(`[cron] Interview ${interview_date} ${interview_time} → diffMinutes: ${diffMinutes.toFixed(1)}`)
 
       // Window: 25–35 minutes away → 30min reminder
       const needs30 = !reminder_30min_sent && diffMinutes >= 25 && diffMinutes < 35
