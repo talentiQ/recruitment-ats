@@ -19,8 +19,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-const resend = new Resend(process.env.RESEND_API_KEY!)
-
 // Protect the endpoint — GitHub Actions sends this secret in the header
 const CRON_SECRET = process.env.CRON_SECRET!
 
@@ -63,6 +61,10 @@ export async function POST(request: NextRequest) {
   console.log('  RESEND_API_KEY prefix:', process.env.RESEND_API_KEY?.slice(0, 6) ?? 'MISSING')
   console.log('  SUPABASE_SERVICE_ROLE_KEY present:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
   console.log('  CRON_SECRET present:', !!process.env.CRON_SECRET)
+
+  // Initialise Resend inside handler so key errors are catchable
+  const resend = new Resend(process.env.RESEND_API_KEY!)
+  console.log('[cron] Resend initialised with key prefix:', process.env.RESEND_API_KEY?.slice(0, 8))
 
   // Verify secret
   const secret = request.headers.get('x-cron-secret')
@@ -159,12 +161,16 @@ export async function POST(request: NextRequest) {
 
       try {
         // ── Send email via Resend ─────────────────────────────────────────
-        await resend.emails.send({
-          from:    'Talent IQ <reminders@talenti.biz>',  // ← change to your verified domain
+        const emailResult = await resend.emails.send({
+          from:    'Talent IQ <reminders@talenti.biz>',
           to:      recruiter.email,
           subject: getReminderSubject(reminderType, emailData.candidateName, emailData.clientName),
           html:    getReminderEmailHtml(reminderType, emailData),
         })
+        if (emailResult.error) {
+          throw new Error(`Resend error: ${JSON.stringify(emailResult.error)}`)
+        }
+        console.log('[cron] ✅ Email sent id:', emailResult.data?.id)
 
         // ── Insert in-app notification ────────────────────────────────────
         const notifMessage = `⏰ Interview in 30 minutes — ${emailData.candidateName} · ${emailData.clientName} (Round ${emailData.round})`
