@@ -110,12 +110,18 @@ export default function RecruiterJobDetailPage() {
         </div>
 
         {/* Key Skills */}
-        {job.key_skills && (
-          <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">Key Skills Required</h3>
-            <p className="text-gray-700">{job.key_skills}</p>
-          </div>
-        )}
+       {job.key_skills && (
+  <div className="card">
+    <h3 className="text-lg font-semibold text-gray-900 mb-3">Key Skills Required</h3>
+    <div className="flex flex-wrap gap-2">
+      {job.key_skills.split(',').map((skill: string, i: number) => (
+        <span key={i} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium border border-blue-200">
+          {skill.trim()}
+        </span>
+      ))}
+    </div>
+  </div>
+)}
 
         {/* Client Info */}
         <div className="card">

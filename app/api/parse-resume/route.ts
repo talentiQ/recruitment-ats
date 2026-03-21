@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
       ` | designation: "${result.current_designation}"`
     )
 
-    return NextResponse.json({ success: true, data: result })
+    return NextResponse.json({ success: true, data: result, rawText: resumeText })
 
   } catch (error: any) {
     console.error('Resume parse error:', error)

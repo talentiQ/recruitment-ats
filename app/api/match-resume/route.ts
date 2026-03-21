@@ -7,9 +7,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { matchResumeToJob } from '@/lib/resumeMatchEngine'
 
-// Use anon key — service role (legacy JWT) is disabled on this Supabase project.
-// Jobs table is readable with anon key. ai_screenings inserts work too since
-// RLS allows authenticated inserts and anon key bypasses nothing sensitive here.
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -18,137 +15,86 @@ const supabaseAdmin = createClient(
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const {
-      jobId,
-      candidateId,
-      resumeBankId,
-      parsedData,   // pass directly from Add Candidate form (before save)
-      rawText,      // full resume text for JD keyword matching
-      screenedBy,   // user.id — if provided, result is saved to DB
-      jobData,      // full job object passed from client to avoid RLS issues
-    } = body
+    const { jobId, candidateId, resumeBankId, parsedData, rawText, screenedBy, jobData } = body
 
-    if (!jobId) {
-      return NextResponse.json({ error: 'jobId is required' }, { status: 400 })
-    }
+    if (!jobId) return NextResponse.json({ error: 'jobId is required' }, { status: 400 })
 
-    // ── 1. Fetch job ──────────────────────────────────────────────────────────
-    // Prefer jobData passed from client (avoids RLS issues in API routes).
-    // Fall back to DB fetch only if not provided.
     let job = jobData || null
-
     if (!job) {
       const { data: fetched, error: jobError } = await supabaseAdmin
         .from('jobs')
-        .select('id, job_title, job_description, key_skills, experience_min, experience_max, min_ctc, max_ctc')
-        .eq('id', jobId)
-        .limit(1)
-        .maybeSingle()
-
-      if (jobError || !fetched) {
-        console.error('[match-resume] Job fetch failed:', jobError?.message, '| jobId:', jobId)
-        return NextResponse.json({ error: 'Job not found' }, { status: 404 })
-      }
+        .select('id, job_title, job_description, key_skills, nice_to_have_skills, experience_min, experience_max, min_ctc, max_ctc, education_requirement, location')
+        .eq('id', jobId).limit(1).maybeSingle()
+      if (jobError || !fetched) return NextResponse.json({ error: 'Job not found' }, { status: 404 })
       job = fetched
     }
 
-    // ── 2. Check for fresh cached result ─────────────────────────────────────
-    // Only check cache if we have a persistent source (not a pre-save preview)
     if (screenedBy && (candidateId || resumeBankId)) {
-      const sourceFilter = candidateId
-        ? { candidate_id: candidateId }
-        : { resume_bank_id: resumeBankId }
-
-      const { data: existing } = await supabaseAdmin
-        .from('ai_screenings')
-        .select('*')
-        .match({ ...sourceFilter, job_id: jobId })
-        .maybeSingle()
-
+      const sf = candidateId ? { candidate_id: candidateId } : { resume_bank_id: resumeBankId }
+      const { data: existing } = await supabaseAdmin.from('ai_screenings').select('*').match({ ...sf, job_id: jobId }).maybeSingle()
       if (existing) {
         const ageHours = (Date.now() - new Date(existing.created_at).getTime()) / 3_600_000
-        if (ageHours < 24) {
-          return NextResponse.json({ result: existing, cached: true })
-        }
+        if (ageHours < 24) return NextResponse.json({ result: existing, cached: true })
       }
     }
 
-    // ── 3. Get resume data ────────────────────────────────────────────────────
-    let skills:           string[]      = []
-    let total_experience: number | null = null
-    let expected_ctc:     number | null = null
-    let resumeText:       string        = rawText || ''
+    let skills: string[] = [], total_experience: number | null = null
+    let resumeText = rawText || '', education_level = '', education_degree = ''
+    let current_location = '', current_company = ''
 
     if (parsedData) {
-      // Direct from Add Candidate form — use passed data
-      skills           = parsedData.skills || parsedData.key_skills || []
+      skills = parsedData.skills || parsedData.key_skills || []
       total_experience = parsedData.total_experience ?? null
-      expected_ctc     = parsedData.expected_ctc ?? null
-      resumeText       = parsedData.rawText || rawText || ''
-
+      resumeText = parsedData.rawText || rawText || ''
+      education_level = parsedData.education_level || ''
+      education_degree = parsedData.education_degree || ''
+      current_location = parsedData.current_location || ''
+      current_company = parsedData.current_company || ''
     } else if (candidateId) {
-      const { data: candidate } = await supabaseAdmin
-        .from('candidates')
-        .select('key_skills, total_experience, expected_ctc')
-        .eq('id', candidateId)
-        .single()
-      if (candidate) {
-        skills           = candidate.key_skills || []
-        total_experience = candidate.total_experience
-        expected_ctc     = candidate.expected_ctc
+      const { data: c } = await supabaseAdmin.from('candidates')
+        .select('key_skills, total_experience, education_level, education_degree, current_location, current_company, resume_parsed_text')
+        .eq('id', candidateId).single()
+      if (c) {
+        skills = c.key_skills || []; total_experience = c.total_experience
+        education_level = c.education_level || ''; education_degree = c.education_degree || ''
+        current_location = c.current_location || ''; current_company = c.current_company || ''
+        resumeText = c.resume_parsed_text || rawText || ''
       }
-
     } else if (resumeBankId) {
-      const { data: rb } = await supabaseAdmin
-        .from('resume_bank')
-        .select('key_skills, total_experience, expected_ctc')
-        .eq('id', resumeBankId)
-        .single()
+      const { data: rb } = await supabaseAdmin.from('resume_bank')
+        .select('key_skills, total_experience, education_level, education_degree, current_location, current_company')
+        .eq('id', resumeBankId).single()
       if (rb) {
-        skills           = rb.key_skills || []
-        total_experience = rb.total_experience
-        expected_ctc     = rb.expected_ctc
+        skills = rb.key_skills || []; total_experience = rb.total_experience
+        education_level = rb.education_level || ''; education_degree = rb.education_degree || ''
+        current_location = rb.current_location || ''; current_company = rb.current_company || ''
       }
     }
 
-    // ── 4. Run matching engine ────────────────────────────────────────────────
     const result = matchResumeToJob({
-      resume: { skills, total_experience, expected_ctc, rawText: resumeText },
+      resume: { skills, total_experience, rawText: resumeText, education_level, education_degree, current_location, current_company },
       job,
     })
 
-    // ── 5. Persist result if screenedBy is provided ───────────────────────────
     if (screenedBy && (candidateId || resumeBankId)) {
       const record: Record<string, any> = {
-        job_id:           jobId,
-        screened_by:      screenedBy,
-        match_score:      result.match_score,
-        matched_skills:   result.matched_skills,
-        skill_gaps:       result.missing_skills,
-        analysis:         result.summary,
-        recommendation:   result.recommendation,
-        score_breakdown:  result.breakdown,    // jsonb column
-        experience_verdict: result.experience_verdict,
-        ctc_verdict:      result.ctc_verdict,
-        partial_skills:   result.partial_skills,
+        job_id: jobId, screened_by: screenedBy, match_score: result.match_score,
+        matched_skills: result.matched_skills, skill_gaps: result.missing_skills,
+        analysis: result.summary, recommendation: result.recommendation,
+        score_breakdown: result.breakdown, experience_verdict: result.experience_verdict,
+        education_verdict: result.education_verdict, location_verdict: result.location_verdict,
+        stability_verdict: result.stability_verdict, industry_verdict: result.industry_verdict,
+        partial_skills: result.partial_skills,
       }
-      if (candidateId)  record.candidate_id   = candidateId
-      if (resumeBankId) record.resume_bank_id  = resumeBankId
-
-      const { data: saved } = await supabaseAdmin
-        .from('ai_screenings')
-        .upsert(record, {
-          onConflict: candidateId ? 'candidate_id,job_id' : 'resume_bank_id,job_id',
-        })
-        .select()
-        .maybeSingle()
-
+      if (candidateId) record.candidate_id = candidateId
+      if (resumeBankId) record.resume_bank_id = resumeBankId
+      const { data: saved } = await supabaseAdmin.from('ai_screenings')
+        .upsert(record, { onConflict: candidateId ? 'candidate_id,job_id' : 'resume_bank_id,job_id' })
+        .select().maybeSingle()
       return NextResponse.json({ result: saved ?? result, cached: false })
     }
 
-    // Preview mode (no save) — return result directly
     return NextResponse.json({ result, cached: false })
-
   } catch (err: any) {
     console.error('match-resume error:', err)
     return NextResponse.json({ error: err.message || 'Internal error' }, { status: 500 })

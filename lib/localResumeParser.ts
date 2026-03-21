@@ -1,4 +1,4 @@
-// lib/localResumeParser.ts  v8
+// lib/localResumeParser.ts  v9
 // Fixes in this version:
 //   v8-fix-1: Added name/full-name to PERSONAL_INFO_PATTERNS — stops "Name: X" being company
 //   v8-fix-2: cleanText() now strips □ and other Unicode junk chars from PDF extraction
@@ -6,6 +6,8 @@
 //   v8-fix-4: Skills Pass 2 (bullet scan) now has word-count + verb-sentence guards
 //             — stops full responsibility sentences from being extracted as skills
 //   v8-fix-5: Skills Pass 2 is section-aware — skips bullets inside experience/projects sections
+//   v9-fix-1: extractExperience — added more explicit patterns (X+ years, Xy Xm, naukri format)
+//             and fixed date-range fallback to use most recent job start, not earliest ever
 
 export interface LocalParsedResume {
   full_name: string
@@ -67,13 +69,10 @@ const NON_SKILL_SECTIONS = new Set([
 // ─── Personal info line patterns ──────────────────────────────────────────────
 
 const PERSONAL_INFO_PATTERNS = [
-  // v8-fix-1: name label lines — must be first
   /^(?:full\s*)?name\s*[:\-]\s*/i,
   /^candidate\s*name\s*[:\-]/i,
-  // Languages
   /^languages?\s*(?:known|spoken|proficiency)?\s*[:\-]/i,
   /^known\s*languages?\s*[:\-]/i,
-  // Demographics
   /^nationality\s*[:\-]/i,
   /^marital\s*status\s*[:\-]/i,
   /^religion\s*[:\-]/i,
@@ -83,23 +82,19 @@ const PERSONAL_INFO_PATTERNS = [
   /^age\s*[:\-]/i,
   /^gender\s*[:\-]/i,
   /^sex\s*[:\-]/i,
-  // Address
   /^address\s*[:\-]/i,
   /^permanent\s*address\s*[:\-]/i,
   /^current\s*address\s*[:\-]/i,
   /^pin\s*code\s*[:\-]/i,
   /^passport\s*[:\-]/i,
-  // Family
   /^father'?s?\s*name\s*[:\-]/i,
   /^mother'?s?\s*name\s*[:\-]/i,
   /^spouse\s*[:\-]/i,
-  // Contact & Social
   /^phone\s*[:\-]/i,
   /^mobile\s*[:\-]/i,
   /^email\s*[:\-]/i,
   /^linkedin\s*[:\-]/i,
   /^github\s*[:\-]/i,
-  // Professional fields (labeled)
   /^notice\s*period\s*[:\-]/i,
   /^current\s*ctc\s*[:\-]/i,
   /^expected\s*ctc\s*[:\-]/i,
@@ -109,36 +104,24 @@ const PERSONAL_INFO_PATTERNS = [
   /^objective\s*[:\-]/i,
   /^declaration\s*[:\-]/i,
   /^reference\s*[:\-]/i,
-  // Multi-language list detection
   /\b(?:English|Hindi|Telugu|Tamil|Kannada|Malayalam|Marathi|Bengali|Gujarati|Punjabi|Odia|Urdu)\b.*\b(?:English|Hindi|Telugu|Tamil|Kannada|Malayalam|Marathi|Bengali|Gujarati|Punjabi|Odia|Urdu)\b/i,
 ]
 
 function isPersonalInfoLine(line: string): boolean {
-  // Strip leading Unicode junk before testing
   const clean = line.replace(/^[\u00A0\u2022\u25AA\u25B8\u2610\u2611\u2612\u25A1\u25A0\uFFFD\s]+/, '').trim()
   return PERSONAL_INFO_PATTERNS.some(p => p.test(clean))
 }
 
-// ─── Skill line validity guard ─────────────────────────────────────────────────
-// v8-fix-4: prevents responsibility sentences from being extracted as skills
+// ─── Skill line validity guard ────────────────────────────────────────────────
 
 function isValidSkillLine(text: string): boolean {
   const t = text.trim()
   if (t.length < 2 || t.length > 60) return false
-
-  // Too many words = sentence, not a skill (real skills ≤ 6 words)
   const wordCount = t.split(/\s+/).length
   if (wordCount > 6) return false
-
-  // Ends with period = sentence
   if (/\.$/.test(t)) return false
-
-  // Contains verb patterns typical of responsibility sentences
   if (/\b(?:addressing|managing|handling|working|developing|implementing|executing|leading|coordinating|designing|building|maintaining|ensuring|providing|supporting|reporting|preparing|conducting|monitoring|reviewing|resolving|fixing|troubleshooting|planned|managed|addressed|engineered|executed|achieved|delivered)\b/i.test(t)) return false
-
-  // Contains prepositions suggesting it's a phrase, not a skill name
   if (/\b(?:through|across|within|between|against|towards|regarding|related\s+to|in\s+order\s+to)\b/i.test(t)) return false
-
   return true
 }
 
@@ -202,12 +185,15 @@ const SKILL_MAP = new Map<string, string>([
   ['rtos','IT'],['matlab','IT'],['simulink','IT'],['vhdl','IT'],['fpga','IT'],
   ['qt','IT'],['cmake','IT'],['makefile','IT'],['gdb','IT'],['jira','IT'],
   ['confluence','IT'],['bitbucket','IT'],['svn','IT'],['perforce','IT'],
-  // Finance
+  // Finance / Tax
   ['financial analysis','Finance'],['budgeting','Finance'],['mis reporting','Finance'],
   ['fp&a','Finance'],['gst','Finance'],['tds','Finance'],['accounts payable','Finance'],
   ['accounts receivable','Finance'],['tally','Finance'],['sap fico','Finance'],
   ['financial modeling','Finance'],['variance analysis','Finance'],['forecasting','Finance'],
   ['auditing','Finance'],['taxation','Finance'],['balance sheet','Finance'],
+  ['transfer pricing','Finance'],['corporate tax','Finance'],['income tax','Finance'],
+  ['direct tax','Finance'],['indirect tax','Finance'],['tax audit','Finance'],
+  ['tax compliance','Finance'],['ifrs','Finance'],['financial reporting','Finance'],
   // Sales / Marketing
   ['b2b sales','Sales'],['b2c sales','Sales'],['business development','Sales'],
   ['key account management','Sales'],['crm','Sales'],['lead generation','Sales'],
@@ -258,6 +244,11 @@ const SKILL_DISPLAY: Record<string, string> = {
   'rtos':'RTOS','matlab':'MATLAB','simulink':'Simulink','vhdl':'VHDL','fpga':'FPGA',
   'cmake':'CMake','makefile':'Makefile','gdb':'GDB','jira':'Jira',
   'confluence':'Confluence','bitbucket':'Bitbucket',
+  // Finance / Tax display
+  'transfer pricing':'Transfer Pricing','corporate tax':'Corporate Tax',
+  'income tax':'Income Tax','direct tax':'Direct Tax','indirect tax':'Indirect Tax',
+  'tax audit':'Tax Audit','tax compliance':'Tax Compliance','ifrs':'IFRS',
+  'financial reporting':'Financial Reporting',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -265,9 +256,6 @@ const SKILL_DISPLAY: Record<string, string> = {
 function cleanText(raw: string): string {
   return raw
     .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-    // v8-fix-2: strip common Unicode junk from PDF/DOCX extraction
-    // □ (U+25A1), ■ (U+25A0), ☐ (U+2610), ☑ (U+2611), ☒ (U+2612),
-    // • alt bullets, replacement char, zero-width spaces
     .replace(/[\u2610\u2611\u2612\u25A1\u25A0\u25AA\u2022\u25B8\uFFFD\u200B\u200C\u200D\uFEFF]/g, ' ')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
     .replace(/[ \t]{3,}/g, '  ')
@@ -287,7 +275,6 @@ function toTitleCase(str: string): string {
   return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
 }
 
-// Strip leading □ / bullet / whitespace junk from a string
 function stripLeadingJunk(s: string): string {
   return s.replace(/^[\s\u00A0\u2022\u25AA\u25B8\u2610\u2611\u2612\u25A1\u25A0\uFFFD\-\*•▪▸]+/, '').trim()
 }
@@ -295,6 +282,17 @@ function stripLeadingJunk(s: string): string {
 const DATE_PATTERN        = /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{4}\b/i
 const PRESENT_PATTERN     = /\b(?:present|current|till\s+date|till\s+now|ongoing|till date)\b/i
 const DATE_RANGE_PATTERN  = /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\s*[–\-—to]+\s*(?:Present|Current|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i
+
+// ─── Month name → number ──────────────────────────────────────────────────────
+const MONTH_MAP: Record<string, number> = {
+  jan:1,feb:2,mar:3,apr:4,may:5,jun:6,
+  jul:7,aug:8,sep:9,oct:10,nov:11,dec:12,
+}
+
+function parseMonthYear(monthStr: string, yearStr: string): Date {
+  const m = MONTH_MAP[monthStr.toLowerCase().slice(0, 3)] || 1
+  return new Date(parseInt(yearStr), m - 1, 1)
+}
 
 // ─── Basic field extractors ───────────────────────────────────────────────────
 
@@ -349,9 +347,7 @@ function extractName(text: string): string {
     if (/[.,;:!?]/.test(line)) continue
     if (/www\.|http|linkedin|github|profile|summary|statement|about/i.test(line)) continue
     const words = line.split(/\s+/)
-    // Reject lines starting with articles/prepositions — "The Greens", "A Block" = address
     if (/^(?:the|a|an|at|in|on|of|for|and|or|near|flat|house|plot|block|sector|phase|tower|wing|apt|suite)\b/i.test(words[0])) continue
-    // Reject lines containing common place/building words
     const PLACE_WORDS = /^(?:greens|heights|gardens|residency|nagar|colony|enclave|vihar|apartments?|complex|park|avenue|road|street|lane|cross|main|layout|society|township|villa|palace|towers?|square|plaza|court|terrace|view|hills?|valley|woods?|estate|bay|grove|meadow)$/i
     if (words.some(w => PLACE_WORDS.test(w))) continue
     if (words.length >= 2 && words.length <= 4 && words.every(w => /^[A-Z][a-z]{1,}$/.test(w) || /^[A-Z]{2,5}$/.test(w)))
@@ -360,23 +356,125 @@ function extractName(text: string): string {
   return ''
 }
 
+// ─── v9-fix-1: Improved experience extraction ─────────────────────────────────
+// Strategy:
+//   Pass 1 — explicit label patterns (highest confidence)
+//   Pass 2 — natural language patterns ("X years of experience")
+//   Pass 3 — date range calculation using ALL date ranges, picking
+//             the span from the EARLIEST professional job start to now
+//             (skips internship/article/articleship stints < 1 year)
+//   Pass 4 — filename hint (Naukri exports embed "Xy_Zm" in filename)
+
 function extractExperience(text: string): number | null {
-  const patterns = [
+
+  // ── Pass 1: Explicit labeled fields ──────────────────────────────────────
+  const labelPatterns = [
     /total\s+(?:work\s+)?experience\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(?:\+\s*)?(?:years?|yrs?)/i,
+    /total\s+(?:work\s+)?experience\s*[:\-]?\s*(\d+)\s*(?:years?|yrs?)?\s*(?:and\s+)?(?:\d+\s*months?)?/i,
+    /experience\s*[:\-]\s*(\d+(?:\.\d+)?)\s*(?:\+\s*)?(?:years?|yrs?)/i,
+    // "9+ Years" standalone
+    /^(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:total\s+)?(?:work\s+)?(?:experience)?$/im,
+  ]
+  for (const p of labelPatterns) {
+    const m = text.match(p)
+    if (m) {
+      const v = parseFloat(m[1])
+      if (v > 0 && v < 50) return Math.round(v * 10) / 10
+    }
+  }
+
+  // ── Pass 2: Natural language patterns ────────────────────────────────────
+  const naturalPatterns = [
     /(\d+(?:\.\d+)?)\s*(?:\+\s*)?years?\s+of\s+(?:total\s+)?(?:work\s+)?experience/i,
     /experience\s+of\s+(\d+(?:\.\d+)?)\s*(?:\+\s*)?(?:years?|yrs?)/i,
-    /(\d+(?:\.\d+)?)\s*(?:\+\s*)?(?:years?|yrs?)\s+(?:of\s+)?experience/i,
+    /(\d+(?:\.\d+)?)\s*(?:\+\s*)?(?:years?|yrs?)\s+(?:of\s+)?(?:rich\s+)?(?:work\s+)?experience/i,
+    /(\d+(?:\.\d+)?)\s*(?:\+\s*)?(?:years?|yrs?)\s+(?:of\s+)?(?:extensive\s+)?(?:professional\s+)?experience/i,
+    // "currently working ... since May 2017" → calculate from that date
+    /(?:since|from)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})/i,
   ]
-  for (const p of patterns) {
-    const m = text.match(p); if (m) { const v=parseFloat(m[1]); if (v>0&&v<50) return v }
+  for (const p of naturalPatterns) {
+    const m = text.match(p)
+    if (m) {
+      // "since YYYY" pattern — calculate from that year
+      if (/since|from/i.test(p.source)) {
+        const startYear = parseInt(m[1])
+        const exp = new Date().getFullYear() - startYear
+        if (exp > 0 && exp < 50) return exp
+      } else {
+        const v = parseFloat(m[1])
+        if (v > 0 && v < 50) return Math.round(v * 10) / 10
+      }
+    }
   }
+
+  // ── Pass 3: Calculate from date ranges in resume ──────────────────────────
+  // Collect ALL date ranges: "Month YYYY – Month YYYY" or "Month YYYY – Present"
+  // Then find the earliest start date of a "real" job (exclude very short stints)
   const months = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec'
-  const ranges = [...text.matchAll(new RegExp(`(${months})\\s+(\\d{4})\\s*[–\\-—to]+\\s*(?:Present|Current|${months}\\s+\\d{4})`, 'gi'))]
-  if (ranges.length > 0) {
-    const current = new Date().getFullYear(); let earliest = current
-    for (const m of ranges) { const yr=parseInt(m[2]); if (yr<earliest&&yr>1970) earliest=yr }
-    const exp = current - earliest; if (exp>0&&exp<50) return exp
+  const rangeRegex = new RegExp(
+    `(${months})[a-z]*[\\s,]+(\\d{4})\\s*[–\\-—to]+\\s*(Present|Current|Till\\s*Date|(${months})[a-z]*[\\s,]+(\\d{4}))`,
+    'gi'
+  )
+
+  interface DateRange { start: Date; end: Date; durationMonths: number }
+  const ranges: DateRange[] = []
+  const now = new Date()
+
+  for (const m of [...text.matchAll(rangeRegex)]) {
+    const startDate = parseMonthYear(m[1], m[2])
+    let endDate: Date
+
+    if (/present|current|till/i.test(m[3])) {
+      endDate = now
+    } else if (m[4] && m[5]) {
+      endDate = parseMonthYear(m[4], m[5])
+    } else {
+      continue
+    }
+
+    if (startDate > endDate || startDate.getFullYear() < 1970) continue
+
+    const durationMonths =
+      (endDate.getFullYear() - startDate.getFullYear()) * 12 +
+      (endDate.getMonth() - startDate.getMonth())
+
+    ranges.push({ start: startDate, end: endDate, durationMonths })
   }
+
+  if (ranges.length > 0) {
+    // Filter out very short stints (< 6 months) — likely internships/articleships
+    // unless they're the only entries
+    const substantialRanges = ranges.filter(r => r.durationMonths >= 6)
+    const workRanges = substantialRanges.length > 0 ? substantialRanges : ranges
+
+    // Sort by start date
+    workRanges.sort((a, b) => a.start.getTime() - b.start.getTime())
+
+    // Use earliest start of substantial experience
+    const earliestStart = workRanges[0].start
+    const totalMonths = Math.round(
+      (now.getTime() - earliestStart.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
+    )
+    const totalYears = Math.round((totalMonths / 12) * 10) / 10
+
+    if (totalYears > 0 && totalYears < 50) return totalYears
+  }
+
+  // ── Pass 4: Year-only ranges "2016 – Present" ──────────────────────────────
+  const yearRanges = [...text.matchAll(/\b(\d{4})\s*[–\-—]\s*(Present|Current|\d{4})\b/gi)]
+  if (yearRanges.length > 0) {
+    const currentYear = now.getFullYear()
+    let earliest = currentYear
+
+    for (const m of yearRanges) {
+      const yr = parseInt(m[1])
+      if (yr >= 1990 && yr < currentYear && yr < earliest) earliest = yr
+    }
+
+    const exp = currentYear - earliest
+    if (exp > 0 && exp < 50) return exp
+  }
+
   return null
 }
 
@@ -493,33 +591,27 @@ function normalizeSkillDisplay(raw: string): string {
 function extractSkills(text: string): { skills: string[]; sector: string } {
   const found = new Map<string, string>()
 
-  // Pass 1: skills section free-form extraction (highest signal)
   const sectionSkills = extractSkillsFromSection(text)
   for (const raw of sectionSkills) {
     const lo = raw.toLowerCase()
     found.set(raw, SKILL_MAP.get(lo) || 'Other')
   }
 
-  // Pass 2: bullet-point scan — but ONLY outside non-skill sections (v8-fix-5)
-  // Track current section to skip experience/responsibilities bullets
   const lines = text.split('\n')
   let currentSection = ''
   for (let i = 0; i < lines.length - 1; i++) {
     const trimmed = lines[i].trim()
     const lower   = trimmed.toLowerCase().replace(/[:\-–—]+$/, '').trim()
 
-    // Track which section we're in
     if (isSectionHeader(trimmed)) {
       currentSection = lower
       continue
     }
 
-    // Skip bullets inside experience/responsibilities/projects sections (v8-fix-5)
     if (NON_SKILL_SECTIONS.has(currentSection)) continue
 
     const cleaned = stripLeadingJunk(trimmed)
 
-    // Standalone bullet on its own line → skill on next line (mammoth DOCX quirk)
     if (/^[•\-\*▪▸]$/.test(trimmed)) {
       const nextLine = stripLeadingJunk(lines[i+1]?.trim() || '')
       if (nextLine.length >= 2 && !isSectionHeader(nextLine) &&
@@ -527,7 +619,6 @@ function extractSkills(text: string): { skills: string[]; sector: string } {
         if (!found.has(nextLine)) found.set(nextLine, SKILL_MAP.get(nextLine.toLowerCase()) || 'Other')
       }
     } else if (/^[•\-\*▪▸]\s+.{2,}/.test(trimmed)) {
-      // Bullet + content on same line
       const content = cleaned
       if (!isPersonalInfoLine(content) && isValidSkillLine(content) && !found.has(content)) {
         found.set(content, SKILL_MAP.get(content.toLowerCase()) || 'Other')
@@ -535,7 +626,6 @@ function extractSkills(text: string): { skills: string[]; sector: string } {
     }
   }
 
-  // Pass 3: SKILL_MAP full-text scan — add classified skills + upgrade sectors
   const fullLower = text.toLowerCase()
   const sorted = Array.from(SKILL_MAP.entries()).sort((a,b) => b[0].length - a[0].length)
   for (const [skill, sector] of sorted) {
@@ -607,7 +697,6 @@ function parseWorkEntries(text: string): WorkEntry[] {
     const line = lines[i]
     if (isPersonalInfoLine(line)) continue
 
-    // Format 1: pipe-separated
     if (line.includes('|')) {
       const parts = line.split('|').map(p => p.trim()).filter(p => p.length > 0)
       if (parts.length >= 2) {
@@ -631,7 +720,6 @@ function parseWorkEntries(text: string): WorkEntry[] {
       }
     }
 
-    // Format 2: "Role at Company"
     const atMatch = line.match(/^(.+?)\s+(?:at|with|@)\s+(.+?)(?:\s*[\|,]\s*.+)?$/i)
     if (atMatch && looksLikeDesignation(atMatch[1]) && !isPersonalInfoLine(atMatch[2])) {
       const isCurrent = PRESENT_PATTERN.test(text.slice(Math.max(0, text.indexOf(line)), text.indexOf(line) + 300))
@@ -641,7 +729,6 @@ function parseWorkEntries(text: string): WorkEntry[] {
       continue
     }
 
-    // Format 3: "Company Name (Jan 2020 – Present)"
     if (PRESENT_PATTERN.test(line) && !looksLikeDesignation(line) && !isPersonalInfoLine(line)) {
       const company = stripDateRange(line).replace(/\(.*\)/, '').trim()
       if (isValidCompanyCandidate(company) || company.length > 2) {
@@ -661,7 +748,6 @@ function parseWorkEntries(text: string): WorkEntry[] {
       }
     }
 
-    // Format 4: date-range line with Present — window scan
     if (PRESENT_PATTERN.test(line) && DATE_PATTERN.test(line)) {
       let company = '', role = ''
       const windowLines = lines.slice(Math.max(0, i - 6), i + 3)
@@ -670,14 +756,12 @@ function parseWorkEntries(text: string): WorkEntry[] {
         if (DATE_PATTERN.test(wline) || PRESENT_PATTERN.test(wline)) continue
         if (isSectionHeader(wline) || /^[•\-\*▪▸]/.test(wline)) continue
         if (!role && looksLikeDesignation(wline) && wline.length < 80) role = wline
-        // v9-fix: require isValidCompanyCandidate — rejects skill lists like "Python, Golang, PHP"
         else if (!company && isValidCompanyCandidate(wline) && wline.length < 80) company = wline
       }
       if (role || company) entries.push({ company, designation: role, isCurrent: true })
       continue
     }
 
-    // Format 5: year-only range "2019 – Present"
     if (/\b\d{4}\s*[–\-—]\s*(?:Present|Current)\b/i.test(line) && !DATE_PATTERN.test(line)) {
       let company = '', role = ''
       for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
@@ -808,7 +892,6 @@ const DEGREE_ORDER = Object.keys(DEGREE_MAP).sort((a, b) => b.length - a.length)
 
 const INST_PATTERN = /(?:University|College|Institute(?:\s+of\s+[A-Za-z\s]+)?|School\s+of|Academy|Polytechnic|IIT|NIT|BITS|Symbiosis|Amity|Manipal|VIT|SRM|XLRI|TISS|ISB|ICAI|ICSI|IMT|IIPM|MDI|SPJIMR|NMIMS|SIBM|SCMHRD|Woxsen|Shoolini|Chitkara)\b/i
 
-// Strip degree prefix and "From" keyword from education lines (v8-fix-3)
 const DEGREE_PREFIX_RE = /^(?:bachelor\s+of\s+\w[\w\s]*?|master\s+of\s+\w[\w\s]*?|b\.tech|b\.e|b\.sc|b\.com|b\.a|bca|bba|mba|pgdm|mca|m\.tech|m\.sc|m\.com|m\.e|m\.a|diploma)\s*[\(\):\-–—,]?\s*/i
 const FROM_RE          = /\bfrom\s+/i
 
@@ -827,25 +910,21 @@ function extractEducation(text: string) {
 
   const eduLines = searchText.split('\n')
   for (let i = 0; i < eduLines.length; i++) {
-    // v8-fix-2: strip junk from each line before processing
     const raw     = stripLeadingJunk(eduLines[i].trim())
     const trimmed = raw
     if (trimmed.length < 5 || isPersonalInfoLine(trimmed)) continue
 
     if (INST_PATTERN.test(trimmed)) {
-      // v8-fix-3: strip "From " prefix and degree abbreviation prefix before institution
       let instLine = trimmed
       instLine = instLine.replace(DEGREE_PREFIX_RE, '')
       instLine = instLine.replace(FROM_RE, '')
       instLine = instLine.replace(/\s*\(?\d{4}[\s–\-—]*\d{0,4}\)?/g, '').trim()
 
-      // Extract the institution portion (from the keyword onwards)
       const instStart = instLine.search(INST_PATTERN)
       if (instStart >= 0) {
         const beforeInst = instLine.slice(0, instStart).trim()
         const instRaw    = instLine.slice(instStart).trim()
 
-        // Field = what's before the institution name (after degree prefix stripped)
         if (beforeInst.length > 2 && beforeInst.length < 50 &&
             !/\d{4}/.test(beforeInst) && !INST_PATTERN.test(beforeInst) &&
             !FROM_RE.test(beforeInst)) {
@@ -859,7 +938,6 @@ function extractEducation(text: string) {
         institution = instLine
       }
 
-      // Also check line above for field/specialization
       if (!field && i > 0) {
         const above = stripLeadingJunk(eduLines[i - 1].trim())
         if (above.length > 3 && above.length < 60 && !INST_PATTERN.test(above) &&
@@ -876,7 +954,6 @@ function extractEducation(text: string) {
     }
   }
 
-  // Fallback institution regex
   if (!institution) {
     const fallback = /\b([A-Z][A-Za-z\s&]{2,50}(?:University|College|Institute|Symbiosis|Amity|Manipal|VIT|XLRI|ISB|IIT|NIT|BITS)(?:\s+of\s+[A-Za-z\s]{2,30})?)\b/g
     for (const m of [...text.matchAll(fallback)]) {

@@ -22,5 +22,5 @@ export async function parseResumeWithAI(file: File) {
     throw new Error(result.error || 'Parsing failed')
   }
 
-  return result.data
+  return { ...result.data, rawText: result.rawText || '' }
 }

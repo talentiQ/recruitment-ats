@@ -51,7 +51,7 @@ export default function AddCandidateForm({
 
   // Validation errors for mandatory fields
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
-
+  const [resumeRawText, setResumeRawText] = useState<string>('')
   // ── NEW: store full parsed result for MatchScorePanel ──────────────────────
   const [parsedResume, setParsedResume] = useState<{
     skills: string[]
@@ -230,7 +230,7 @@ export default function AddCandidateForm({
 
     try {
       const parsed = await parseResumeWithAI(file)
-
+      setResumeRawText(parsed.rawText || '')
       // Auto-fill form
       setFormData(prev => ({
         ...prev,
@@ -727,11 +727,12 @@ export default function AddCandidateForm({
           {/* ── NEW: MatchScorePanel — preview mode ──────────────────────────── */}
           {!isEditMode && (
             <MatchScorePanel
-              jobId={formData.job_id || null}
-              jobTitle={selectedJobTitle}
-              parsedData={parsedResume}
-              autoRun={true}
-            />
+          jobId={formData.job_id || null}
+          jobTitle={selectedJobTitle}
+          parsedData={parsedResume}
+          rawText={resumeRawText}
+          autoRun={true}
+          />
           )}
         </div>
 

@@ -687,12 +687,12 @@ export default function TalentPoolSearchPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Min CTC (L)</label>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1">Min CTC </label>
                       <input type="number" className={fi} placeholder="0" value={ctcMin}
                         onChange={e => setCtcMin(e.target.value)}/>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Max CTC (L)</label>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1">Max CTC </label>
                       <input type="number" className={fi} placeholder="50" value={ctcMax}
                         onChange={e => setCtcMax(e.target.value)}/>
                     </div>
@@ -814,7 +814,7 @@ export default function TalentPoolSearchPage() {
             </div>
             <div className="px-5 py-3 bg-gray-50 border-b">
               <p className="text-sm font-medium">{scoringTarget.result.current_designation} at {scoringTarget.result.current_company || '—'}</p>
-              <p className="text-xs text-gray-500 mt-0.5">{scoringTarget.result.total_experience} yrs · ₹{scoringTarget.result.expected_ctc}L · {scoringTarget.result.current_location || '—'}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{scoringTarget.result.total_experience} yrs · ₹{scoringTarget.result.expected_ctc} · {scoringTarget.result.current_location || '—'}</p>
               <div className="flex flex-wrap gap-1 mt-2">
                 {scoringTarget.result.key_skills.slice(0, 6).map(s =>
                   <span key={s} className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">{s}</span>
@@ -1025,7 +1025,7 @@ function ResultCard({
             <span>{result.total_experience} yr{result.total_experience !== 1 ? 's' : ''} exp</span>
             <span className="text-gray-200 mx-0.5">|</span>
             <span>📍 {result.current_location || 'N/A'}</span>
-            {result.expected_ctc ? <><span className="text-gray-200 mx-0.5">|</span><span className="font-semibold text-emerald-600">₹{result.expected_ctc}L CTC</span></> : null}
+            {result.expected_ctc ? <><span className="text-gray-200 mx-0.5">|</span><span className="font-semibold text-emerald-600">₹{result.expected_ctc} CTC</span></> : null}
             {result.notice_period ? <><span className="text-gray-200 mx-0.5">|</span><span className="text-amber-600 text-xs font-medium">{result.notice_period}d notice</span></> : null}
           </div>
 
