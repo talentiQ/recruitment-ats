@@ -29,7 +29,6 @@ interface Job {
   recruiter_allocations: { id: string; name: string; positions: number }[]
 }
 
-// Active pipeline stages — candidates currently being worked on
 const IN_PROGRESS_STAGES = [
   'sourced', 'screening', 'interview_scheduled', 'interview_completed',
   'documentation', 'offer_extended', 'offer_accepted', 'on_hold',
@@ -47,6 +46,7 @@ export default function SrTLJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
+  const [searchQuery, setSearchQuery] = useState('')
   const [user, setUser] = useState<any>(null)
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null)
   const [confirmModal, setConfirmModal] = useState<{ jobId: string; jobTitle: string; newStatus: string } | null>(null)
@@ -118,7 +118,6 @@ export default function SrTLJobsPage() {
   }
 
   const handleStatusChange = (jobId: string, jobTitle: string, newStatus: string) => {
-    // Confirm before closing a job (destructive)
     if (newStatus === 'closed') {
       setConfirmModal({ jobId, jobTitle, newStatus })
     } else {
@@ -137,7 +136,6 @@ export default function SrTLJobsPage() {
 
       if (error) throw error
 
-      // Update local state instantly without full reload
       setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: newStatus } : j))
     } catch (error) {
       console.error('Error updating job status:', error)
@@ -147,15 +145,23 @@ export default function SrTLJobsPage() {
     }
   }
 
-  const filteredJobs = statusFilter === 'all' ? jobs : jobs.filter(j => j.status === statusFilter)
+  // ── Search + status filter applied together ──
+  const filteredJobs = jobs.filter(j => {
+    const matchesStatus = statusFilter === 'all' || j.status === statusFilter
+    const q = searchQuery.toLowerCase().trim()
+    const matchesSearch = !q || (
+      j.job_title?.toLowerCase().includes(q) ||
+      j.location?.toLowerCase().includes(q) ||
+      j.clients?.company_name?.toLowerCase().includes(q) ||
+      j.job_code?.toLowerCase().includes(q)
+    )
+    return matchesStatus && matchesSearch
+  })
 
   const getStatusBadge = (status: string) => {
     const opt = JOB_STATUS_OPTIONS.find(o => o.value === status)
     return opt?.color || 'bg-gray-100 text-gray-700 border-gray-300'
   }
-
-  const getStatusLabel = (status: string) =>
-    JOB_STATUS_OPTIONS.find(o => o.value === status)?.label || status.replace('_', ' ').toUpperCase()
 
   const getPriorityBadge = (priority: string) => {
     const badges: { [key: string]: string } = {
@@ -200,15 +206,53 @@ export default function SrTLJobsPage() {
           </div>
         </div>
 
-        {/* Filter */}
+        {/* ── Search + Filter ── */}
         <div className="card">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Status</label>
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="input max-w-xs">
-            <option value="all">All Jobs</option>
-            {JOB_STATUS_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Search */}
+            <div className="relative flex-1">
+              <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">
+                🔍
+              </span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search by job title, location, client or job code…"
+                className="input w-full pl-9"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute inset-y-0 right-3 flex items-center text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Status filter */}
+            <div className="sm:w-48">
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value)}
+                className="input w-full"
+              >
+                <option value="all">All Statuses</option>
+                {JOB_STATUS_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Result count hint */}
+          {(searchQuery || statusFilter !== 'all') && (
+            <p className="text-xs text-gray-500 mt-2">
+              Showing <span className="font-semibold text-gray-700">{filteredJobs.length}</span> of {jobs.length} jobs
+              {searchQuery && <> matching "<span className="font-semibold">{searchQuery}</span>"</>}
+            </p>
+          )}
         </div>
 
         {loading ? (
@@ -217,10 +261,23 @@ export default function SrTLJobsPage() {
           </div>
         ) : filteredJobs.length === 0 ? (
           <div className="card text-center py-12">
-            <p className="text-gray-600">No jobs found</p>
-            <button onClick={() => router.push('/sr-tl/jobs/add')} className="mt-4 btn-primary">
-              Create First Job
-            </button>
+            <p className="text-gray-500 text-lg mb-1">No jobs found</p>
+            {(searchQuery || statusFilter !== 'all') && (
+              <p className="text-sm text-gray-400 mb-4">Try clearing your search or filter</p>
+            )}
+            {!searchQuery && statusFilter === 'all' && (
+              <button onClick={() => router.push('/sr-tl/jobs/add')} className="mt-4 btn-primary">
+                Create First Job
+              </button>
+            )}
+            {(searchQuery || statusFilter !== 'all') && (
+              <button
+                onClick={() => { setSearchQuery(''); setStatusFilter('all') }}
+                className="mt-2 text-sm text-blue-600 hover:underline"
+              >
+                Clear filters
+              </button>
+            )}
           </div>
         ) : (
           <div className="card overflow-x-auto">
@@ -275,7 +332,6 @@ export default function SrTLJobsPage() {
                         {job.priority?.toUpperCase()}
                       </span>
                     </td>
-                    {/* ── Status cell with inline dropdown ── */}
                     <td>
                       {updatingStatus === job.id ? (
                         <div className="flex items-center gap-1 text-sm text-gray-500">
