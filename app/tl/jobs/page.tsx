@@ -45,6 +45,7 @@ export default function TLJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
+  const [searchQuery, setSearchQuery] = useState('')
   const [user, setUser] = useState<any>(null)
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null)
   const [confirmModal, setConfirmModal] = useState<{ jobId: string; jobTitle: string; newStatus: string } | null>(null)
@@ -61,7 +62,6 @@ export default function TLJobsPage() {
   const loadJobs = async (userFromStorage: any) => {
     setLoading(true)
     try {
-      // Get TL's direct recruiters
       const { data: recruiters } = await supabase
         .from('users')
         .select('id')
@@ -114,7 +114,6 @@ export default function TLJobsPage() {
         const inProgressCount = candidates.filter((c: any) =>
           IN_PROGRESS_STAGES.includes(c.current_stage)
         ).length
-
         return {
           ...job,
           candidate_count: candidates.length,
@@ -155,7 +154,18 @@ export default function TLJobsPage() {
     }
   }
 
-  const filteredJobs = statusFilter === 'all' ? jobs : jobs.filter(j => j.status === statusFilter)
+  // ── Search + status filter combined ──
+  const filteredJobs = jobs.filter(j => {
+    const matchesStatus = statusFilter === 'all' || j.status === statusFilter
+    const q = searchQuery.toLowerCase().trim()
+    const matchesSearch = !q || (
+      j.job_title?.toLowerCase().includes(q) ||
+      j.location?.toLowerCase().includes(q) ||
+      j.clients?.company_name?.toLowerCase().includes(q) ||
+      j.job_code?.toLowerCase().includes(q)
+    )
+    return matchesStatus && matchesSearch
+  })
 
   const getStatusBadgeColor = (status: string) =>
     JOB_STATUS_OPTIONS.find(o => o.value === status)?.color || 'bg-gray-100 text-gray-700 border-gray-300'
@@ -172,6 +182,7 @@ export default function TLJobsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>
@@ -203,15 +214,53 @@ export default function TLJobsPage() {
           </div>
         </div>
 
-        {/* Filter */}
+        {/* ── Search + Filter ── */}
         <div className="card">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Status</label>
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="input max-w-xs">
-            <option value="all">All Jobs</option>
-            {JOB_STATUS_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Search */}
+            <div className="relative flex-1">
+              <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">
+                🔍
+              </span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search by job title, location, client or job code…"
+                className="input w-full pl-9"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute inset-y-0 right-3 flex items-center text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Status filter */}
+            <div className="sm:w-48">
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value)}
+                className="input w-full"
+              >
+                <option value="all">All Statuses</option>
+                {JOB_STATUS_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Result count */}
+          {(searchQuery || statusFilter !== 'all') && (
+            <p className="text-xs text-gray-500 mt-2">
+              Showing <span className="font-semibold text-gray-700">{filteredJobs.length}</span> of {jobs.length} jobs
+              {searchQuery && <> matching "<span className="font-semibold">{searchQuery}</span>"</>}
+            </p>
+          )}
         </div>
 
         {/* Table */}
@@ -221,10 +270,23 @@ export default function TLJobsPage() {
           </div>
         ) : filteredJobs.length === 0 ? (
           <div className="card text-center py-12">
-            <p className="text-gray-600">No jobs found</p>
-            <button onClick={() => router.push('/tl/jobs/add')} className="mt-4 btn-primary">
-              Create First Job
-            </button>
+            <p className="text-gray-500 text-lg mb-1">No jobs found</p>
+            {(searchQuery || statusFilter !== 'all') && (
+              <>
+                <p className="text-sm text-gray-400 mb-3">Try clearing your search or filter</p>
+                <button
+                  onClick={() => { setSearchQuery(''); setStatusFilter('all') }}
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  Clear filters
+                </button>
+              </>
+            )}
+            {!searchQuery && statusFilter === 'all' && (
+              <button onClick={() => router.push('/tl/jobs/add')} className="mt-4 btn-primary">
+                Create First Job
+              </button>
+            )}
           </div>
         ) : (
           <div className="card overflow-x-auto">
@@ -279,7 +341,6 @@ export default function TLJobsPage() {
                         {job.priority?.toUpperCase()}
                       </span>
                     </td>
-                    {/* ── Inline status dropdown ── */}
                     <td>
                       {updatingStatus === job.id ? (
                         <div className="flex items-center gap-1 text-sm text-gray-500">
@@ -336,7 +397,7 @@ export default function TLJobsPage() {
         )}
       </div>
 
-      {/* ── Confirm Close Modal ── */}
+      {/* Confirm Close Modal */}
       {confirmModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
