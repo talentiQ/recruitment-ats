@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta http-equiv="Content-Security-Policy" content="script-src 'self'; worker-src 'self' blob:; object-src 'none';">
+<title>Talent IQ</title>
+<style>
+  :root {
+    --bg: #a8aab1;
+    --surface: #c7ccda;
+    --surface2: #eceef5;
+    --border: #2e3248;
+    --accent: #4f6ef7;
+    --accent-hover: #3d5de8;
+    --success: #22c55e;
+    --danger: #ef4444;
+    --text: #1c1d23;
+    --text2: #26272e;
+    --text3: #5a5f78;
+    --required: #f87171;
+    --font: 'Inter', -apple-system, sans-serif;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+  .logo-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 8px var(--accent); }
+  .close-btn {
+    background: none; border: none; color: var(--text2); cursor: pointer;
+    padding: 4px; border-radius: 4px; display: flex; align-items: center; transition: color 0.15s;
+  }
+  .close-btn:hover { color: var(--text); }
+
+  /* File pill */
+  .file-pill {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; margin: 12px 16px 0;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+    flex-shrink: 0;
+  }
+  .file-icon { font-size: 18px; flex-shrink: 0; }
+  .file-name { font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .file-meta { font-size: 11px; color: var(--text2); white-space: nowrap; }
+
+  /* Confidence bar */
+  .conf-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 16px; font-size: 11px; color: var(--text2); flex-shrink: 0;
+  }
+  .conf-bar { flex: 1; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .conf-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; background: #22c55e; }
+
+  /* Scrollable form */
+  .form-body {
+    flex: 1; overflow-y: auto; padding: 12px 16px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .form-body::-webkit-scrollbar { width: 4px; }
+  .form-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* State panels */
+  .state { display: none; }
+  .state.active { display: flex; flex-direction: column; }
+
+  /* Empty state */
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; padding: 40px 24px; gap: 12px; color: var(--text2);
+  }
+  .empty-icon { font-size: 40px; opacity: 0.5; }
+  .empty-state h3 { font-size: 14px; color: var(--text); }
+  .empty-state p { font-size: 12px; line-height: 1.7; }
+
+  /* Parsing state */
+  .parsing-state {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; padding: 40px 24px;
+  }
+  .spinner {
+    width: 32px; height: 32px;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .parsing-label { font-size: 13px; color: var(--text2); }
+  .parsing-file { font-size: 11px; color: var(--text3); }
+
+  /* Section label */
+  .section-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text3); padding-top: 4px;
+  }
+
+  /* Field */
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 11px; font-weight: 500; color: var(--text2); }
+  .field label .req { color: var(--required); margin-left: 2px; }
+
+  /* Grid rows */
+  .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+  input, select, textarea {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text);
+    font-family: var(--font); font-size: 12px; padding: 7px 10px;
+    width: 100%; outline: none; transition: border-color 0.15s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  input::placeholder, textarea::placeholder { color: var(--text3); }
+  select option { background: var(--surface2); }
+  input.invalid, select.invalid { border-color: var(--required); }
+
+  /* Tags */
+  .tags-wrap {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    padding: 5px 8px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius); min-height: 34px; cursor: text; align-items: center;
+  }
+  .tags-wrap:focus-within { border-color: var(--accent); }
+  .tag {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500;
+  }
+  .tag-skill { background: #4f6ef720; border: 1px solid #4f6ef740; color: #9bb0fa; }
+  .tag-keyword { background: #f59e0b18; border: 1px solid #f59e0b30; color: #fbbf24; }
+  .tag-remove {
+    cursor: pointer; opacity: 0.6; font-size: 13px; line-height: 1;
+    background: none; border: none; color: inherit; padding: 0;
+  }
+  .tag-remove:hover { opacity: 1; }
+  .tags-input {
+    border: none !important; background: transparent !important;
+    padding: 1px 4px !important; flex: 1; min-width: 60px; font-size: 11px; color: var(--text);
+  }
+
+  /* Error */
+  .error-banner {
+    padding: 7px 10px; background: #ef444418; border: 1px solid #ef444440;
+    border-radius: var(--radius); font-size: 11px; color: #fca5a5; display: none;
+  }
+  .error-banner.visible { display: block; }
+
+  /* Success */
+  .success-state {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; padding: 40px 24px; gap: 14px;
+  }
+  .success-icon {
+    width: 56px; height: 56px; background: #22c55e15; border: 1.5px solid #22c55e40;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px;
+  }
+  .success-state h3 { font-size: 15px; }
+  .success-state p { font-size: 12px; color: var(--text2); line-height: 1.7; max-width: 260px; }
+
+  /* Footer */
+  .footer {
+    padding: 10px 16px; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 7px;
+    flex-shrink: 0; background: var(--surface);
+  }
+  .btn {
+    width: 100%; padding: 9px; border-radius: var(--radius); border: none;
+    font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-ghost { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); font-size: 12px; }
+  .btn-ghost:hover { color: var(--text); }
+
+  /* Bank badge */
+  .bank-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 20px;
+    background: #4f6ef712; border: 1px solid #4f6ef730;
+    color: var(--text2); font-size: 11px; font-weight: 500;
+    flex-shrink: 0; align-self: flex-start; margin: 8px 16px 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="logo">
+    <div class="logo-dot"></div>
+    Talent IQ
+  </div>
+  <button class="close-btn" id="close-btn" title="Close">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+      <path d="M18 6L6 18M6 6l12 12"/>
+    </svg>
+  </button>
+</div>
+
+<!-- ── STATE: Empty ── -->
+<div class="state active" id="state-empty" style="flex:1">
+  <div class="empty-state">
+    <div class="empty-icon">📎</div>
+    <h3>No CV selected</h3>
+    <p>Open an email with a PDF or Word CV and click the <strong>"Add to Talent IQ"</strong> button next to the attachment.</p>
+  </div>
+</div>
+
+<!-- ── STATE: Parsing ── -->
+<div class="state" id="state-parsing" style="flex:1">
+  <div class="parsing-state">
+    <div class="spinner"></div>
+    <div class="parsing-label" id="parse-status">Reading CV…</div>
+    <div class="parsing-file" id="parse-filename"></div>
+  </div>
+</div>
+
+<!-- ── STATE: Form ── -->
+<div class="state" id="state-form" style="flex:1;overflow:hidden;display:none;flex-direction:column">
+
+  <!-- File pill -->
+  <div class="file-pill">
+    <div class="file-icon">📄</div>
+    <div class="file-name" id="form-filename">resume.pdf</div>
+    <div class="file-meta" id="form-conf-text">Parsed</div>
+  </div>
+
+  <!-- Confidence -->
+  <div class="conf-row">
+    <span>Parse confidence</span>
+    <div class="conf-bar"><div class="conf-fill" id="conf-fill" style="width:0%"></div></div>
+    <span id="conf-pct">0%</span>
+  </div>
+
+  <!-- Destination badge — always Resume Bank -->
+  <div class="bank-badge">
+    🗄️ Saving to Resume Bank
+  </div>
+
+  <!-- Form -->
+  <div class="form-body" id="form-body">
+
+    <div class="error-banner" id="error-banner"></div>
+
+    <div class="section-label">Candidate details</div>
+
+    <!-- Row: Name (full width) -->
+    <div class="field">
+      <label>Full Name <span class="req">*</span></label>
+      <input type="text" id="f-name" placeholder="e.g. Ravi Kumar"/>
+    </div>
+
+    <!-- Row: Phone + Email -->
+    <div class="row-2">
+      <div class="field">
+        <label>Phone</label>
+        <input type="text" id="f-phone" placeholder="9800000000"/>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="f-email" placeholder="ravi@email.com"/>
+      </div>
+    </div>
+
+    <!-- Row: Designation -->
+    <div class="field">
+      <label>Designation</label>
+      <input type="text" id="f-designation" placeholder="e.g. Senior Technical Lead"/>
+    </div>
+
+    <!-- Row: Company + Exp + Location -->
+    <div class="row-3">
+      <div class="field">
+        <label>Company</label>
+        <input type="text" id="f-company" placeholder="Ametek Ltd"/>
+      </div>
+      <div class="field">
+        <label>Exp (yrs) <span class="req">*</span></label>
+        <input type="number" id="f-exp" placeholder="13" min="0" max="60"/>
+      </div>
+      <div class="field">
+        <label>Location <span class="req">*</span></label>
+        <input type="text" id="f-location" placeholder="Bangalore"/>
+      </div>
+    </div>
+
+    <!-- Row: Industry/Domain (full width) -->
+    <div class="field">
+      <label>Industry / Domain <span class="req">*</span></label>
+      <select id="f-industry">
+        <option value="">— Select industry —</option>
+        <option>Engineering &amp; Manufacturing</option>
+        <option>Oil &amp; Gas</option>
+        <option>Power &amp; Energy</option>
+        <option>Construction &amp; Infrastructure</option>
+        <option>HVAC &amp; MEP</option>
+        <option>Automotive</option>
+        <option>Aerospace &amp; Defence</option>
+        <option>IT &amp; Software</option>
+        <option>BFSI</option>
+        <option>Pharma &amp; Life Sciences</option>
+        <option>FMCG &amp; Retail</option>
+        <option>Logistics &amp; Supply Chain</option>
+        <option>Telecom</option>
+        <option>Sales / Marketing</option>
+        <option>HR &amp; Talent Acquisition</option>
+        <option>Finance &amp; Accounts</option>
+        <option>Legal &amp; Compliance</option>
+        <option>Other</option>
+      </select>
+    </div>
+
+    <!-- Row: Expected CTC + Notice Period -->
+    <div class="row-2">
+      <div class="field">
+        <label>Expected CTC (Lakhs)</label>
+        <input type="number" id="f-ctc" placeholder="8.5" min="0" step="0.5"/>
+      </div>
+      <div class="field">
+        <label>Notice Period (days)</label>
+        <input type="number" id="f-notice" placeholder="30" min="0"/>
+      </div>
+    </div>
+
+    <!-- Skills -->
+    <div class="field">
+      <label>Skills</label>
+      <div class="tags-wrap" id="skills-wrap">
+        <input class="tags-input" id="skills-input" placeholder="Type skill + Enter"/>
+      </div>
+    </div>
+
+    <!-- Requirement Keywords -->
+    <div class="field">
+      <label>Requirement Keywords <span style="color:var(--text3);font-weight:400">— job-role match tags</span></label>
+      <div class="tags-wrap" id="keywords-wrap">
+        <input class="tags-input" id="keywords-input" placeholder="e.g. Design Engineer, AutoCAD…"/>
+      </div>
+    </div>
+
+    <!-- Source -->
+    <div class="field">
+      <label>Source</label>
+      <select id="f-source">
+        <option value="email">Email / Referral</option>
+        <option value="resdex">Resdex / Naukri</option>
+        <option value="linkedin">LinkedIn</option>
+        <option value="direct">Direct apply</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+
+    <!-- Notes -->
+    <div class="field">
+      <label>Notes</label>
+      <textarea id="f-notes" rows="2" placeholder="Any quick notes…"></textarea>
+    </div>
+
+  </div><!-- /form-body -->
+</div><!-- /state-form -->
+
+<!-- ── STATE: Success ── -->
+<div class="state" id="state-success" style="flex:1">
+  <div class="success-state">
+    <div class="success-icon">✓</div>
+    <h3>Added to Resume Bank!</h3>
+    <p id="success-msg">Candidate saved successfully.</p>
+    <button class="btn btn-ghost" id="btn-add-another" style="width:auto;padding:8px 20px">← Add another CV</button>
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="footer" id="footer" style="display:none">
+  <button class="btn btn-primary" id="submit-btn">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+    Save to Resume Bank
+  </button>
+  <button class="btn btn-ghost" id="btn-cancel">Cancel</button>
+</div>
+
+<script src="sidebar.js"></script>
+</body>
+</html>

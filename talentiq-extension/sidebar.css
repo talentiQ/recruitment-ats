@@ -1,0 +1,35 @@
+/* sidebar.css — injected into Gmail page */
+
+.tiq-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 4px 10px;
+  background: #1a56db;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'Google Sans', Roboto, sans-serif;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 0.15s, transform 0.1s;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.tiq-btn:hover {
+  background: #1648c5;
+  transform: translateY(-1px);
+}
+
+.tiq-btn:active {
+  transform: translateY(0);
+  background: #1341b0;
+}
+
+.tiq-btn svg {
+  flex-shrink: 0;
+}

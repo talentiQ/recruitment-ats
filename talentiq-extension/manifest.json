@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Talent IQ — CV Importer",
+  "version": "1.0.0",
+  "description": "Add candidates from Gmail attachments directly into Talent IQ",
+
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://mail-attachment.googleusercontent.com/*",
+    "https://recruitment-ats.vercel.app/*"
+  ],
+
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content.js"],
+      "css": ["sidebar.css"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "action": {
+    "default_title": "Talent IQ CV Importer",
+    "default_icon": {
+      "16":  "icons/icon16.png",
+      "48":  "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": ["sidebar.html", "lib/pdf.min.js", "lib/pdf.worker.min.js", "lib/mammoth.browser.min.js"],
+      "matches": ["https://mail.google.com/*"]
+    }
+  ],
+
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

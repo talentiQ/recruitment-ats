@@ -1,4 +1,5 @@
-﻿'use client'
+﻿// app/recruiter/jobs/page.tsx
+'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
 import { useState, useEffect } from 'react'
@@ -39,9 +40,7 @@ export default function RecruiterJobsPage() {
         .eq('recruiter_id', userId)
         .eq('is_active', true)
 
-      if (assignError) {
-        console.error('Assignment query error:', assignError)
-      }
+      if (assignError) console.error('Assignment query error:', assignError)
 
       if (!assignments || assignments.length === 0) {
         setDebugInfo({ userId, teamId, assignmentsFound: 0, message: 'No job assignments found in database' })
@@ -54,18 +53,11 @@ export default function RecruiterJobsPage() {
 
       const { data: jobsData, error: jobsError } = await supabase
         .from('jobs')
-        .select(`
-          *,
-          clients (company_name),
-          candidates (id)
-        `)
+        .select(`*, clients (company_name), candidates (id)`)
         .in('id', jobIds)
         .order('created_at', { ascending: false })
 
-      if (jobsError) {
-        console.error('Jobs query error:', jobsError)
-        throw jobsError
-      }
+      if (jobsError) throw jobsError
 
       const jobsWithCount = jobsData?.map(job => ({
         ...job,
@@ -74,7 +66,6 @@ export default function RecruiterJobsPage() {
 
       setJobs(jobsWithCount)
       setDebugInfo({ userId, teamId, assignmentsFound: assignments.length, jobsLoaded: jobsData?.length || 0 })
-
     } catch (error) {
       console.error('Error loading jobs:', error)
       setDebugInfo({ userId, teamId, error })
@@ -125,9 +116,7 @@ export default function RecruiterJobsPage() {
         ) : jobs.length === 0 ? (
           <div className="card text-center py-12">
             <p className="text-xl font-medium text-gray-900 mb-2">No jobs assigned to you yet</p>
-            <p className="text-sm text-gray-500">
-              Your team leader will assign jobs to you when creating new job openings
-            </p>
+            <p className="text-sm text-gray-500">Your team leader will assign jobs to you when creating new job openings</p>
           </div>
         ) : (
           <>
@@ -146,7 +135,6 @@ export default function RecruiterJobsPage() {
                       <h3 className="text-lg font-bold text-gray-900 mt-1">{job.job_title}</h3>
                     </div>
 
-                    {/* ── Inline status dropdown ── */}
                     {updatingStatus === job.id ? (
                       <div className="flex items-center gap-1 text-sm text-gray-500">
                         <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
@@ -187,10 +175,24 @@ export default function RecruiterJobsPage() {
                     </button>
                   </div>
 
-                  <div className="mt-3 text-center">
-                    <span className="text-2xl font-bold text-blue-600">{job.candidate_count}</span>
+                  {/* ── Clickable candidate count ── */}
+                  <button
+                    onClick={() => job.candidate_count > 0 && router.push(`/recruiter/jobs/${job.id}/candidates`)}
+                    disabled={job.candidate_count === 0}
+                    className={`mt-3 w-full text-center py-2 rounded-lg transition border ${
+                      job.candidate_count > 0
+                        ? 'border-blue-100 hover:bg-blue-50 cursor-pointer'
+                        : 'border-transparent cursor-default'
+                    }`}
+                  >
+                    <span className={`text-2xl font-bold ${job.candidate_count > 0 ? 'text-blue-600' : 'text-gray-400'}`}>
+                      {job.candidate_count}
+                    </span>
                     <span className="text-sm text-gray-500 ml-1">candidates added</span>
-                  </div>
+                    {job.candidate_count > 0 && (
+                      <span className="text-xs text-blue-400 ml-2">→ view all</span>
+                    )}
+                  </button>
                 </div>
               ))}
             </div>
@@ -198,7 +200,7 @@ export default function RecruiterJobsPage() {
         )}
       </div>
 
-      {/* ── Confirm Close Modal ── */}
+      {/* Confirm Close Modal */}
       {confirmModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
@@ -228,7 +230,6 @@ export default function RecruiterJobsPage() {
           </div>
         </div>
       )}
-
     </DashboardLayout>
   )
 }
