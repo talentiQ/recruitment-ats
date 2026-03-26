@@ -303,40 +303,64 @@ async function submitCandidate() {
   btn.innerHTML = '<div style="width:14px;height:14px;border:2px solid #ffffff40;border-top-color:#fff;border-radius:50%;animation:spin 0.7s linear infinite"></div> Saving…'
 
   try {
-    let resumeUrl = null
-    if (currentFileBase64) resumeUrl = await uploadResume()
-
-    const name = document.getElementById('f-name').value.trim()
-
-    const payload = {
-      full_name:            name,
-      phone:                document.getElementById('f-phone').value.trim() || null,
-      email:                document.getElementById('f-email').value.trim() || null,
-      designation:          document.getElementById('f-designation').value.trim() || null,
-      current_company:      document.getElementById('f-company').value.trim() || null,
-      total_experience:     Number(document.getElementById('f-exp').value) || null,
-      current_location:     document.getElementById('f-location').value.trim() || null,
-      industry:             document.getElementById('f-industry').value || null,
-      expected_ctc:         Number(document.getElementById('f-ctc').value) || null,
-      notice_period_days:   Number(document.getElementById('f-notice').value) || null,
-      key_skills:           skills.join(', ') || null,
-      requirement_keywords: keywords.join(', ') || null,
-      source:               document.getElementById('f-source').value,
-      notes:                document.getElementById('f-notes').value.trim() || null,
-      resume_url:           resumeUrl,
-      is_resume_bank:       true,
-      job_id:               null,
-      current_stage:        null,
-      created_at:           new Date().toISOString(),
+    // ── Step 1: Get logged-in user ID from chrome.storage ──────────────────
+    // The main Talent IQ app stores supabase_user_id after login.
+    // If missing, we cannot satisfy resume_bank.uploaded_by NOT NULL.
+    const uploadedBy = await getStoredUserId()
+    if (!uploadedBy) {
+      showError('Not logged in — open Talent IQ in your browser first, then retry.')
+      btn.disabled = false
+      btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Save to Resume Bank`
+      return
     }
 
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/candidates`, {
+    // ── Step 2: Upload file to storage ────────────────────────────────────
+    // resume_url is NOT NULL — must upload first
+    const resumeUrl = currentFileBase64 ? await uploadResume() : null
+    if (!resumeUrl) {
+      showError('File upload failed — check your storage bucket permissions.')
+      btn.disabled = false
+      btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Save to Resume Bank`
+      return
+    }
+
+    const name  = document.getElementById('f-name').value.trim()
+    const phone = document.getElementById('f-phone').value.trim()
+
+    // ── Step 3: Build resume_bank payload ─────────────────────────────────
+    // key_skills and requirement_keywords are text[] — send as arrays, not strings
+    const payload = {
+      full_name:            name,
+      phone:                phone || 'N/A',          // NOT NULL in schema
+      email:                document.getElementById('f-email').value.trim() || null,
+      current_designation:  document.getElementById('f-designation').value.trim() || null,
+      current_company:      document.getElementById('f-company').value.trim() || null,
+      total_experience:     Number(document.getElementById('f-exp').value) || 0,
+      current_location:     document.getElementById('f-location').value.trim() || null,
+      industry:             document.getElementById('f-industry').value || null,
+      expected_ctc:         Number(document.getElementById('f-ctc').value) || 0,
+      current_ctc:          0,
+      notice_period:        Number(document.getElementById('f-notice').value) || 0,
+      key_skills:           skills.length > 0 ? skills : null,           // text[]
+      requirement_keywords: keywords.length > 0 ? keywords : [],         // text[] default '{}'
+      source:               document.getElementById('f-source').value || 'email',
+      notes:                document.getElementById('f-notes').value.trim() || null,
+      resume_url:           resumeUrl,                                    // NOT NULL
+      resume_file_name:     currentFilename || null,
+      resume_size:          currentFileBase64 ? Math.round(currentFileBase64.length * 0.75) : null,
+      uploaded_by:          uploadedBy,                                   // NOT NULL → uuid FK to users
+      status:               'available',
+      uploaded_at:          new Date().toISOString(),
+    }
+
+    // ── Step 4: Insert into resume_bank ───────────────────────────────────
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/resume_bank`, {
       method: 'POST',
       headers: {
-        'apikey': SUPABASE_ANON_KEY,
+        'apikey':        SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
+        'Content-Type':  'application/json',
+        'Prefer':        'return=minimal'
       },
       body: JSON.stringify(payload)
     })
@@ -346,8 +370,7 @@ async function submitCandidate() {
       throw new Error(err.message || `HTTP ${res.status}`)
     }
 
-    document.getElementById('success-msg').textContent =
-      `${name} has been saved to the Resume Bank.`
+    document.getElementById('success-msg').textContent = `${name} has been saved to the Resume Bank.`
     showState('state-success')
 
   } catch (err) {
@@ -356,6 +379,22 @@ async function submitCandidate() {
     btn.disabled = false
     btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Save to Resume Bank`
   }
+}
+
+// ── Get stored user ID ────────────────────────────────────────────────────────
+// The main app must call:
+//   chrome.storage.local.set({ supabase_user_id: session.user.id })
+// after a successful Supabase login. See README for setup.
+function getStoredUserId() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get('supabase_user_id', (result) => {
+        resolve(result?.supabase_user_id || null)
+      })
+    } catch {
+      resolve(null)
+    }
+  })
 }
 
 async function uploadResume() {
