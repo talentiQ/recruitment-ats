@@ -1,23 +1,30 @@
 // app/api/parse-resume/route.ts
-// Reverted to pdf-parse — pdfjs-dist has irreconcilable compatibility issues
-// with Next.js/Turbopack (serverExternalPackages conflict, worker setup fails).
-// pdf-parse@1.1.1 is stable, works on Vercel, no worker required.
-
 import { NextRequest, NextResponse } from 'next/server'
 import { parseResumeLocally } from '@/lib/localResumeParser'
 import mammoth from 'mammoth'
+
+// ── CORS headers ──────────────────────────────────────────────────────────────
+// Required for Chrome extension sidebar (chrome-extension:// origin)
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+}
+
+// Handle preflight OPTIONS request
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS })
+}
 
 async function extractText(file: File): Promise<string> {
   const fileName = (file.name || '').toLowerCase()
   const buffer   = Buffer.from(await file.arrayBuffer())
 
-  // DOCX → mammoth (best accuracy, no issues)
   if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
     const result = await mammoth.extractRawText({ buffer })
     return result.value || ''
   }
 
-  // PDF → pdf-parse@1.1.1 (stable, Vercel-compatible, simple function API)
   if (fileName.endsWith('.pdf')) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -29,7 +36,6 @@ async function extractText(file: File): Promise<string> {
     }
   }
 
-  // Plain text fallback
   return buffer.toString('utf-8')
 }
 
@@ -41,7 +47,12 @@ export async function POST(request: NextRequest) {
     if (contentType.includes('multipart/form-data')) {
       const formData = await request.formData()
       const file = formData.get('file') as File
-      if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
+      if (!file) {
+        return NextResponse.json(
+          { error: 'No file provided' },
+          { status: 400, headers: CORS_HEADERS }
+        )
+      }
       resumeText = await extractText(file)
 
     } else if (contentType.includes('application/json')) {
@@ -50,7 +61,7 @@ export async function POST(request: NextRequest) {
       if (resumeText.startsWith('%PDF')) {
         return NextResponse.json(
           { error: 'Send file via multipart/form-data, not raw bytes.' },
-          { status: 400 }
+          { status: 400, headers: CORS_HEADERS }
         )
       }
     }
@@ -58,7 +69,7 @@ export async function POST(request: NextRequest) {
     if (!resumeText || resumeText.trim().length < 50) {
       return NextResponse.json(
         { error: 'Could not extract text from resume' },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       )
     }
 
@@ -75,10 +86,16 @@ export async function POST(request: NextRequest) {
       ` | designation: "${result.current_designation}"`
     )
 
-    return NextResponse.json({ success: true, data: result, rawText: resumeText })
+    return NextResponse.json(
+      { success: true, data: result, rawText: resumeText },
+      { headers: CORS_HEADERS }
+    )
 
   } catch (error: any) {
     console.error('Resume parse error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json(
+      { error: error.message },
+      { status: 500, headers: CORS_HEADERS }
+    )
   }
 }

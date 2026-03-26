@@ -65,14 +65,16 @@ window.addEventListener('message', async (event) => {
     currentMimeType = mimeType || ''
     document.getElementById('form-filename').textContent = filename
 
-    if (base64) {
+    if (base64 && base64.length > 100) {
       setParseStatus('Parsing CV…')
       await parseAndFill(filename, base64, mimeType)
+      // parseAndFill handles showState internally on both success and failure
     } else {
+      console.warn('[TIQ] TIQ_ATTACHMENT_DATA: no base64 received, opening blank form')
       fillForm({})
       updateConfidence({})
+      showState('state-form')
     }
-    showState('state-form')
   }
 
   if (type === 'TIQ_ATTACHMENT_ERROR') {
@@ -88,42 +90,106 @@ const PARSE_API = 'https://recruitment-ats.vercel.app/api/parse-resume'
 
 async function parseAndFill(filename, base64, mimeType) {
   setParseStatus('Parsing CV…')
-  try {
-    // Reconstruct file blob from base64
-    const binary = atob(base64)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-    const blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' })
-    const file = new File([blob], filename, { type: blob.type })
 
+  // ── Step 1: Validate inputs ──────────────────────────────────────────────
+  if (!base64 || base64.length < 100) {
+    console.error('[TIQ] parseAndFill: base64 is empty or too short', { filename, base64Length: base64?.length })
+    showState('state-form')
+    showError('Could not read attachment — try again or fill manually.')
+    return
+  }
+
+  console.log('[TIQ] Starting parse:', filename, 'base64 length:', base64.length, 'mime:', mimeType)
+
+  try {
+    // ── Step 2: Decode base64 → File ────────────────────────────────────────
+    let bytes
+    try {
+      const binary = atob(base64)
+      bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    } catch (decodeErr) {
+      console.error('[TIQ] base64 decode failed:', decodeErr)
+      showState('state-form')
+      showError('Attachment decode error — fill manually.')
+      return
+    }
+
+    const resolvedMime = mimeType || guessMimeFromFilename(filename)
+    const blob = new Blob([bytes], { type: resolvedMime })
+    const file = new File([blob], filename, { type: resolvedMime })
+    console.log('[TIQ] File built:', file.name, file.size, 'bytes', file.type)
+
+    // ── Step 3: POST to parse API ────────────────────────────────────────────
     const formData = new FormData()
     formData.append('file', file)
 
-    const response = await fetch(PARSE_API, { method: 'POST', body: formData })
+    let response
+    try {
+      response = await fetch(PARSE_API, { method: 'POST', body: formData })
+    } catch (networkErr) {
+      console.error('[TIQ] Network error reaching parse API:', networkErr)
+      showState('state-form')
+      showError(`Network error: ${networkErr.message} — fill manually.`)
+      fillForm({})
+      updateConfidence({})
+      return
+    }
+
+    console.log('[TIQ] Parse API response status:', response.status)
 
     if (!response.ok) {
-      console.error('[TIQ] Parse API error:', response.status)
+      const errText = await response.text().catch(() => '(no body)')
+      console.error('[TIQ] Parse API HTTP error:', response.status, errText)
+      showState('state-form')
+      showError(`Parse failed (HTTP ${response.status}) — fill manually.`)
       fillForm({})
       updateConfidence({})
       return
     }
 
-    const json = await response.json()
+    // ── Step 4: Parse JSON response ──────────────────────────────────────────
+    let json
+    try {
+      json = await response.json()
+    } catch (jsonErr) {
+      console.error('[TIQ] JSON parse error on response:', jsonErr)
+      showState('state-form')
+      showError('Invalid response from parse API — fill manually.')
+      fillForm({})
+      updateConfidence({})
+      return
+    }
+
+    console.log('[TIQ] Parse API response:', JSON.stringify(json).slice(0, 300))
+
     if (!json.success || !json.data) {
       console.error('[TIQ] Parse API returned no data:', json)
+      showState('state-form')
+      showError(json.error || 'No data returned — fill manually.')
       fillForm({})
       updateConfidence({})
       return
     }
 
+    // ── Step 5: Fill form ────────────────────────────────────────────────────
+    console.log('[TIQ] Filling form with:', JSON.stringify(json.data).slice(0, 300))
     fillForm(json.data)
     updateConfidence(json.data)
+    showState('state-form')
 
   } catch (err) {
-    console.error('[TIQ] parseAndFill error:', err)
+    console.error('[TIQ] Unexpected parseAndFill error:', err)
+    showState('state-form')
+    showError(`Unexpected error: ${err.message} — fill manually.`)
     fillForm({})
     updateConfidence({})
   }
+}
+
+function guessMimeFromFilename(filename) {
+  const ext = (filename || '').split('.').pop().toLowerCase()
+  return { pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', doc: 'application/msword' }[ext] || 'application/octet-stream'
 }
 
 // ── Fill form ─────────────────────────────────────────────────────────────────

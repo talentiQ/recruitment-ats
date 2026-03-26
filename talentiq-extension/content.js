@@ -7,6 +7,16 @@ if (!window.__tiqLoaded) {
   let sidebarFrame = null
   let debounceTimer = null
 
+  // Returns false when the extension has been reloaded and this content script
+  // is now orphaned — chrome.runtime calls will throw if we don't check first.
+  function isExtensionContextValid() {
+    try {
+      return !!chrome.runtime?.id
+    } catch {
+      return false
+    }
+  }
+
   function debounce(fn, delay) {
     clearTimeout(debounceTimer)
     debounceTimer = setTimeout(fn, delay)
@@ -52,20 +62,41 @@ if (!window.__tiqLoaded) {
         }, '*')
         return
       }
-      chrome.runtime.sendMessage(
-        { type: 'TIQ_DOWNLOAD_ATTACHMENT', downloadUrl, filename },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            console.error('[TIQ]', chrome.runtime.lastError.message)
+      // Guard: extension context can become invalid after a reload
+      // If so, reload the content script by removing the sidebar and letting the user retry
+      if (!isExtensionContextValid()) {
+        console.warn('[TIQ] Extension context invalidated — please refresh the Gmail tab.')
+        sidebarFrame?.contentWindow?.postMessage({
+          type: 'TIQ_ATTACHMENT_DATA', filename, base64: '', mimeType: ''
+        }, '*')
+        return
+      }
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'TIQ_DOWNLOAD_ATTACHMENT', downloadUrl, filename },
+          (response) => {
+            // Consume lastError to suppress Chrome's uncaught error log
+            if (chrome.runtime.lastError) {
+              console.warn('[TIQ] sendMessage error:', chrome.runtime.lastError.message)
+              sidebarFrame?.contentWindow?.postMessage({
+                type: 'TIQ_ATTACHMENT_DATA', filename, base64: '', mimeType: ''
+              }, '*')
+              return
+            }
+            sidebarFrame?.contentWindow?.postMessage({
+              type: 'TIQ_ATTACHMENT_DATA',
+              filename,
+              base64: response?.base64 || '',
+              mimeType: response?.mimeType || ''
+            }, '*')
           }
-          sidebarFrame?.contentWindow?.postMessage({
-            type: 'TIQ_ATTACHMENT_DATA',
-            filename,
-            base64: response?.base64 || '',
-            mimeType: response?.mimeType || ''
-          }, '*')
-        }
-      )
+        )
+      } catch (err) {
+        console.warn('[TIQ] sendMessage threw — context likely invalidated:', err.message)
+        sidebarFrame?.contentWindow?.postMessage({
+          type: 'TIQ_ATTACHMENT_DATA', filename, base64: '', mimeType: ''
+        }, '*')
+      }
     }
   }
 

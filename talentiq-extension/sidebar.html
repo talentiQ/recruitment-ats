@@ -3,22 +3,22 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<meta http-equiv="Content-Security-Policy" content="script-src 'self'; worker-src 'self' blob:; object-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="script-src 'self'; worker-src 'self' blob:; connect-src https://recruitment-ats.vercel.app https://uatvadvllyuhcmegkehh.supabase.co; object-src 'none';">
 <title>Talent IQ</title>
 <style>
   :root {
-    --bg: #101010;
+    --bg: #f0f2f7;
     --surface: #ffffff;
-    --surface2: #ffffff;
-    --border: #2e3248;
+    --surface2: #f7f8fc;
+    --border: #dde1ef;
     --accent: #4f6ef7;
     --accent-hover: #3d5de8;
-    --success: #22c55e;
-    --danger: #ef4444;
-    --text: #1c1d23;
-    --text2: #26272e;
-    --text3: #141515;
-    --required: #f87171;
+    --success: #16a34a;
+    --danger: #dc2626;
+    --text: #111827;
+    --text2: #4b5563;
+    --text3: #9ca3af;
+    --required: #ef4444;
     --font: 'Inter', -apple-system, sans-serif;
     --radius: 8px;
   }
@@ -41,6 +41,7 @@
     border-bottom: 1px solid var(--border);
     background: var(--surface);
     flex-shrink: 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
   .logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
   .logo-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 8px var(--accent); }
@@ -66,7 +67,7 @@
     display: flex; align-items: center; gap: 8px;
     padding: 6px 16px; font-size: 11px; color: var(--text2); flex-shrink: 0;
   }
-  .conf-bar { flex: 1; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .conf-bar { flex: 1; height: 3px; background: #e5e7eb; border-radius: 2px; overflow: hidden; }
   .conf-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; background: #22c55e; }
 
   /* Scrollable form */
@@ -75,7 +76,7 @@
     display: flex; flex-direction: column; gap: 10px;
   }
   .form-body::-webkit-scrollbar { width: 4px; }
-  .form-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .form-body::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
 
   /* State panels */
   .state { display: none; }
@@ -98,7 +99,7 @@
   }
   .spinner {
     width: 32px; height: 32px;
-    border: 3px solid var(--border); border-top-color: var(--accent);
+    border: 3px solid #e5e7eb; border-top-color: var(--accent);
     border-radius: 50%; animation: spin 0.7s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -142,8 +143,8 @@
     display: inline-flex; align-items: center; gap: 3px;
     padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500;
   }
-  .tag-skill { background: #4f6ef720; border: 1px solid #4f6ef740; color: #9bb0fa; }
-  .tag-keyword { background: #f59e0b18; border: 1px solid #f59e0b30; color: #fbbf24; }
+  .tag-skill { background: #eff2ff; border: 1px solid #c7d2fe; color: #3730a3; }
+  .tag-keyword { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
   .tag-remove {
     cursor: pointer; opacity: 0.6; font-size: 13px; line-height: 1;
     background: none; border: none; color: inherit; padding: 0;
@@ -156,8 +157,8 @@
 
   /* Error */
   .error-banner {
-    padding: 7px 10px; background: #ef444418; border: 1px solid #ef444440;
-    border-radius: var(--radius); font-size: 11px; color: #fca5a5; display: none;
+    padding: 7px 10px; background: #fef2f2; border: 1px solid #fecaca;
+    border-radius: var(--radius); font-size: 11px; color: #dc2626; display: none;
   }
   .error-banner.visible { display: block; }
 
@@ -168,8 +169,8 @@
     text-align: center; padding: 40px 24px; gap: 14px;
   }
   .success-icon {
-    width: 56px; height: 56px; background: #22c55e15; border: 1.5px solid #22c55e40;
-    border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px;
+    width: 56px; height: 56px; background: #dcfce7; border: 1.5px solid #86efac;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #16a34a;
   }
   .success-state h3 { font-size: 15px; }
   .success-state p { font-size: 12px; color: var(--text2); line-height: 1.7; max-width: 260px; }
@@ -195,8 +196,8 @@
   .bank-badge {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 4px 10px; border-radius: 20px;
-    background: #4f6ef712; border: 1px solid #4f6ef730;
-    color: var(--text2); font-size: 11px; font-weight: 500;
+    background: #eff2ff; border: 1px solid #c7d2fe;
+    color: #4338ca; font-size: 11px; font-weight: 500;
     flex-shrink: 0; align-self: flex-start; margin: 8px 16px 0;
   }
 </style>
@@ -397,6 +398,8 @@
   <button class="btn btn-ghost" id="btn-cancel">Cancel</button>
 </div>
 
+<script src="lib/pdf.min.js"></script>
+<script src="lib/mammoth.browser.min.js"></script>
 <script src="sidebar.js"></script>
 </body>
 </html>
