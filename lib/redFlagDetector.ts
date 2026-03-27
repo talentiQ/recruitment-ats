@@ -11,6 +11,16 @@
 //   2. Gaps after internships (< 3 month roles) are NOT flagged — study periods
 //   3. Education year ranges excluded from experience mismatch calculation
 //   4. "Organization: X" label format handled alongside standard company headers
+//
+// Fixes applied (2026-03):
+//   FIX-1: Education section flag now resets correctly when experience section
+//           resumes after education (handles Indian resume formats)
+//   FIX-2: Naukri project date ranges no longer create __UNKNOWN__ company
+//           entries that produce false overlap flags
+//   FIX-3: Education year filter in findEarliestCareerYear broadened to catch
+//           older graduation years (pre-2005) so experience isn't over-counted
+//   FIX-4: Overlap detection uses a clean single-expression boundary check —
+//           the old double-condition caused adjacent jobs (no gap) to flag
 
 export type FlagSeverity = 'critical' | 'warning'
 
@@ -55,8 +65,20 @@ const EDUCATION_SECTION_MARKERS = new Set([
   'qualifications','academic details','educational details',
 ])
 
+// Experience section markers — resume processing after these (FIX-1)
+const EXPERIENCE_SECTION_MARKERS = new Set([
+  'work experience','professional experience','experience',
+  'employment history','career history','work history',
+])
+
 // Internship signals — roles with these keywords are internships
 const INTERNSHIP_SIGNALS = /\b(intern|internship|trainee|apprentice|temporary|temp|part.time|contract|freelance)\b/i
+
+// FIX-2: Naukri project/detail section markers — date ranges inside these are NOT jobs
+const PROJECT_SECTION_MARKERS = new Set([
+  'projects','project details','key projects','project experience',
+  'notable projects','academic projects',
+])
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +126,7 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
   let   currentCompany = '__UNKNOWN__'
   let   currentIsInternship = false
   let   inEducationSection  = false
+  let   inProjectSection    = false   // FIX-2: track project sections
   const companyMap     = new Map<string, { ranges: DateRange[] }>()
   const companyOrder:  string[] = []
 
@@ -113,20 +136,29 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
 
     const lower = line.toLowerCase().replace(/[:\-–—]+$/, '').trim()
 
-    // Stop processing once we hit education section
+    // FIX-1: Resume experience processing when we hit an experience section
+    // (handles resumes that list education before experience)
+    if (EXPERIENCE_SECTION_MARKERS.has(lower)) {
+      inEducationSection = false
+      inProjectSection   = false
+      continue
+    }
+
+    // Stop processing for experience when we hit education section
     if (EDUCATION_SECTION_MARKERS.has(lower)) {
       inEducationSection = true
+      inProjectSection   = false
       continue
     }
 
-    // Resume education section after known experience markers
-    if (['work experience','professional experience','experience','employment history'].includes(lower)) {
-      inEducationSection = false
+    // FIX-2: Track project sections — date ranges here are project timelines, not jobs
+    if (PROJECT_SECTION_MARKERS.has(lower)) {
+      inProjectSection = true
       continue
     }
 
-    // Skip education section content entirely (year ranges in edu tables are not jobs)
-    if (inEducationSection) continue
+    // Skip education and project section content entirely
+    if (inEducationSection || inProjectSection) continue
 
     if (SECTION_HEADERS.has(lower)) continue
 
@@ -136,6 +168,7 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
       let name = orgMatch[1].replace(/\(internship\)/gi, '').trim()
       currentIsInternship = INTERNSHIP_SIGNALS.test(orgMatch[1])
       currentCompany = name
+      inProjectSection = false   // FIX-2: a new Organization resets project flag
       if (!companyMap.has(currentCompany)) {
         companyMap.set(currentCompany, { ranges: [] })
         companyOrder.push(currentCompany)
@@ -156,14 +189,15 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
     ))]
 
     if (dateMatches.length === 0 && !orgMatch) {
-      const isBullet      = /^[•\-\*▪▸]/.test(line)
+      const isBullet         = /^[•\-\*▪▸]/.test(line)
       const isResponsibility = /\b(responsible|managed|led|developed|worked|achieved|reduced|improved|handled|ensured|conducted)\b/i.test(line)
-      const isCompanyLine = !isBullet && !isResponsibility && line.length < 100 && COMPANY_NAME_SIGNALS.test(line)
+      const isCompanyLine    = !isBullet && !isResponsibility && line.length < 100 && COMPANY_NAME_SIGNALS.test(line)
 
       if (isCompanyLine) {
         const cleanName = line.replace(/\(.*?\)/g, '').trim()
         currentIsInternship = INTERNSHIP_SIGNALS.test(line)
         currentCompany  = cleanName
+        inProjectSection = false   // FIX-2: reset project flag on new company
         if (!companyMap.has(currentCompany)) {
           companyMap.set(currentCompany, { ranges: [] })
           companyOrder.push(currentCompany)
@@ -191,7 +225,6 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
       const dur = monthDiff(startDate, endDate)
 
       // Detect internship from explicit signals only — NOT duration alone
-      // (a real job can be short; duration < 3mo does not mean internship)
       const isInternship = currentIsInternship || INTERNSHIP_SIGNALS.test(line)
 
       const range: DateRange = {
@@ -200,6 +233,10 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
         durationMonths: dur,
         isInternship,
       }
+
+      // FIX-2: Don't assign orphaned dates to __UNKNOWN__ if we're in a project section
+      // (already guarded above by inProjectSection check, but double-guard here)
+      if (currentCompany === '__UNKNOWN__' && inProjectSection) continue
 
       if (!companyMap.has(currentCompany)) {
         companyMap.set(currentCompany, { ranges: [] })
@@ -260,13 +297,16 @@ function detectOverlaps(tenures: CompanyTenure[]): RedFlag[] {
       const a = realJobs[i], b = realJobs[j]
       if (a.company === b.company) continue
 
-      const aEndMs   = a.totalEnd.getTime()
-      const bStartMs = new Date(b.totalStart.getFullYear(), b.totalStart.getMonth() + 1, 1).getTime()
+      // FIX-4: Clean single-expression overlap check.
+      // Two ranges [aStart, aEnd) and [bStart, bEnd) overlap only if
+      // aStart < bEnd AND bStart < aEnd.
+      // We require >= 2 months of overlap to avoid flagging adjacent jobs.
+      const overlapStart = Math.max(a.totalStart.getTime(), b.totalStart.getTime())
+      const overlapEnd   = Math.min(a.totalEnd.getTime(),   b.totalEnd.getTime())
 
-      if (aEndMs > bStartMs && b.totalEnd.getTime() > a.totalStart.getTime()) {
+      if (overlapEnd > overlapStart) {
         const overlapMonths = Math.round(
-          (Math.min(aEndMs, b.totalEnd.getTime()) - Math.max(a.totalStart.getTime(), b.totalStart.getTime())) /
-          (1000 * 60 * 60 * 24 * 30.44)
+          (overlapEnd - overlapStart) / (1000 * 60 * 60 * 24 * 30.44)
         )
         if (overlapMonths >= 2) {
           flags.push({
@@ -287,7 +327,6 @@ function detectOverlaps(tenures: CompanyTenure[]): RedFlag[] {
 // Only checks real jobs — internships are always excluded from tenure flagging.
 
 function detectShortTenures(tenures: CompanyTenure[]): RedFlag[] {
-  // Only flag real jobs (not internships) with total tenure < 12 months
   const shortCompanies = tenures.filter(t =>
     !t.isInternship &&
     t.totalMonths > 0 &&
@@ -309,7 +348,7 @@ function detectShortTenures(tenures: CompanyTenure[]): RedFlag[] {
 
   if (shortCompanies.length === 1) {
     const t = shortCompanies[0]
-    const realJobs  = tenures.filter(x => !x.isInternship)
+    const realJobs   = tenures.filter(x => !x.isInternship)
     const mostRecent = [...realJobs].sort((a, b) => b.totalStart.getTime() - a.totalStart.getTime())[0]
     if (mostRecent?.company === t.company) {
       return [{
@@ -331,7 +370,6 @@ function detectShortTenures(tenures: CompanyTenure[]): RedFlag[] {
 function detectGaps(tenures: CompanyTenure[]): RedFlag[] {
   const flags: RedFlag[] = []
 
-  // Only use real job tenures for gap detection (exclude internships)
   const realJobs = tenures
     .filter(t => !t.isInternship)
     .sort((a, b) => a.totalStart.getTime() - b.totalStart.getTime())
@@ -339,8 +377,8 @@ function detectGaps(tenures: CompanyTenure[]): RedFlag[] {
   if (realJobs.length < 2) return flags
 
   for (let i = 0; i < realJobs.length - 1; i++) {
-    const current = realJobs[i]
-    const next    = realJobs[i + 1]
+    const current   = realJobs[i]
+    const next      = realJobs[i + 1]
     const gapMonths = monthDiff(current.totalEnd, next.totalStart)
 
     if (gapMonths > 6) {
@@ -369,9 +407,11 @@ function findEarliestCareerYear(rawText: string, earliestRealJobYear: number): n
     if (sy < 1970 || sy >= earliestRealJobYear) continue
     const dur = ey - sy
 
-    // Education filter: 1-5 yr span, ends ≤ 2023, started after 2005
-    // This covers SSC/HSC/degree ranges like 2014-2015, 2015-2017, 2017-2020
-    const isLikelyEducation = dur >= 1 && dur <= 5 && ey <= 2023 && sy >= 2005
+    // FIX-3: Broadened education filter — covers pre-2005 graduation years too.
+    // Education spans: 1-5 yr duration, ends before current year, starts after 1970.
+    // Previously `sy >= 2005` excluded older candidates — now any plausible edu range is filtered.
+    const currentYear       = new Date().getFullYear()
+    const isLikelyEducation = dur >= 1 && dur <= 5 && ey <= (currentYear - 1) && sy >= 1970
     if (isLikelyEducation) continue
 
     if (earliest === null || sy < earliest) earliest = sy
@@ -387,16 +427,15 @@ function detectExperienceMismatch(
 ): RedFlag[] {
   if (!statedExperience || statedExperience <= 0) return []
 
-  // Only use real jobs (not internships) for mismatch calculation
   const realJobs = tenures
     .filter(t => !t.isInternship)
     .sort((a, b) => a.totalStart.getTime() - b.totalStart.getTime())
 
   if (realJobs.length === 0) return []
 
-  const now                = new Date()
-  const earliestRealJobYr  = realJobs[0].totalStart.getFullYear()
-  const earliestYearOnly   = findEarliestCareerYear(rawText, earliestRealJobYr)
+  const now               = new Date()
+  const earliestRealJobYr = realJobs[0].totalStart.getFullYear()
+  const earliestYearOnly  = findEarliestCareerYear(rawText, earliestRealJobYr)
 
   let anchorDate = realJobs[0].totalStart
   if (earliestYearOnly !== null) {
@@ -454,4 +493,4 @@ export function detectRedFlags(
       : 'No red flags detected'
 
   return { hasFlags: flags.length > 0, hasCritical, hasWarnings, flags, overallVerdict }
-}           
+}
