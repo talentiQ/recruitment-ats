@@ -1,6 +1,6 @@
-// app/api/cron/interview-reminders/route.ts
+// app/api/send-reminders/route.ts
 //
-// Called every 5 minutes by GitHub Actions.
+// Called every 5 minutes by cron-job.org (previously GitHub Actions).
 // 1. Finds interviews scheduled within the next 35-45 min (today only)
 // 2. Inserts notifications for candidate owner + full reporting chain (always)
 // 3. Marks reminder_30min_sent on the interview row (always)
@@ -12,13 +12,12 @@ import { Resend }                    from 'resend'
 import { getReminderEmailHtml, getReminderSubject } from '@/lib/emailTemplates'
 import { resolveRecipients }         from '@/lib/notificationHelper'
 
-// ── Supabase client ────────────────────────────────────────────────────────
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-// ── Cron secret — GitHub Actions sends this in the request header ──────────
+// ── Cron secret — cron-job.org sends this in x-cron-secret header ─────────
 const CRON_SECRET = process.env.CRON_SECRET!
 
 // ── Parse interview_time (varchar) into a Date ─────────────────────────────
@@ -123,7 +122,7 @@ export async function POST(request: NextRequest) {
       if (diffMinutes < 35 || diffMinutes >= 45) continue
 
       // ── Resolve people ───────────────────────────────────────────────────
-      const recruiter = (interview as any).users       // whoever scheduled
+      const recruiter = (interview as any).users
       const candidate = (interview as any).candidates
       const job       = candidate?.jobs
       const client    = job?.clients
