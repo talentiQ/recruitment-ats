@@ -40,8 +40,8 @@ export default function AuthCallbackPage() {
         if (type === 'recovery' || type === 'invite') {
           setStatus('set_password')
         } else {
-          // Other types (email confirmation etc.) — redirect to login
-          router.push('/login')
+          // Other types (email confirmation etc.) — redirect to home/login
+          router.push('/')
         }
       })
   }, [])
@@ -74,7 +74,7 @@ export default function AuthCallbackPage() {
       }
 
       alert('✅ Password set successfully! You can now log in.')
-      router.push('/login')
+      router.push('/')
 
     } catch (err: any) {
       setError(err.message || 'Failed to set password')
@@ -106,7 +106,7 @@ export default function AuthCallbackPage() {
             This password reset link has expired or is invalid.
             Please ask your administrator to send a new reset email.
           </p>
-          <button onClick={() => router.push('/login')} className="btn-primary w-full">
+          <button onClick={() => router.push('/')} className="btn-primary w-full">
             Back to Login
           </button>
         </div>
