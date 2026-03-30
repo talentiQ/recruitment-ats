@@ -31,11 +31,40 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       router.push('/')
       return
     }
-    setUser(JSON.parse(userData))
+    const parsedUser = JSON.parse(userData)
+    setUser(parsedUser)
+
+    // ── Sync user ID to Chrome extension storage ───────────────────────────
+    // The Talent IQ Gmail extension reads supabase_user_id from chrome.storage
+    // to satisfy the resume_bank.uploaded_by NOT NULL constraint when saving CVs.
+    // This runs silently — if the extension isn't installed, chrome is undefined.
+    if (parsedUser?.id && typeof window !== 'undefined') {
+      try {
+        const chrome = (window as any).chrome
+        if (chrome?.storage?.local) {
+          chrome.storage.local.set({ supabase_user_id: parsedUser.id })
+        }
+      } catch {
+        // Extension not installed or storage unavailable — safe to ignore
+      }
+    }
   }, [router])
 
   const handleLogout = () => {
     localStorage.removeItem('user')
+
+    // ── Clear extension storage on logout ─────────────────────────────────
+    if (typeof window !== 'undefined') {
+      try {
+        const chrome = (window as any).chrome
+        if (chrome?.storage?.local) {
+          chrome.storage.local.remove('supabase_user_id')
+        }
+      } catch {
+        // Safe to ignore
+      }
+    }
+
     router.push('/')
   }
 
@@ -284,7 +313,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 <p className="text-xs text-gray-500">{getRoleDisplayName(user.role)}</p>
               </div>
               {/* 🔔 Notification Bell — desktop */}
-              <NotificationBell userId={user.id} />
+              <NotificationBell {...{ userId: user.id } as any} />
             </div>
           </div>
 
@@ -371,7 +400,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             <h1 className="text-lg font-bold text-blue-600">Talent IQ</h1>
             <div className="flex items-center gap-2">
               {/* 🔔 Notification Bell — mobile */}
-              <NotificationBell userId={user.id} />
+              <NotificationBell {...{ userId: user.id } as any} />
               <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
                 {user.full_name?.charAt(0) || 'U'}
               </div>
