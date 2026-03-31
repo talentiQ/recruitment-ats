@@ -2,9 +2,6 @@
 'use client'
 
 import { useState } from 'react'
-
-// Allows TypeScript to recognise the Chrome extension API global
-declare const chrome: any
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { runStaleCheck } from '@/lib/staleChecker'
@@ -52,23 +49,12 @@ export default function LoginPage() {
       // 3. Store user data
       localStorage.setItem('user', JSON.stringify(userData))
 
-      // ── ADDED: Write user ID to chrome.storage so the Talent IQ Chrome
-      // extension can authenticate Supabase saves without a separate login.
-      // Safe to call in non-extension contexts — chrome global won't exist there.
-      try {
-        if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
-          chrome.storage.local.set({ supabase_user_id: authData.user.id })
-        }
-      } catch (e) {
-        // Not running inside extension context — silently ignore
-      }
-
-      // 4. Run stale check BEFORE redirect — uses userData (not parsedUser)
+ // 4. Run stale check BEFORE redirect — uses userData (not parsedUser)
       // Fire and forget — don't await so login isn't slowed down
       runStaleCheck(userData).catch(err => console.error('Stale check error:', err))
 
 
-      // 5. Redirect based on role
+      // 4. Redirect based on role
       if (userData.role === 'recruiter') {
         window.location.href = '/recruiter/dashboard'
       } else if (userData.role === 'team_leader') {

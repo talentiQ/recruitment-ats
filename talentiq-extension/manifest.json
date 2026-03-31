@@ -17,6 +17,11 @@
       "js": ["content.js"],
       "css": ["sidebar.css"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://recruitment-ats.vercel.app/*"],
+      "js": ["ats-bridge.js"],
+      "run_at": "document_idle"
     }
   ],
 
