@@ -31,6 +31,7 @@ export default function LoginPage() {
         setLoading(false)
         return
       }
+      
 
       // 2. Get user details from users table using AUTH USER ID (not email)
       const { data: userData, error: userError } = await supabase

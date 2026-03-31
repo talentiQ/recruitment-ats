@@ -9,6 +9,7 @@ let currentFileBase64 = ''
 let currentMimeType = ''
 let skills = []
 let keywords = []
+let currentRequestId = 0  // incremented on each new attachment click — stale responses are ignored
 
 // ── State ─────────────────────────────────────────────────────────────────────
 function showState(id) {
@@ -53,8 +54,11 @@ window.addEventListener('message', async (event) => {
     const { filename, downloadUrl } = event.data
     currentFilename = filename
 
-    // FIX 1: Clear any previously parsed data immediately when a new
-    // attachment is clicked, so stale values never bleed into the next parse.
+    // Increment request ID — any in-flight response from a previous attachment
+    // will see a mismatched ID and be discarded before it can fill the form.
+    currentRequestId++
+    const thisRequestId = currentRequestId
+
     clearForm()
     currentFileBase64 = ''
     currentMimeType = ''
@@ -62,11 +66,13 @@ window.addEventListener('message', async (event) => {
     document.getElementById('parse-filename').textContent = filename
     setParseStatus('Downloading…')
     showState('state-parsing')
-    window.parent.postMessage({ type: 'TIQ_FETCH_ATTACHMENT', filename, downloadUrl }, '*')
+    window.parent.postMessage({ type: 'TIQ_FETCH_ATTACHMENT', filename, downloadUrl, requestId: currentRequestId }, '*')
   }
 
   if (type === 'TIQ_ATTACHMENT_DATA') {
-    const { filename, base64, mimeType } = event.data
+    const { filename, base64, mimeType, requestId } = event.data
+    // Discard if a newer attachment was clicked while this one was downloading
+    if (requestId !== undefined && requestId !== currentRequestId) return
     currentFilename = filename
     currentFileBase64 = base64 || ''
     currentMimeType = mimeType || ''
