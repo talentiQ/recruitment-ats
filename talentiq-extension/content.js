@@ -7,6 +7,13 @@ if (!window.__tiqLoaded) {
   let sidebarFrame = null
   let debounceTimer = null
 
+  // ✅ ADDED: Extension detection listener (ATS → Extension communication)
+  window.addEventListener("message", (event) => {
+    if (event.data?.type === "CHECK_TIQ_EXTENSION") {
+      window.postMessage({ type: "TIQ_EXTENSION_INSTALLED" }, "*");
+    }
+  });
+
   // Returns false when the extension has been reloaded and this content script
   // is now orphaned — chrome.runtime calls will throw if we don't check first.
   function isExtensionContextValid() {
@@ -62,8 +69,6 @@ if (!window.__tiqLoaded) {
         }, '*')
         return
       }
-      // Guard: extension context can become invalid after a reload
-      // If so, reload the content script by removing the sidebar and letting the user retry
       if (!isExtensionContextValid()) {
         console.warn('[TIQ] Extension context invalidated — please refresh the Gmail tab.')
         sidebarFrame?.contentWindow?.postMessage({
@@ -75,7 +80,6 @@ if (!window.__tiqLoaded) {
         chrome.runtime.sendMessage(
           { type: 'TIQ_DOWNLOAD_ATTACHMENT', downloadUrl, filename },
           (response) => {
-            // Consume lastError to suppress Chrome's uncaught error log
             if (chrome.runtime.lastError) {
               console.warn('[TIQ] sendMessage error:', chrome.runtime.lastError.message)
               sidebarFrame?.contentWindow?.postMessage({
@@ -100,162 +104,14 @@ if (!window.__tiqLoaded) {
     }
   }
 
-  // ── Check if a filename is a CV type ────────────────────────────────────────
-  function isCVFile(filename) {
-    if (!filename) return false
-    const ext = filename.trim().split('.').pop().toLowerCase()
-    return CV_EXTS.includes(ext)
-  }
-
-  // ── Extract filename from an attachment element ──────────────────────────────
-  function extractFilename(el) {
-    // 1. aria-label on element or children
-    const ariaLabel = el.getAttribute('aria-label')
-      || el.querySelector('[aria-label]')?.getAttribute('aria-label')
-    if (ariaLabel) {
-      const cleaned = ariaLabel.replace(/^(download|open|save)\s+/i, '').trim()
-      if (cleaned.includes('.')) return cleaned
-    }
-
-    // 2. attfn param in download-url
-    const downloadUrl = el.getAttribute('download-url') || ''
-    const attfn = downloadUrl.split('&').find(p => p.toLowerCase().startsWith('attfn='))
-    if (attfn) return decodeURIComponent(attfn.split('=')[1])
-
-    // 3. Text content of element
-    const text = el.textContent?.trim()
-    if (text && text.includes('.')) return text
-
-    // 4. data-tooltip
-    const tooltip = el.getAttribute('data-tooltip')
-    if (tooltip && tooltip.includes('.')) return tooltip.replace(/^(download|open|save)\s+/i, '').trim()
-
-    return ''
-  }
-
-  // ── Extract download URL ─────────────────────────────────────────────────────
-  function extractDownloadUrl(el) {
-    // 1. Direct attribute on element
-    const direct = el.getAttribute('download-url')
-    if (direct) return direct
-
-    // 2. Search within the attachment card container
-    const card = el.closest('[data-legacy-attachment-id]')
-      || el.closest('[data-attachment-id]')
-      || el.closest('.aQH')
-      || el.closest('.aZo')
-      || el.parentElement
-
-    if (card) {
-      // Find any child with download-url
-      const child = card.querySelector('[download-url]')
-      if (child) return child.getAttribute('download-url')
-
-      // Find download anchor
-      const anchor = card.querySelector('a[href*="mail.google.com"]')
-        || card.querySelector('a[href*="attachment"]')
-      if (anchor?.href) return anchor.href
-
-      // Build from attachment ID
-      const attId = card.getAttribute('data-legacy-attachment-id')
-        || card.getAttribute('data-attachment-id')
-      const msgMatch = location.href.match(/([A-Za-z0-9]{16,})/)
-      const msgId = msgMatch?.[1]
-      if (attId && msgId) {
-        return `https://mail.google.com/mail/u/0/?ui=2&ik=&attid=${attId}&disp=attd&realattid=${attId}&msgid=${msgId}&zw`
-      }
-    }
-
-    return null
-  }
-
-  // ── Find attachment cards in Gmail ───────────────────────────────────────────
-  // Gmail renders each attachment as a card/chip — we target those containers
-  function findAttachmentCards() {
-    const cards = []
-
-    // Primary: Gmail attachment cards with data-legacy-attachment-id
-    document.querySelectorAll('[data-legacy-attachment-id]').forEach(card => {
-      if (!card.dataset.tiqScanned) cards.push(card)
-    })
-
-    // Fallback: attachment chip containers
-    if (cards.length === 0) {
-      document.querySelectorAll('.aQH, .aZo').forEach(card => {
-        if (!card.dataset.tiqScanned) cards.push(card)
-      })
-    }
-
-    // Fallback: elements with download-url (each is one attachment)
-    if (cards.length === 0) {
-      document.querySelectorAll('[download-url]').forEach(el => {
-        if (!el.dataset.tiqScanned) cards.push(el)
-      })
-    }
-
-    return cards
-  }
-
-  // ── Inject one button per CV attachment card ─────────────────────────────────
-  function injectButtons() {
-    const cards = findAttachmentCards()
-    if (!cards.length) return
-
-    cards.forEach(card => {
-      card.dataset.tiqScanned = '1'
-
-      // Get filename for this specific card
-      const filename = extractFilename(card)
-
-      // Skip non-CV files (Excel, images, ZIP etc.)
-      if (!isCVFile(filename)) return
-
-      // Skip if button already injected on this card
-      if (card.querySelector('[data-tiq-btn]')) return
-
-      const downloadUrl = extractDownloadUrl(card)
-
-      const btn = document.createElement('button')
-      btn.className = 'tiq-btn'
-      btn.setAttribute('data-tiq-btn', '1')
-      btn.innerHTML = `
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 5v14M5 12l7 7 7-7"/>
-        </svg>
-        Add to Talent IQ
-      `
-
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation()
-        e.preventDefault()
-        openSidebar()
-        setTimeout(() => {
-          sidebarFrame?.contentWindow?.postMessage({
-            type: 'TIQ_LOAD_ATTACHMENT',
-            filename,
-            downloadUrl: downloadUrl || ''
-          }, '*')
-        }, 350)
-      })
-
-      // Append inside the card so button stays with its attachment
-      card.style.position = 'relative'
-      card.appendChild(btn)
-    })
-  }
-
-  // ── Init ─────────────────────────────────────────────────────────────────────
-  function init() {
+   function init() {
     injectSidebar()
     setTimeout(injectButtons, 2000)
 
-    // Watch URL changes for Gmail SPA navigation
     let lastUrl = location.href
     new MutationObserver(() => {
       if (location.href !== lastUrl) {
         lastUrl = location.href
-        // Reset on navigation so new email gets fresh buttons
         document.querySelectorAll('.tiq-btn').forEach(b => b.remove())
         document.querySelectorAll('[data-tiq-scanned]').forEach(el => {
           delete el.dataset.tiqScanned
@@ -266,7 +122,6 @@ if (!window.__tiqLoaded) {
       childList: true, subtree: false
     })
 
-    // Watch email body for attachment cards appearing
     const target = document.querySelector('[role="main"]') || document.body
     new MutationObserver((mutations) => {
       const relevant = mutations.some(m =>
