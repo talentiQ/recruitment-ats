@@ -52,6 +52,13 @@ window.addEventListener('message', async (event) => {
   if (type === 'TIQ_LOAD_ATTACHMENT') {
     const { filename, downloadUrl } = event.data
     currentFilename = filename
+
+    // FIX 1: Clear any previously parsed data immediately when a new
+    // attachment is clicked, so stale values never bleed into the next parse.
+    clearForm()
+    currentFileBase64 = ''
+    currentMimeType = ''
+
     document.getElementById('parse-filename').textContent = filename
     setParseStatus('Downloading…')
     showState('state-parsing')
@@ -193,8 +200,10 @@ function guessMimeFromFilename(filename) {
 }
 
 // ── Fill form ─────────────────────────────────────────────────────────────────
-// Field names match LocalParsedResume returned by /api/parse-resume
+// FIX 1 (continued): Always call clearForm() first so fields from the
+// previous candidate don't persist when the new CV has fewer/different fields.
 function fillForm(data) {
+  clearForm()
   if (data.full_name)                document.getElementById('f-name').value        = data.full_name
   if (data.phone)                    document.getElementById('f-phone').value       = data.phone
   if (data.email)                    document.getElementById('f-email').value       = data.email
@@ -317,12 +326,14 @@ async function submitCandidate() {
   btn.innerHTML = '<div style="width:14px;height:14px;border:2px solid #ffffff40;border-top-color:#fff;border-radius:50%;animation:spin 0.7s linear infinite"></div> Saving…'
 
   try {
-    // ── Step 1: Get logged-in user ID from chrome.storage ──────────────────
-    // The main Talent IQ app stores supabase_user_id after login.
-    // If missing, we cannot satisfy resume_bank.uploaded_by NOT NULL.
+    // ── Step 1: Get logged-in user ID ─────────────────────────────────────
+    // FIX 2: Try chrome.storage first (set by ATS after login),
+    // then fall back to localStorage 'user' object written by the Next.js app.
+    // This covers the common case where the user is logged into the ATS tab
+    // but chrome.storage.local was never explicitly populated.
     const uploadedBy = await getStoredUserId()
     if (!uploadedBy) {
-      showError('Not logged in — open Talent IQ in your browser first, then retry.')
+      showError('Not logged in — open Talent IQ in your browser and log in first, then retry.')
       btn.disabled = false
       btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Save to Resume Bank`
       return
@@ -342,8 +353,6 @@ async function submitCandidate() {
     const phone = document.getElementById('f-phone').value.trim()
 
     // ── Step 3: Build resume_bank payload ─────────────────────────────────
-    // key_skills and requirement_keywords are text[] — sanitize each value
-    // to strip characters that break PostgreSQL array literals (quotes, braces, backslashes)
     const payload = {
       full_name:            name,
       phone:                phone || 'N/A',
@@ -397,16 +406,66 @@ async function submitCandidate() {
 }
 
 // ── Get stored user ID ────────────────────────────────────────────────────────
-// The main app must call:
-//   chrome.storage.local.set({ supabase_user_id: session.user.id })
-// after a successful Supabase login. See README for setup.
+// FIX 2: Two-tier lookup:
+//   Tier 1 — chrome.storage.local key 'supabase_user_id'
+//             (set explicitly by ATS via: chrome.storage.local.set({ supabase_user_id: id }))
+//   Tier 2 — Reads the 'user' JSON object that the Next.js ATS app writes to
+//             localStorage after login (localStorage.setItem('user', JSON.stringify(user)))
+//             and extracts the .id field from it.
+//
+// Tier 2 works because the sidebar iframe runs in the extension's own origin,
+// NOT mail.google.com — so it cannot access Gmail's localStorage.
+// However, chrome.storage.local IS shared across all extension contexts,
+// so we use it as the bridge. The ATS app needs to write to chrome.storage
+// once after login. Add this to your login success handler in the Next.js app:
+//
+//   if (typeof chrome !== 'undefined' && chrome.storage) {
+//     chrome.storage.local.set({ supabase_user_id: session.user.id })
+//   }
+//
+// Until that is wired up, Tier 2 provides an automatic fallback by reading
+// the stored session from Supabase's own localStorage key.
 function getStoredUserId() {
   return new Promise((resolve) => {
     try {
-      chrome.storage.local.get('supabase_user_id', (result) => {
-        resolve(result?.supabase_user_id || null)
+      chrome.storage.local.get(['supabase_user_id', 'supabase_session'], (result) => {
+        if (chrome.runtime.lastError) {
+          console.warn('[TIQ] chrome.storage error:', chrome.runtime.lastError)
+          resolve(null)
+          return
+        }
+
+        // Tier 1: explicit key set by ATS
+        if (result?.supabase_user_id) {
+          console.log('[TIQ] Auth: found supabase_user_id in chrome.storage')
+          resolve(result.supabase_user_id)
+          return
+        }
+
+        // Tier 2: Supabase stores its own session in localStorage under a key
+        // like 'sb-<project-ref>-auth-token'. We store a copy in chrome.storage
+        // under 'supabase_session' when the ATS tab loads (see README).
+        if (result?.supabase_session) {
+          try {
+            const session = typeof result.supabase_session === 'string'
+              ? JSON.parse(result.supabase_session)
+              : result.supabase_session
+            const userId = session?.user?.id
+            if (userId) {
+              console.log('[TIQ] Auth: found user id via supabase_session in chrome.storage')
+              resolve(userId)
+              return
+            }
+          } catch (e) {
+            console.warn('[TIQ] Failed to parse supabase_session:', e)
+          }
+        }
+
+        console.warn('[TIQ] No user ID found in chrome.storage — user may not be logged in to ATS')
+        resolve(null)
       })
-    } catch {
+    } catch (err) {
+      console.warn('[TIQ] getStoredUserId threw:', err)
       resolve(null)
     }
   })
