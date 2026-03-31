@@ -300,6 +300,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="px-6 py-6 border-b border-gray-200 flex-shrink-0">
             <h1 className="text-2xl font-bold text-blue-600">Talent IQ</h1>
             <p className="text-sm text-gray-500 mt-1">Your Smart Hiring Engine</p>
+          <button
+          onClick={() => window.open('/downloads/talentiq-extension.zip')}
+          className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold py-2 px-3 rounded-lg transition"
+          >
+          🚀 Install Gmail CV Importer
+          </button>
           </div>
 
           {/* ── User Info + Notification Bell ─────────────────────────────── */}
@@ -369,7 +375,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
               })}
             </div>
           </nav>
-
+              
           {/* Logout - Fixed at bottom */}
           <div className="p-4 border-t border-gray-200 flex-shrink-0">
             <button
