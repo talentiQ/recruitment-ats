@@ -21,6 +21,7 @@ function CandidatesTable() {
   const [searchQuery, setSearchQuery]         = useState('')
   const [recruiterFilter, setRecruiterFilter] = useState('all')
   const [teamFilter, setTeamFilter]           = useState('all')
+  const [daysFilter, setDaysFilter]           = useState('all')   // ← NEW
   const [user, setUser]                       = useState<any>(null)
   const [teamMembers, setTeamMembers]         = useState<any[]>([])
   const [teams, setTeams]                     = useState<{ id: string; name: string }[]>([])
@@ -38,7 +39,7 @@ function CandidatesTable() {
 
   useEffect(() => {
     if (teamMembers.length > 0) loadCandidates()
-  }, [teamMembers, stageFilter, searchQuery, recruiterFilter, teamFilter])
+  }, [teamMembers, stageFilter, searchQuery, recruiterFilter, teamFilter, daysFilter])
 
   const loadTeamMembers = async () => {
     try {
@@ -106,6 +107,14 @@ function CandidatesTable() {
         query = query.or(`full_name.ilike.%${searchQuery}%,phone.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`)
       }
 
+      // ── Days filter — filter by created_at on DB side ──────────────────
+      if (daysFilter !== 'all') {
+        const days = parseInt(daysFilter)
+        const cutoff = new Date()
+        cutoff.setDate(cutoff.getDate() - days)
+        query = query.lte('created_at', cutoff.toISOString())
+      }
+
       const { data, error } = await query
       if (error) throw error
       setCandidates(data || [])
@@ -116,7 +125,7 @@ function CandidatesTable() {
     }
   }
 
-  const getStageBadge = (stage: string) => {
+  const getStageBadgeLocal = (stage: string) => {
     const map: Record<string, string> = {
       sourced:              'bg-gray-100 text-gray-800',
       screening:            'bg-yellow-100 text-yellow-800',
@@ -135,8 +144,19 @@ function CandidatesTable() {
     return map[stage] || 'bg-gray-100 text-gray-700'
   }
 
-  // ── Stage dropdown — interview_rejected added after interview_completed ──────
-  const STAGES = PIPELINE_STAGES  // ← directly use the lib export
+  const STAGES = PIPELINE_STAGES
+
+  // ── Days filter options ────────────────────────────────────────────────────
+  const DAYS_OPTIONS = [
+    { value: 'all', label: 'Any Duration'   },
+    { value: '7',   label: '7+ Days Old'    },
+    { value: '15',  label: '15+ Days Old'   },
+    { value: '21',  label: '21+ Days Old'   },
+    { value: '30',  label: '30+ Days Old'   },
+  ]
+
+  const hasActiveFilter = teamFilter !== 'all' || stageFilter !== 'all' ||
+    searchQuery || recruiterFilter !== 'all' || daysFilter !== 'all'
 
   if (!user) return (
     <div className="flex items-center justify-center h-64">
@@ -145,7 +165,7 @@ function CandidatesTable() {
   )
 
   const activeCount   = candidates.filter(c => isActiveStage(c.current_stage)).length
-  const joinedCount   = candidates.filter(c => c.current_stage === 'joined').length  // ← add this back
+  const joinedCount   = candidates.filter(c => c.current_stage === 'joined').length
   const rejectedCount = candidates.filter(c => isRejectedStage(c.current_stage)).length
 
   return (
@@ -183,7 +203,9 @@ function CandidatesTable() {
 
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+
+          {/* Search */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Search</label>
             <input
@@ -194,6 +216,8 @@ function CandidatesTable() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
           </div>
+
+          {/* Team */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Team</label>
             <select
@@ -206,6 +230,8 @@ function CandidatesTable() {
               ))}
             </select>
           </div>
+
+          {/* Stage */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Stage</label>
             <select
@@ -214,12 +240,12 @@ function CandidatesTable() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white">
               <option value="all">All Stages</option>
               {STAGES.map(s => (
-                <option key={s} value={s}>
-                  {getStageLabel(s)}
-                  </option>
+                <option key={s} value={s}>{getStageLabel(s)}</option>
               ))}
             </select>
           </div>
+
+          {/* Recruiter */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Recruiter</label>
             <select
@@ -234,18 +260,41 @@ function CandidatesTable() {
                 ))}
             </select>
           </div>
+
+          {/* Days in Pipeline — NEW ────────────────────────────────────── */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+              Days in Pipeline
+            </label>
+            <select
+              value={daysFilter}
+              onChange={e => setDaysFilter(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white">
+              {DAYS_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
         </div>
+
         <div className="flex items-center justify-between mt-3">
           <span className="text-sm text-gray-500">
             Showing <strong>{candidates.length}</strong> candidates
+            {daysFilter !== 'all' && (
+              <span className="ml-2 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-semibold">
+                {daysFilter}+ days old
+              </span>
+            )}
           </span>
-          {(teamFilter !== 'all' || stageFilter !== 'all' || searchQuery || recruiterFilter !== 'all') && (
+          {hasActiveFilter && (
             <button
               onClick={() => {
                 setTeamFilter('all')
                 setStageFilter('all')
                 setSearchQuery('')
                 setRecruiterFilter('all')
+                setDaysFilter('all')
               }}
               className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
               ✕ Clear filters
@@ -304,7 +353,7 @@ function CandidatesTable() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${getStageBadge(c.current_stage)}`}>
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${getStageBadgeLocal(c.current_stage)}`}>
                         {c.current_stage?.replace(/_/g, ' ').toUpperCase() || '—'}
                       </span>
                     </td>
@@ -319,7 +368,7 @@ function CandidatesTable() {
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-600">{teamHead}&apos;s Team</td>
                     <td className="px-4 py-3">
-                      <span className={`font-medium ${daysColor}`}>{days}d</span>
+                      <span className={`font-semibold ${daysColor}`}>{days}d</span>
                     </td>
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                       <button
