@@ -50,8 +50,8 @@ export async function groqChat(
   const res = await fetch(GROQ_API_URL, {
     method:  'POST',
     headers: {
-      'Content-Type':  'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+    'Content-Type':  'application/json',
+    'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
   })

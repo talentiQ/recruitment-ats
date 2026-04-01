@@ -14,7 +14,26 @@ const supabaseAdmin = createClient(
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json()
+    // ✅ FIX 1: Safe header check
+    const contentType = req.headers.get('content-type') || ''
+    if (!contentType.includes('application/json')) {
+      return NextResponse.json(
+        { error: 'Content-Type must be application/json' },
+        { status: 400 }
+      )
+    }
+
+    // ✅ FIX 2: Safe JSON parsing
+    let body: any = {}
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid JSON body' },
+        { status: 400 }
+      )
+    }
+
     const { jobId, candidateId, resumeBankId, parsedData, rawText, screenedBy, jobData } = body
 
     if (!jobId) return NextResponse.json({ error: 'jobId is required' }, { status: 400 })
