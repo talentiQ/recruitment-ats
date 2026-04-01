@@ -8,13 +8,15 @@ import DashboardLayout from '@/components/DashboardLayout'
 // ✅ import * as XLSX from 'xlsx' — REMOVED. Using exceljs via dynamic import inside exportToExcel.
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+type DateFilter = 'current_month' | 'prev_month' | 'current_quarter' | 'prev_quarter'
+
 interface MemberPerformance {
   user_id: string
   user_name: string
   role: 'sr_team_leader' | 'team_leader' | 'recruiter'
   reports_to_id: string
   reports_to_name: string
-  team_name: string           // Sr-TL name as team identifier
+  team_name: string
   candidates_count: number
   pipeline_count: number
   this_month_joinings: number
@@ -40,7 +42,6 @@ interface SrTLTeam {
   active_jobs: number
   total_jobs: number
   members: MemberPerformance[]
-  // Team-level revenue rollup
   monthly_revenue: number
   quarterly_revenue: number
   annual_revenue: number
@@ -59,11 +60,12 @@ export default function ManagementTeams() {
   const [exporting, setExporting] = useState(false)
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set())
   const [activeView, setActiveView] = useState<'teams' | 'all_members'>('teams')
+  // ── NEW: Date filter ───────────────────────────────────────────────────────
+  const [activeFilter, setActiveFilter] = useState<DateFilter>('current_month')
 
   const [teams, setTeams] = useState<SrTLTeam[]>([])
   const [allMembers, setAllMembers] = useState<MemberPerformance[]>([])
 
-  // ── Overall org stats ──────────────────────────────────────────────────────
   const [orgStats, setOrgStats] = useState({
     total_sr_tls: 0,
     total_tls: 0,
@@ -94,81 +96,124 @@ export default function ManagementTeams() {
       return
     }
     setUser(parsedUser)
-    loadAllTeams()
+    loadAllTeams('current_month')
   }, [])
 
-  // ── Date range helpers (fiscal year, business quarter) ─────────────────────
-  // Mirrors the exact same logic from Sr-TL dashboard
-  const getDateRanges = () => {
+  // ── Reload when filter changes ─────────────────────────────────────────────
+  useEffect(() => {
+    if (user) loadAllTeams(activeFilter)
+  }, [activeFilter])
+
+  // ── Date range helpers ─────────────────────────────────────────────────────
+  const getDateRanges = (filter: DateFilter = 'current_month') => {
     const now = new Date()
     const currentYear = now.getFullYear()
-    const currentMonth = now.getMonth() + 1
+    const currentMonth = now.getMonth() + 1 // 1-based
 
-    // Month
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
+    // ── Monthly range ──────────────────────────────────────────────────────
+    let monthStart: string
+    let monthEnd: string | null = null // null = open-ended (up to now)
 
-    // Business quarter (Apr-Jun = Q1, Jul-Sep = Q2, Oct-Dec = Q3, Jan-Mar = Q4)
-    let businessQuarter: number
-    if (currentMonth >= 4 && currentMonth <= 6)   businessQuarter = 1
-    else if (currentMonth >= 7 && currentMonth <= 9)  businessQuarter = 2
-    else if (currentMonth >= 10 && currentMonth <= 12) businessQuarter = 3
-    else businessQuarter = 4
-
-    let quarterStartMonth: number, quarterEndMonth: number
-    let quarterStartYear: number, quarterEndYear: number
-
-    if (businessQuarter === 1) {
-      quarterStartMonth = 4;  quarterEndMonth = 7
-      quarterStartYear = currentYear; quarterEndYear = currentYear
-    } else if (businessQuarter === 2) {
-      quarterStartMonth = 7;  quarterEndMonth = 10
-      quarterStartYear = currentYear; quarterEndYear = currentYear
-    } else if (businessQuarter === 3) {
-      quarterStartMonth = 10; quarterEndMonth = 1
-      quarterStartYear = currentYear; quarterEndYear = currentYear + 1
+    if (filter === 'prev_month') {
+      const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      monthStart = prevMonthDate.toISOString().slice(0, 10)
+      monthEnd   = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
     } else {
-      quarterStartMonth = 1;  quarterEndMonth = 4
-      quarterStartYear = currentYear; quarterEndYear = currentYear
+      monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
+      monthEnd   = null
     }
 
-    const quarterStart = `${quarterStartYear}-${String(quarterStartMonth).padStart(2, '0')}-01`
-    const quarterEnd   = `${quarterEndYear}-${String(quarterEndMonth).padStart(2, '0')}-01`
+    // ── Business quarter helpers ───────────────────────────────────────────
+    // Apr-Jun = Q1, Jul-Sep = Q2, Oct-Dec = Q3, Jan-Mar = Q4
+    const getCurrentBQ = (month: number) => {
+      if (month >= 4 && month <= 6)   return 1
+      if (month >= 7 && month <= 9)   return 2
+      if (month >= 10 && month <= 12) return 3
+      return 4
+    }
 
-    // Fiscal year (Apr 1 to Mar 31)
+    const getBQBounds = (bq: number, year: number): { start: string; end: string } => {
+      if (bq === 1) return { start: `${year}-04-01`,     end: `${year}-07-01` }
+      if (bq === 2) return { start: `${year}-07-01`,     end: `${year}-10-01` }
+      if (bq === 3) return { start: `${year}-10-01`,     end: `${year + 1}-01-01` }
+      // Q4 = Jan-Mar
+      return       { start: `${year}-01-01`,             end: `${year}-04-01` }
+    }
+
+    const currentBQ = getCurrentBQ(currentMonth)
+    let quarterStart: string, quarterEnd: string
+
+    if (filter === 'prev_quarter') {
+      const prevBQ = currentBQ === 1 ? 4 : currentBQ - 1
+      // Q4 of prev fiscal: if currentBQ===1 (Apr-Jun), previous Q4 = Jan-Mar of same year
+      // If currentBQ===4 (Jan-Mar), previous Q3 = Oct-Dec of previous year
+      const prevBQYear = (currentBQ === 1 || currentBQ === 4) && prevBQ === 3
+        ? currentYear - 1
+        : currentBQ === 4 && prevBQ !== 3
+          ? currentYear        // Q4 prev = Q3 same year scenario handled above
+          : currentYear
+      const bounds = getBQBounds(prevBQ, prevBQ === 4 ? currentYear : prevBQYear)
+      quarterStart = bounds.start
+      quarterEnd   = bounds.end
+    } else {
+      const bounds = getBQBounds(currentBQ, currentBQ === 4 ? currentYear : currentYear)
+      quarterStart = bounds.start
+      quarterEnd   = bounds.end
+    }
+
+    // ── Fiscal year (Apr 1 → Mar 31) — always current fiscal ──────────────
     const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
     const annualStart = `${fiscalYearStart}-04-01`
     const annualEnd   = `${fiscalYearStart + 1}-04-01`
 
-    return { monthStart, quarterStart, quarterEnd, annualStart, annualEnd }
+    return { monthStart, monthEnd, quarterStart, quarterEnd, annualStart, annualEnd }
   }
 
-  // ── Per-member revenue calculator (identical logic to Sr-TL dashboard) ──────
-  const getMemberRevenue = async (memberId: string, memberData: any) => {
-    const { monthStart, quarterStart, quarterEnd, annualStart, annualEnd } = getDateRanges()
+  // ── Filter label helpers ───────────────────────────────────────────────────
+  const getFilterLabel = (filter: DateFilter) => {
+    switch (filter) {
+      case 'current_month':   return 'This Month'
+      case 'prev_month':      return 'Prev. Month'
+      case 'current_quarter': return 'This Quarter'
+      case 'prev_quarter':    return 'Prev. Quarter'
+    }
+  }
+
+  const getColumnLabels = (filter: DateFilter) => ({
+    monthly:   filter === 'prev_month'    ? 'Prev. Month'   : 'This Month',
+    quarterly: filter === 'prev_quarter'  ? 'Prev. Quarter' : 'This Quarter',
+  })
+
+  // ── Per-member revenue calculator ──────────────────────────────────────────
+  const getMemberRevenue = async (memberId: string, memberData: any, filter: DateFilter) => {
+    const { monthStart, monthEnd, quarterStart, quarterEnd, annualStart, annualEnd } = getDateRanges(filter)
+
+    // Build monthly query with optional upper bound
+    let monthlyQ = supabaseAdmin.from('candidates').select('revenue_earned')
+      .eq('assigned_to', memberId).eq('current_stage', 'joined')
+      .gte('date_joined', monthStart)
+    if (monthEnd) monthlyQ = monthlyQ.lt('date_joined', monthEnd)
+
+    // Build month joinings count with optional upper bound
+    let monthJoiningsQ = supabaseAdmin.from('candidates')
+      .select('*', { count: 'exact', head: true })
+      .eq('assigned_to', memberId).eq('current_stage', 'joined')
+      .gte('date_joined', monthStart)
+    if (monthEnd) monthJoiningsQ = monthJoiningsQ.lt('date_joined', monthEnd)
 
     const [monthlyRevData, quarterlyRevData, annualRevData, candidatesCount, monthJoinings, pipelineCount] =
       await Promise.all([
-        supabaseAdmin.from('candidates').select('revenue_earned')
-          .eq('assigned_to', memberId).eq('current_stage', 'joined')
-          .gte('date_joined', monthStart),
-
+        monthlyQ,
         supabaseAdmin.from('candidates').select('revenue_earned')
           .eq('assigned_to', memberId).eq('current_stage', 'joined')
           .gte('date_joined', quarterStart).lt('date_joined', quarterEnd),
-
         supabaseAdmin.from('candidates').select('revenue_earned')
           .eq('assigned_to', memberId).eq('current_stage', 'joined')
           .gte('date_joined', annualStart).lt('date_joined', annualEnd),
-
         supabaseAdmin.from('candidates')
           .select('*', { count: 'exact', head: true })
           .eq('assigned_to', memberId),
-
-        supabaseAdmin.from('candidates')
-          .select('*', { count: 'exact', head: true })
-          .eq('assigned_to', memberId).eq('current_stage', 'joined')
-          .gte('date_joined', monthStart),
-
+        monthJoiningsQ,
         supabaseAdmin.from('candidates')
           .select('*', { count: 'exact', head: true })
           .eq('assigned_to', memberId)
@@ -196,12 +241,11 @@ export default function ManagementTeams() {
   }
 
   // ── Main data loader ────────────────────────────────────────────────────────
-  const loadAllTeams = async () => {
+  const loadAllTeams = async (filter: DateFilter) => {
     setLoading(true)
     try {
-      const { monthStart } = getDateRanges()
+      const { monthStart, monthEnd } = getDateRanges(filter)
 
-      // Step 1: All active Sr-TLs
       const { data: srTLs } = await supabaseAdmin
         .from('users')
         .select('id, full_name, team_id, monthly_target, quarterly_target, annual_target')
@@ -209,16 +253,11 @@ export default function ManagementTeams() {
         .eq('is_active', true)
         .order('full_name')
 
-      if (!srTLs || srTLs.length === 0) {
-        setLoading(false)
-        return
-      }
+      if (!srTLs || srTLs.length === 0) { setLoading(false); return }
 
-      // Build all teams in parallel
       const teamsData = await Promise.all(
         srTLs.map(async (srTL: any) => {
 
-          // Step 2: Direct reports to this Sr-TL (TLs + any direct recruiters)
           const { data: directReports } = await supabaseAdmin
             .from('users')
             .select('id, full_name, role, reports_to, team_id, monthly_target, quarterly_target, annual_target')
@@ -229,7 +268,6 @@ export default function ManagementTeams() {
             .filter((m: any) => m.role === 'team_leader')
             .map((m: any) => m.id)
 
-          // Step 3: Recruiters under those TLs
           let indirectRecruiters: any[] = []
           if (tlIds.length > 0) {
             const { data: recs } = await supabaseAdmin
@@ -241,17 +279,15 @@ export default function ManagementTeams() {
             indirectRecruiters = recs || []
           }
 
-          const allMembers = [...(directReports || []), ...indirectRecruiters]
-          const allMemberIds = allMembers.map((m: any) => m.id)
+          const allMembersLocal = [...(directReports || []), ...indirectRecruiters]
+          const allMemberIds = allMembersLocal.map((m: any) => m.id)
 
-          // Name map for "reports to" display
           const nameMap: Record<string, string> = { [srTL.id]: srTL.full_name }
-          allMembers.forEach((m: any) => { nameMap[m.id] = m.full_name })
+          allMembersLocal.forEach((m: any) => { nameMap[m.id] = m.full_name })
 
-          // Step 4: Revenue + pipeline per member (in parallel)
           const memberPerf = await Promise.all(
-            allMembers.map(async (member: any) => {
-              const rev = await getMemberRevenue(member.id, member)
+            allMembersLocal.map(async (member: any) => {
+              const rev = await getMemberRevenue(member.id, member, filter)
               return {
                 user_id: member.id,
                 user_name: member.full_name,
@@ -264,16 +300,18 @@ export default function ManagementTeams() {
             })
           )
 
-          // Team-level stats
           const { count: totalCandidates } = await supabaseAdmin
             .from('candidates').select('*', { count: 'exact', head: true })
             .in('assigned_to', allMemberIds.length > 0 ? allMemberIds : ['none'])
 
-          const { count: monthJoinings } = await supabaseAdmin
-            .from('candidates').select('*', { count: 'exact', head: true })
+          // Month joinings with filter bounds
+          let monthJoiningsQ = supabaseAdmin.from('candidates')
+            .select('*', { count: 'exact', head: true })
             .in('assigned_to', allMemberIds.length > 0 ? allMemberIds : ['none'])
             .eq('current_stage', 'joined')
             .gte('date_joined', monthStart)
+          if (monthEnd) monthJoiningsQ = monthJoiningsQ.lt('date_joined', monthEnd)
+          const { count: monthJoinings } = await monthJoiningsQ
 
           const { count: totalJobs } = await supabaseAdmin
             .from('jobs').select('*', { count: 'exact', head: true })
@@ -284,7 +322,6 @@ export default function ManagementTeams() {
             .eq('assigned_team_id', srTL.team_id)
             .eq('status', 'open')
 
-          // Roll up revenue to team level
           const monthly_revenue   = memberPerf.reduce((s, m) => s + m.monthly_revenue, 0)
           const quarterly_revenue = memberPerf.reduce((s, m) => s + m.quarterly_revenue, 0)
           const annual_revenue    = memberPerf.reduce((s, m) => s + m.annual_revenue, 0)
@@ -296,8 +333,8 @@ export default function ManagementTeams() {
             sr_tl_id:       srTL.id,
             sr_tl_name:     srTL.full_name,
             team_id:        srTL.team_id,
-            tl_count:       allMembers.filter((m: any) => m.role === 'team_leader').length,
-            recruiter_count: allMembers.filter((m: any) => m.role === 'recruiter').length,
+            tl_count:       allMembersLocal.filter((m: any) => m.role === 'team_leader').length,
+            recruiter_count: allMembersLocal.filter((m: any) => m.role === 'recruiter').length,
             total_candidates: totalCandidates || 0,
             month_joinings:   monthJoinings || 0,
             active_jobs:      activeJobs || 0,
@@ -315,18 +352,13 @@ export default function ManagementTeams() {
         })
       )
 
-      // Sort teams by monthly revenue desc
       const sortedTeams = teamsData.sort((a, b) => b.monthly_revenue - a.monthly_revenue)
       setTeams(sortedTeams)
-
-      // Expand all by default
       setExpandedTeams(new Set(sortedTeams.map(t => t.sr_tl_id)))
 
-      // Flat list of all members for "all members" view
       const flat = sortedTeams.flatMap(t => t.members)
       setAllMembers(flat)
 
-      // Org-level rollup
       const org_monthly_revenue   = sortedTeams.reduce((s, t) => s + t.monthly_revenue, 0)
       const org_quarterly_revenue = sortedTeams.reduce((s, t) => s + t.quarterly_revenue, 0)
       const org_annual_revenue    = sortedTeams.reduce((s, t) => s + t.annual_revenue, 0)
@@ -356,19 +388,18 @@ export default function ManagementTeams() {
     }
   }
 
-  // ── Excel Export — exceljs replaces xlsx ───────────────────────────────────
+  // ── Excel Export ───────────────────────────────────────────────────────────
   const exportToExcel = async () => {
     setExporting(true)
     try {
       const ExcelJS = (await import('exceljs')).default
       const wb = new ExcelJS.Workbook()
 
-      // ── Sheet 1: Org Summary ──────────────────────────────────────────────
       const wsSummary = wb.addWorksheet('Org Summary')
       wsSummary.columns = [{ width: 28 }, { width: 18 }, { width: 18 }, { width: 16 }]
       wsSummary.addRows([
         ['Organisation Team Performance Report'],
-        [`Generated on: ${new Date().toLocaleString()}`],
+        [`Generated on: ${new Date().toLocaleString()} | Filter: ${getFilterLabel(activeFilter)}`],
         [],
         ['Metric', 'Value'],
         ['Sr. Team Leaders', orgStats.total_sr_tls],
@@ -379,18 +410,17 @@ export default function ManagementTeams() {
         ['Active Jobs',      orgStats.active_jobs],
         [],
         ['Period', 'Target (₹)', 'Revenue (₹)', 'Achievement %'],
-        ['Monthly',   orgStats.org_monthly_target,   orgStats.org_monthly_revenue,   `${orgStats.org_monthly_achievement}%`],
-        ['Quarterly', orgStats.org_quarterly_target, orgStats.org_quarterly_revenue, `${orgStats.org_quarterly_achievement}%`],
-        ['Annual',    orgStats.org_annual_target,    orgStats.org_annual_revenue,    `${orgStats.org_annual_achievement}%`],
+        [getColumnLabels(activeFilter).monthly,   orgStats.org_monthly_target,   orgStats.org_monthly_revenue,   `${orgStats.org_monthly_achievement}%`],
+        [getColumnLabels(activeFilter).quarterly, orgStats.org_quarterly_target, orgStats.org_quarterly_revenue, `${orgStats.org_quarterly_achievement}%`],
+        ['Annual (Fiscal)',    orgStats.org_annual_target,    orgStats.org_annual_revenue,    `${orgStats.org_annual_achievement}%`],
       ])
 
-      // ── Sheet 2: Team Performance (one row per Sr-TL team) ────────────────
       const wsTeams = wb.addWorksheet('Team Performance')
       wsTeams.columns = [{ width: 24 }, ...Array(14).fill({ width: 20 })]
       wsTeams.addRow([
         'Team (Sr-TL)', 'TL Count', 'Recruiter Count', 'Total Candidates', 'Month Joinings', 'Active Jobs',
-        'Monthly Target (₹)', 'Monthly Revenue (₹)', 'Monthly %',
-        'Quarterly Target (₹)', 'Quarterly Revenue (₹)', 'Quarterly %',
+        `${getColumnLabels(activeFilter).monthly} Target (₹)`, `${getColumnLabels(activeFilter).monthly} Revenue (₹)`, 'Monthly %',
+        `${getColumnLabels(activeFilter).quarterly} Target (₹)`, `${getColumnLabels(activeFilter).quarterly} Revenue (₹)`, 'Quarterly %',
         'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %',
       ])
       teams.forEach(t => wsTeams.addRow([
@@ -399,7 +429,6 @@ export default function ManagementTeams() {
         t.quarterly_target, t.quarterly_revenue, `${t.quarterly_achievement}%`,
         t.annual_target,    t.annual_revenue,    `${t.annual_achievement}%`,
       ]))
-      // Org total row
       wsTeams.addRow([
         'ORG TOTAL',
         orgStats.total_tls, orgStats.total_recruiters, orgStats.total_candidates, orgStats.month_joinings, orgStats.active_jobs,
@@ -408,14 +437,13 @@ export default function ManagementTeams() {
         orgStats.org_annual_target,    orgStats.org_annual_revenue,    `${orgStats.org_annual_achievement}%`,
       ])
 
-      // ── Sheet 3: All Members ──────────────────────────────────────────────
       const wsMembers = wb.addWorksheet('All Members')
       wsMembers.columns = [{ width: 22 }, { width: 14 }, { width: 22 }, { width: 20 }, ...Array(12).fill({ width: 20 })]
       wsMembers.addRow([
         'Name', 'Role', 'Team (Sr-TL)', 'Reports To',
         'Candidates', 'Month Joinings', 'Active Pipeline',
-        'Monthly Target (₹)', 'Monthly Revenue (₹)', 'Monthly %',
-        'Quarterly Target (₹)', 'Quarterly Revenue (₹)', 'Quarterly %',
+        `${getColumnLabels(activeFilter).monthly} Target (₹)`, `${getColumnLabels(activeFilter).monthly} Revenue (₹)`, 'Monthly %',
+        `${getColumnLabels(activeFilter).quarterly} Target (₹)`, `${getColumnLabels(activeFilter).quarterly} Revenue (₹)`, 'Quarterly %',
         'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %',
       ])
       allMembers.forEach(m => wsMembers.addRow([
@@ -428,9 +456,7 @@ export default function ManagementTeams() {
         m.annual_target,    m.annual_revenue,    `${m.annual_achievement}%`,
       ]))
 
-      // ── One sheet per team ────────────────────────────────────────────────
       teams.forEach(team => {
-        // Truncate sheet name to 31 chars (Excel limit)
         const sheetName = (team.sr_tl_name.slice(0, 28) + ' Team').slice(0, 31)
         const wsTeam = wb.addWorksheet(sheetName)
         wsTeam.columns = [{ width: 22 }, { width: 14 }, { width: 20 }, ...Array(12).fill({ width: 18 })]
@@ -449,7 +475,6 @@ export default function ManagementTeams() {
           m.quarterly_target, m.quarterly_revenue, `${m.quarterly_achievement}%`,
           m.annual_target,    m.annual_revenue,    `${m.annual_achievement}%`,
         ]))
-        // Team total row
         wsTeam.addRow([
           'TEAM TOTAL', '', '',
           team.members.reduce((s, m) => s + m.candidates_count, 0),
@@ -461,13 +486,12 @@ export default function ManagementTeams() {
         ])
       })
 
-      // ── Download ──────────────────────────────────────────────────────────
       const buffer = await wb.xlsx.writeBuffer()
       const blob   = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
       const url    = URL.createObjectURL(blob)
       const a      = document.createElement('a')
       a.href       = url
-      a.download   = `Team_Performance_${new Date().toISOString().slice(0, 10)}.xlsx`
+      a.download   = `Team_Performance_${activeFilter}_${new Date().toISOString().slice(0, 10)}.xlsx`
       document.body.appendChild(a); a.click()
       document.body.removeChild(a); URL.revokeObjectURL(url)
 
@@ -505,11 +529,13 @@ export default function ManagementTeams() {
   }
 
   const getPerformanceBadge = (joinings: number) => {
-    if (joinings >= 5) return { text: 'Top', color: 'bg-green-100 text-green-800' }
-    if (joinings >= 2) return { text: 'Good', color: 'bg-blue-100 text-blue-800' }
+    if (joinings >= 5) return { text: 'Top',    color: 'bg-green-100 text-green-800' }
+    if (joinings >= 2) return { text: 'Good',   color: 'bg-blue-100 text-blue-800' }
     if (joinings >= 1) return { text: 'Active', color: 'bg-yellow-100 text-yellow-800' }
     return { text: '—', color: 'bg-gray-100 text-gray-600' }
   }
+
+  const colLabels = getColumnLabels(activeFilter)
 
   if (loading) {
     return (
@@ -538,6 +564,34 @@ export default function ManagementTeams() {
           </button>
         </div>
 
+        {/* ── Date Filter ── */}
+        <div className="bg-white rounded-lg shadow px-5 py-4 flex items-center gap-3 flex-wrap">
+          <span className="text-sm font-semibold text-gray-600 mr-1">📅 View Period:</span>
+          {([
+            { key: 'current_month',   label: 'This Month' },
+            { key: 'prev_month',      label: 'Previous Month' },
+            { key: 'current_quarter', label: 'This Quarter' },
+            { key: 'prev_quarter',    label: 'Previous Quarter' },
+          ] as { key: DateFilter; label: string }[]).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setActiveFilter(key)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition border ${
+                activeFilter === key
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {activeFilter !== 'current_month' && (
+            <span className="ml-auto text-xs text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full font-medium">
+              Showing: {getFilterLabel(activeFilter)}
+            </span>
+          )}
+        </div>
+
         {/* ── Org Stats ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
           {[
@@ -545,7 +599,8 @@ export default function ManagementTeams() {
             { label: 'Team Leaders',     value: orgStats.total_tls,         color: 'text-purple-700' },
             { label: 'Recruiters',       value: orgStats.total_recruiters,  color: 'text-indigo-700' },
             { label: 'Total Candidates', value: orgStats.total_candidates,  color: 'text-gray-800' },
-            { label: 'Month Joinings',   value: orgStats.month_joinings,    color: 'text-green-700' },
+            { label: activeFilter === 'prev_month' ? 'Prev. Joinings' : activeFilter === 'prev_quarter' ? 'Q Joinings' : 'Month Joinings',
+              value: orgStats.month_joinings, color: 'text-green-700' },
             { label: 'Active Jobs',      value: orgStats.active_jobs,       color: 'text-orange-700' },
             { label: 'Total Jobs',       value: orgStats.total_jobs,        color: 'text-gray-700' },
           ].map(({ label, value, color }) => (
@@ -561,9 +616,9 @@ export default function ManagementTeams() {
           <h2 className="text-lg font-bold text-gray-900 mb-4">💰 Organisation Revenue vs Target</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
-              { label: 'This Month', target: orgStats.org_monthly_target, revenue: orgStats.org_monthly_revenue, pct: orgStats.org_monthly_achievement },
-              { label: 'This Quarter', target: orgStats.org_quarterly_target, revenue: orgStats.org_quarterly_revenue, pct: orgStats.org_quarterly_achievement },
-              { label: 'This Fiscal Year', target: orgStats.org_annual_target, revenue: orgStats.org_annual_revenue, pct: orgStats.org_annual_achievement },
+              { label: colLabels.monthly,   target: orgStats.org_monthly_target,   revenue: orgStats.org_monthly_revenue,   pct: orgStats.org_monthly_achievement },
+              { label: colLabels.quarterly, target: orgStats.org_quarterly_target, revenue: orgStats.org_quarterly_revenue, pct: orgStats.org_quarterly_achievement },
+              { label: 'This Fiscal Year',  target: orgStats.org_annual_target,    revenue: orgStats.org_annual_revenue,    pct: orgStats.org_annual_achievement },
             ].map(({ label, target, revenue, pct }) => (
               <div key={label} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                 <div className="flex justify-between items-center mb-3">
@@ -611,7 +666,6 @@ export default function ManagementTeams() {
             {activeView === 'teams' && (
               <div className="space-y-4">
 
-                {/* Team-level comparison table */}
                 <div className="overflow-x-auto mb-6">
                   <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
                     <thead className="bg-gray-50">
@@ -622,11 +676,11 @@ export default function ManagementTeams() {
                         <th className="px-4 py-3 text-center font-semibold text-gray-700">Candidates</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-700">Joinings</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-700">Active Jobs</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Monthly Target</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Monthly Rev.</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Monthly %</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Q. Target</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Q. Rev.</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{colLabels.monthly} Target</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{colLabels.monthly} Rev.</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700">M. %</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{colLabels.quarterly} Target</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">{colLabels.quarterly} Rev.</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-700">Q. %</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Annual Target</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Annual Rev.</th>
@@ -658,7 +712,6 @@ export default function ManagementTeams() {
                           <td className="px-4 py-3 text-center"><AchievementBadge pct={team.annual_achievement} /></td>
                         </tr>
                       ))}
-                      {/* Org Total Row */}
                       <tr className="bg-gradient-to-r from-blue-50 to-indigo-50 font-bold border-t-2 border-blue-300">
                         <td className="px-4 py-3 text-blue-900">ORG TOTAL</td>
                         <td className="px-4 py-3 text-center">{orgStats.total_tls}</td>
@@ -680,10 +733,8 @@ export default function ManagementTeams() {
                   </table>
                 </div>
 
-                {/* Expanded team detail accordions */}
                 {teams.map(team => expandedTeams.has(team.sr_tl_id) && (
                   <div key={team.sr_tl_id} className="border-2 border-blue-200 rounded-lg overflow-hidden">
-                    {/* Team header bar */}
                     <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4 flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-bold text-white">{team.sr_tl_name}'s Team</h3>
@@ -691,9 +742,9 @@ export default function ManagementTeams() {
                       </div>
                       <div className="flex gap-3">
                         {[
-                          { label: 'Monthly', pct: team.monthly_achievement },
-                          { label: 'Quarterly', pct: team.quarterly_achievement },
-                          { label: 'Annual', pct: team.annual_achievement },
+                          { label: colLabels.monthly,   pct: team.monthly_achievement },
+                          { label: colLabels.quarterly, pct: team.quarterly_achievement },
+                          { label: 'Annual',            pct: team.annual_achievement },
                         ].map(({ label, pct }) => (
                           <div key={label} className="bg-white/20 rounded-lg px-3 py-2 text-center">
                             <div className="text-xs text-blue-200 mb-1">{label}</div>
@@ -703,7 +754,6 @@ export default function ManagementTeams() {
                       </div>
                     </div>
 
-                    {/* Member detail table */}
                     {team.members.length === 0 ? (
                       <div className="p-6 text-center text-gray-500">No members in this team</div>
                     ) : (
@@ -764,7 +814,6 @@ export default function ManagementTeams() {
                                 </tr>
                               )
                             })}
-                            {/* Team total row */}
                             <tr className="bg-blue-50 font-bold border-t-2 border-blue-200">
                               <td className="px-4 py-3 text-blue-900">Team Total</td>
                               <td className="px-4 py-3"></td>
@@ -847,7 +896,6 @@ export default function ManagementTeams() {
                           <td className="px-4 py-3 text-center"><AchievementBadge pct={m.annual_achievement} /></td>
                         </tr>
                       ))}
-                      {/* Grand total row */}
                       <tr className="bg-gradient-to-r from-blue-50 to-indigo-50 font-bold border-t-2 border-blue-300">
                         <td className="px-4 py-3 text-blue-900 sticky left-0 bg-blue-50">ORG TOTAL</td>
                         <td className="px-4 py-3"></td>

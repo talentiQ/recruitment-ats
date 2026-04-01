@@ -21,6 +21,23 @@
 //           older graduation years (pre-2005) so experience isn't over-counted
 //   FIX-4: Overlap detection uses a clean single-expression boundary check —
 //           the old double-condition caused adjacent jobs (no gap) to flag
+//
+// Fixes applied (2026-04):
+//   FIX-5a: Added "professional training experience", "professional training",
+//            "training experience", "industrial training", "articleship",
+//            "internship experience", "professional education",
+//            "professional qualifications", "academic qualifications",
+//            "academic qualification" to both SECTION_HEADERS and
+//            EDUCATION_SECTION_MARKERS — these sections were not being skipped,
+//            causing training institutes (NSIC, N.R. Goyal etc.) to be parsed
+//            as real jobs and producing false employment gaps.
+//            Real-world case: Lakshay Gupta — NSIC (Aug 2014–Dec 2015) was
+//            treated as a real job, creating a phantom 25-month gap before
+//            Genpact (Jan 2018).
+//   FIX-5b: detectGaps() now excludes __UNKNOWN__ company entries from gap
+//            calculation. Previously any dates parsed before a company header
+//            was encountered (orphaned dates) landed in __UNKNOWN__ and were
+//            treated as real jobs in the gap timeline.
 
 export type FlagSeverity = 'critical' | 'warning'
 
@@ -50,6 +67,7 @@ const MONTH_MAP: Record<string, number> = {
 const COMPANY_NAME_SIGNALS = /\b(ltd|pvt|inc|corp|limited|technologies|technology|company|industries|solutions|services|bank|global|international|consulting|associates|enterprises|systems|group|ventures|holdings|digital|analytics|infosys|wipro|tcs|accenture|cognizant|capgemini|deloitte|kpmg|pwc|ey)\b/i
 
 // Section headers — lines to skip entirely
+// FIX-5a: Added training, articleship, and professional education variants
 const SECTION_HEADERS = new Set([
   'professional experience','experience','work experience',
   'employment history','career history','work history',
@@ -57,12 +75,26 @@ const SECTION_HEADERS = new Set([
   'skills','profile','summary','profile summary','key qualifications',
   'languages','certifications','projects','references','achievements',
   'current details','personal details','declaration','interests',
+  // FIX-5a: Training and professional education section headers
+  'professional training experience','professional training',
+  'training experience','industrial training','articleship',
+  'internship experience','professional education',
+  'professional qualifications','academic qualifications',
+  'academic qualification',
 ])
 
 // Education section markers — once we see these, stop processing for experience
+// FIX-5a: Training sections added — they contain institute names + date ranges
+//          that look identical to real jobs and must be skipped
 const EDUCATION_SECTION_MARKERS = new Set([
   'education','academic background','educational qualification',
   'qualifications','academic details','educational details',
+  // FIX-5a: Training sections must also flip inEducationSection = true
+  'professional training experience','professional training',
+  'training experience','industrial training','articleship',
+  'internship experience','professional education',
+  'professional qualifications','academic qualifications',
+  'academic qualification',
 ])
 
 // Experience section markers — resume processing after these (FIX-1)
@@ -144,7 +176,9 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
       continue
     }
 
-    // Stop processing for experience when we hit education section
+    // Stop processing for experience when we hit education or training section
+    // FIX-5a: EDUCATION_SECTION_MARKERS now includes training section headers,
+    //         so "Professional Training Experience" correctly sets inEducationSection=true
     if (EDUCATION_SECTION_MARKERS.has(lower)) {
       inEducationSection = true
       inProjectSection   = false
@@ -157,7 +191,7 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
       continue
     }
 
-    // Skip education and project section content entirely
+    // Skip education, training, and project section content entirely
     if (inEducationSection || inProjectSection) continue
 
     if (SECTION_HEADERS.has(lower)) continue
@@ -366,12 +400,18 @@ function detectShortTenures(tenures: CompanyTenure[]): RedFlag[] {
 // ─── Flag 3: Employment gaps > 6 months (WARNING) ────────────────────────────
 // Gaps are measured between REAL JOBS only.
 // Gaps following internships are excluded — candidates are often studying.
+// FIX-5b: __UNKNOWN__ company excluded — orphaned dates from training sections
+//          or pre-header text must not create phantom gaps in the timeline.
 
 function detectGaps(tenures: CompanyTenure[]): RedFlag[] {
   const flags: RedFlag[] = []
 
+  // FIX-5b: Added `t.company !== '__UNKNOWN__'` guard.
+  // Without this, dates parsed before any company header was seen (e.g. training
+  // institute dates landing in __UNKNOWN__) were treated as real job endpoints
+  // and produced false gaps between them and the first real employer.
   const realJobs = tenures
-    .filter(t => !t.isInternship)
+    .filter(t => !t.isInternship && t.company !== '__UNKNOWN__')
     .sort((a, b) => a.totalStart.getTime() - b.totalStart.getTime())
 
   if (realJobs.length < 2) return flags
