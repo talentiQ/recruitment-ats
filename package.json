@@ -11,11 +11,12 @@
   "dependencies": {
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/supabase-js": "^2.98.0",
+    "dotenv": "^17.3.1",
     "exceljs": "^4.4.0",
     "mammoth": "^1.11.0",
     "next": "^16.1.6",
     "nodemailer": "^8.0.3",
-    "pdf-parse": "^1.1.1",
+    "pdf-parse": "^1.1.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "resend": "^6.9.4"

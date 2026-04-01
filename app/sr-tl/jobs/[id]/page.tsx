@@ -1,11 +1,11 @@
 //app/sr-tl/jobs/[id]/page.tsx
 'use client'
-
+import { AiShortlistPanel } from '@/components/agent/AiShortlistPanel'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { AiShortlistPanel } from '@/components/agent/AiShortlistPanel'
+
 
 const JOB_STATUS_OPTIONS = [
   { value: 'open',        label: 'Open',        color: 'bg-green-100 text-green-800 border-green-300',  dot: 'bg-green-500'  },
@@ -304,7 +304,7 @@ export default function SrTLJobDetailPage() {
             Closing a job will prevent recruiters from adding new candidates to it.
           </p>
         </div>
-         <AiShortlistPanel jobId={job.id} jdText={job.description} />
+         <AiShortlistPanel jobId={job.id} job={job} />
         {/* Pipeline Progress */}
         <div className="card">
           <h3 className="font-semibold mb-2">Pipeline Progress</h3>
