@@ -422,7 +422,7 @@ export default function AddCandidateForm({
       await notifyRedFlagToHierarchy(newCandidateId, formData.full_name, jobTitle, redFlagResult)
     }
 
-    saveMatchScore(newCandidateId, formData.job_id)
+    saveMatchScore(newCandidateId, formData.job_id || null)
 
     return newCandidateId
   }
@@ -477,6 +477,7 @@ export default function AddCandidateForm({
         notice_period:      parseInt(formData.notice_period)       || 0,
         key_skills:         normalizedSkills,
         last_activity_date: new Date().toISOString(),
+        job_id: formData.job_id || null, // ✅ FIX HERE
       }
       setPendingSubmitData({ normalizedSkills, candidateData })
       setShowRedFlagModal(true)
@@ -499,6 +500,7 @@ export default function AddCandidateForm({
         notice_period:       parseInt(formData.notice_period)        || 0,
         key_skills:          normalizedSkills,
         last_activity_date:  new Date().toISOString(),
+        job_id: formData.job_id || null, // ✅ FIX HERE
       }
 
       if (isEditMode && existingCandidate) {
@@ -522,9 +524,11 @@ export default function AddCandidateForm({
         else if (userRole === 'sr_team_leader') router.push('/sr-tl/candidates')
         else                                    router.push('/recruiter/dashboard')
       }
-    } catch (error: any) {
-      console.error('Submit error:', error)
-      alert('Error: ' + error.message)
+    } 
+    catch (error: any) {
+    console.error('Submit error:', error)
+    alert('Error: ' + error.message)
+   
     } finally {
       setLoading(false)
     }
@@ -543,10 +547,13 @@ export default function AddCandidateForm({
       else if (userRole === 'team_leader')    router.push('/tl/candidates')
       else if (userRole === 'sr_team_leader') router.push('/sr-tl/candidates')
       else                                    router.push('/recruiter/dashboard')
-    } catch (error: any) {
-      console.error('Submit error:', error)
-      alert('Error: ' + error.message)
-    } finally {
+    } 
+  catch (error: any) {
+  console.error('Submit error:', error)
+  alert('Error: ' + error.message)
+  
+  
+  } finally {
       setLoading(false)
       setPendingSubmitData(null)
     }
