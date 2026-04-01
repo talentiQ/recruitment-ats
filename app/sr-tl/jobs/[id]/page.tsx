@@ -5,6 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import { useParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { AiShortlistPanel } from '@/components/agent/AiShortlistPanel'
 
 const JOB_STATUS_OPTIONS = [
   { value: 'open',        label: 'Open',        color: 'bg-green-100 text-green-800 border-green-300',  dot: 'bg-green-500'  },
@@ -303,7 +304,7 @@ export default function SrTLJobDetailPage() {
             Closing a job will prevent recruiters from adding new candidates to it.
           </p>
         </div>
-
+         <AiShortlistPanel jobId={job.id} jdText={job.description} />
         {/* Pipeline Progress */}
         <div className="card">
           <h3 className="font-semibold mb-2">Pipeline Progress</h3>
@@ -317,7 +318,7 @@ export default function SrTLJobDetailPage() {
           </div>
           {progress <= 5 && <p className="text-sm text-gray-500 mt-1">{Math.round(progress)}% filled</p>}
         </div>
-
+       
         {/* Revenue Projection */}
         <div className="card bg-yellow-50 border border-yellow-300">
           <h3 className="font-semibold mb-2">Projected Revenue</h3>
@@ -385,6 +386,7 @@ export default function SrTLJobDetailPage() {
           >
             ✏️ Edit Job
           </button>
+          
           <button
             onClick={() => router.back()}
             className="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 font-medium transition"
