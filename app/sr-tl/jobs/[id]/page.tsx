@@ -29,11 +29,41 @@ export default function SrTLJobDetailPage() {
   const [confirmClose, setConfirmClose] = useState(false)
   const [statusSuccess, setStatusSuccess] = useState('')
 
+const STAGE_WEIGHTS: Record<string, number> = {
+  sourced: 5,
+  screening: 20,
+  screening_rejected: 0,
+  interview_scheduled: 50,
+  interview_rejected: 0,
+  documentation: 70,
+  offer_extended: 80,
+  offer_accepted: 90,
+  offer_rejected: 0,
+  joined: 100,
+  renege: 0,
+  on_hold: 0,
+}
+
+const STAGE_STYLES: Record<string, string> = {
+  sourced: 'bg-gray-100 text-gray-700',
+  screening: 'bg-yellow-100 text-yellow-800',
+  screening_rejected: 'bg-orange-100 text-orange-800',
+  interview_scheduled: 'bg-blue-100 text-blue-800',
+  interview_rejected: 'bg-red-200 text-red-800',
+  documentation: 'bg-cyan-100 text-cyan-800',
+  offer_extended: 'bg-indigo-100 text-indigo-800',
+  offer_accepted: 'bg-green-100 text-green-800',
+  offer_rejected: 'bg-rose-100 text-rose-800',
+  joined: 'bg-green-600 text-white',
+  renege: 'bg-orange-200 text-orange-900',
+  on_hold: 'bg-gray-200 text-gray-600',
+}
   // ── Edit modal state ──
   const [editOpen, setEditOpen] = useState(false)
   const [editForm, setEditForm] = useState<any>({})
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState('')
+  const [candidates, setCandidates] = useState<any[]>([])
 
   useEffect(() => {
     if (params.id) loadJob(params.id as string)
@@ -65,6 +95,13 @@ export default function SrTLJobDetailPage() {
       .eq('role', 'recruiter')
 
     setTeamMembers(teamData || [])
+
+    const { data: candidatesData } = await supabase
+  .from('candidates')
+  .select('id, current_stage')
+  .eq('job_id', id)
+
+  setCandidates(candidatesData || [])
 
     const { data: clientData } = await supabase
       .from('clients')
@@ -234,11 +271,132 @@ export default function SrTLJobDetailPage() {
     </DashboardLayout>
   )
 
+const joinedCount = candidates.filter(
+  c => c.current_stage === 'joined'
+).length
+
   const currentStatusOpt = JOB_STATUS_OPTIONS.find(o => o.value === job.status)
-  const progress = job.positions > 0 ? (job.positions_filled / job.positions) * 100 : 0
+  //const progress = job.positions > 0 ? (job.positions_filled / job.positions) * 100 : 0
+  const filled = joinedCount
+  const total = job.positions || 0
+  const pipelineProgress = calculatePipelineProgress(candidates, job.positions)
+  const pipelineInsight = getPipelineInsight(candidates, job.positions)
   const avgCTC = (job.min_ctc + job.max_ctc) / 2
   const billingPercent = 8
   const projectedRevenueLakhs = (avgCTC * job.positions * billingPercent) / 100
+
+  function calculatePipelineProgress(candidates: any[], positions: number) {
+  const active = candidates.filter(c =>
+    !['renege','offer_rejected','screening_rejected','interview_rejected']
+      .includes(c.current_stage)
+  )
+
+  const scored = active.map(c => ({
+    ...c,
+    score: STAGE_WEIGHTS[c.current_stage] || 0
+  }))
+
+  // Sort by strongest candidates first
+  scored.sort((a, b) => b.score - a.score)
+
+  // 🔥 ONLY TAKE BEST CANDIDATES
+  const top = scored.slice(0, positions * 2)  // reduced from *3
+
+  const total = top.reduce((sum, c) => sum + c.score, 0)
+  const max = top.length * 100 || 1
+
+  const joinedCount = candidates.filter(
+    c => c.current_stage === 'joined'
+  ).length
+
+  // ✅ override for closure
+  if (joinedCount >= (positions || 0)) {
+    return 100
+  }
+
+  return Math.round((total / max) * 100)
+}
+
+
+function getPipelineInsight(candidates: any[], positions: number) {
+  const counts: Record<string, number> = {}
+
+  candidates.forEach(c => {
+    const stage = c.current_stage
+    counts[stage] = (counts[stage] || 0) + 1
+  })
+
+  const screening = counts['screening'] || 0
+  const interview =
+    (counts['interview_scheduled'] || 0) +
+    (counts['interview_completed'] || 0)
+  const documentation = counts['documentation'] || 0
+  const offers = counts['offer_accepted'] || 0
+  const joined = counts['joined'] || 0
+
+  // 🎯 STRATEGIC LOGIC
+
+  if (joined >= positions) {
+    return '✅ Positions closed successfully.'
+  }
+
+  if (offers >= positions) {
+    return '🔥 Offers accepted — closure highly likely.'
+  }
+
+  if (documentation >= positions) {
+    return '🚀 Strong pipeline — candidates in documentation stage.'
+  }
+
+  if (interview >= positions) {
+    return '⚡ Good momentum — interviews actively progressing.'
+  }
+
+  if (screening > interview) {
+    return '⚠️ Many candidates stuck in screening — push to interview stage.'
+  }
+
+  if (candidates.length === 0) {
+    return '🚨 No candidates yet — start sourcing immediately.'
+  }
+
+  return '📊 Pipeline is building — focus on moving candidates forward.'
+}
+
+function FunnelStrip({ candidates }: { candidates: any[] }) {
+  const counts: Record<string, number> = {}
+
+  candidates.forEach(c => {
+    counts[c.current_stage] = (counts[c.current_stage] || 0) + 1
+  })
+
+  const order = [
+    'sourced',
+    'screening',
+    'interview_scheduled',
+    'interview_completed',
+    'documentation',
+    'offer_extended',
+    'offer_accepted',
+    'joined'
+  ]
+
+  return (
+    <div className="flex flex-wrap gap-2 mt-3">
+      {order.map(stage => {
+        const count = counts[stage] || 0
+        if (!count) return null
+
+        return (
+          <div key={stage} className={`px-3 py-1.5 rounded-full text-xs font-semibold ${STAGE_STYLES[stage]}`}>
+            {stage.replace('_',' ')} ({count})
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+const progress = total > 0 ? (filled / total) * 100 : 0
 
   return (
     <DashboardLayout>
@@ -263,10 +421,10 @@ export default function SrTLJobDetailPage() {
             <div>📍 {job.location}</div>
             <div>💰 ₹{job.min_ctc}–{job.max_ctc}L</div>
             <div>📅 {job.experience_min}–{job.experience_max} yrs</div>
-            <div>🎯 {job.positions_filled}/{job.positions} Positions Filled</div>
+            <div>🎯 {filled}/{total} Positions Filled</div>
           </div>
         </div>
-
+        
         {/* Status Management */}
         <div className="card border-2 border-blue-100">
           <h3 className="font-semibold text-gray-900 mb-4">⚙️ Update Job Status</h3>
@@ -304,20 +462,65 @@ export default function SrTLJobDetailPage() {
             Closing a job will prevent recruiters from adding new candidates to it.
           </p>
         </div>
-         <AiShortlistPanel jobId={job.id} job={job} />
-        {/* Pipeline Progress */}
+        
+        
         <div className="card">
-          <h3 className="font-semibold mb-2">Pipeline Progress</h3>
-          <div className="w-full bg-gray-200 rounded-full h-6">
-            <div
-              className="bg-green-600 h-6 rounded-full text-white text-center text-sm flex items-center justify-center transition-all"
-              style={{ width: `${Math.max(progress, progress > 0 ? 8 : 0)}%` }}
-            >
-              {progress > 5 ? `${Math.round(progress)}%` : ''}
-            </div>
-          </div>
-          {progress <= 5 && <p className="text-sm text-gray-500 mt-1">{Math.round(progress)}% filled</p>}
+  <h3 className="font-semibold text-gray-900 mb-3">📄 Job Description</h3>
+
+  {!job.job_description ? (
+    <p className="text-gray-400 text-sm italic">No job description available.</p>
+  ) : (
+    <div className="prose max-w-none text-sm text-gray-700 whitespace-pre-line leading-relaxed">
+      {job.job_description}
+    </div>
+  )}
+
+  {/* Skills Section */}
+  {(job.key_skills || job.nice_to_have_skills) && (
+    <div className="mt-4 grid md:grid-cols-2 gap-4 text-sm">
+
+      {job.key_skills && (
+        <div>
+          <h4 className="font-medium text-gray-800 mb-1">🎯 Key Skills</h4>
+          <p className="text-gray-600 whitespace-pre-line">{job.key_skills}</p>
         </div>
+      )}
+
+      {job.nice_to_have_skills && (
+        <div>
+          <h4 className="font-medium text-gray-800 mb-1">✨ Nice to Have</h4>
+          <p className="text-gray-600 whitespace-pre-line">{job.nice_to_have_skills}</p>
+        </div>
+      )}
+
+    </div>
+  )}
+</div>
+        
+        <AiShortlistPanel jobId={job.id} job={job} />
+
+ <div className="card">
+  <div className="flex justify-between items-center mb-2">
+    <h3 className="font-semibold">📊 Pipeline Maturity</h3>
+    <span className="text-sm text-gray-600">{pipelineProgress}%</span>
+  </div>
+
+  <div className="w-full bg-gray-200 rounded-full h-6 overflow-hidden">
+    <div
+      className="bg-gradient-to-r from-blue-500 via-indigo-500 to-green-500 h-6 text-white flex items-center justify-center"
+      style={{ width: `${pipelineProgress}%` }}
+    >
+      {pipelineProgress > 10 ? `${pipelineProgress}%` : ''}
+    </div>
+  </div>
+
+    
+  <div className="mt-3 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-sm text-blue-900 font-medium">
+  {pipelineInsight}
+  </div>
+
+  <FunnelStrip candidates={candidates} />
+</div>
        
         {/* Revenue Projection */}
         <div className="card bg-yellow-50 border border-yellow-300">

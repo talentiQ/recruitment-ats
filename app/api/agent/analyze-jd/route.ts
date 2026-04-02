@@ -1,16 +1,14 @@
 // app/api/agent/analyze-jd/route.ts
 // POST /api/agent/analyze-jd
-// Uses supabase singleton (anon key + session) — no service role.
+// Auth: x-internal-secret header.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
 import { analyzeJD } from '@/lib/agent/jdAnalyzer'
 
 export async function POST(req: NextRequest) {
   try {
-    // Auth check using your singleton
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
+    const secret = req.headers.get('x-internal-secret')
+    if (!process.env.INTERNAL_API_SECRET || secret !== process.env.INTERNAL_API_SECRET) {
       return NextResponse.json({ success: false, error: 'Unauthorised' }, { status: 401 })
     }
 
@@ -19,7 +17,7 @@ export async function POST(req: NextRequest) {
 
     if (!jd_text || typeof jd_text !== 'string' || jd_text.trim().length < 30) {
       return NextResponse.json(
-        { success: false, error: 'jd_text is required (min 30 characters)' },
+        { success: false, error: 'jd_text is required (min 30 chars)' },
         { status: 400 }
       )
     }

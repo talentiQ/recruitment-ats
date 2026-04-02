@@ -226,7 +226,7 @@ export function AiShortlistPanel({ jobId, job }: Props) {
           <h3 className="font-semibold text-gray-900 flex items-center gap-2">
             🤖 AI Shortlist
             <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded">
-              Groq · Llama 3.1 70B
+              Groq · Llama 3.3 70B
             </span>
           </h3>
           {result && (

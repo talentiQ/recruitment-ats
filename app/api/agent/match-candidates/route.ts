@@ -1,18 +1,23 @@
 // app/api/agent/match-candidates/route.ts
 // POST /api/agent/match-candidates
-// Full pipeline: JD text → structured requirements → score candidates → ranked shortlist.
-// Uses supabase singleton (anon key + session) — no service role.
+//
+// Auth: x-internal-secret header (set in useAiMatch hook).
+// Plain createClient singleton cannot read browser cookies in App Router
+// route handlers — session check always returns null. Secret header is the
+// correct pattern for same-origin internal API routes.
+//
+// Add to .env.local:
+//   INTERNAL_API_SECRET=any_random_string
+//   NEXT_PUBLIC_INTERNAL_API_SECRET=same_value   ← browser needs to send it
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
 import { analyzeJD } from '@/lib/agent/jdAnalyzer'
 import { matchCandidates } from '@/lib/agent/candidateMatcher'
 
 export async function POST(req: NextRequest) {
   try {
-    // Auth check
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
+    const secret = req.headers.get('x-internal-secret')
+    if (!process.env.INTERNAL_API_SECRET || secret !== process.env.INTERNAL_API_SECRET) {
       return NextResponse.json({ success: false, error: 'Unauthorised' }, { status: 401 })
     }
 
@@ -26,10 +31,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Step 1: Parse JD into structured requirements
     const requirements = await analyzeJD(jd_text)
-
-    // Step 2: Score all candidates for this job
     const result = await matchCandidates(job_id, requirements, {
       minScore:   min_score,
       maxResults: max_results,
