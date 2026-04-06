@@ -72,10 +72,10 @@ export default function MatchScorePanel({
   }, [jobId])
 
   useEffect(() => {
-    if (!jobId) return
-    if (candidateId || resumeBankId) loadCached()
-    else if (autoRun && parsedData)  runMatch()
-  }, [jobId, candidateId, resumeBankId])
+  if (!jobId || !jobData) return
+  if (candidateId || resumeBankId) loadCached()
+  else if (autoRun && parsedData)  runMatch()
+}, [jobId, jobData, candidateId, resumeBankId])
 
   useEffect(() => {
     if (autoRun && parsedData && jobId && !candidateId && !resumeBankId) runMatch()
