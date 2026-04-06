@@ -4,7 +4,7 @@
 // comes from the same Talent IQ app (not an external caller).
 
 import { useState, useCallback } from 'react'
-import type { MatchResult } from '@/lib/agent/candidateMatcher'
+import type { MatchResult } from '@/lib/resumeMatchEngine'
 
 interface UseAiMatchState {
   result:    MatchResult | null

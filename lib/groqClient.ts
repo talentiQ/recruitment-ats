@@ -12,7 +12,7 @@ export interface GroqMessage {
 }
 
 export interface GroqOptions {
-  model?:       string   // default: llama-3.1-70b-versatile
+  model?:       string   // default: llama-3.3-70b-versatile
   temperature?: number   // default: 0.1 (low = consistent structured output)
   maxTokens?:   number   // default: 1500
   json?:        boolean  // if true, forces response_format: json_object

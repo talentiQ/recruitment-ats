@@ -181,10 +181,16 @@ export default function ManagementInterviewsPage() {
         return grandparent ? grandparent.full_name : parent.full_name
       }
 
-      const { data: teamCandidates } = await supabaseAdmin
-        .from('candidates')
-        .select('id, full_name, current_stage, assigned_to, more_interviews_in_progress, jobs(id, job_title, job_code, clients(company_name))')
-        .in('assigned_to', allRecruiterIds)
+      const CHUNK = 50
+const allCandidates: any[] = []
+for (let i = 0; i < allRecruiterIds.length; i += CHUNK) {
+  const { data } = await supabaseAdmin
+    .from('candidates')
+    .select('id, full_name, current_stage, assigned_to, more_interviews_in_progress, jobs(id, job_title, job_code, clients(company_name))')
+    .in('assigned_to', allRecruiterIds.slice(i, i + CHUNK))
+  if (data) allCandidates.push(...data)
+}
+const teamCandidates = allCandidates
 
       if (!teamCandidates || teamCandidates.length === 0) {
         setAllInterviews([]); setLoading(false); return
@@ -194,12 +200,17 @@ export default function ManagementInterviewsPage() {
       teamCandidates.forEach((c: any) => { candidateMap[c.id] = c })
       const candidateIds = teamCandidates.map((c: any) => c.id)
 
-      const { data: raw } = await supabaseAdmin
-        .from('interviews')
-        .select('*, recruiter:recruiter_id(full_name)')
-        .in('candidate_id', candidateIds)
-        .order('interview_date', { ascending: true })
-        .order('interview_time', { ascending: true })
+     const allRaw: any[] = []
+for (let i = 0; i < candidateIds.length; i += CHUNK) {
+  const { data } = await supabaseAdmin
+    .from('interviews')
+    .select('*, recruiter:recruiter_id(full_name)')
+    .in('candidate_id', candidateIds.slice(i, i + CHUNK))
+    .order('interview_date', { ascending: true })
+    .order('interview_time', { ascending: true })
+  if (data) allRaw.push(...data)
+}
+const raw = allRaw
 
       const mapped: Interview[] = (raw || []).map((iv: any) => {
         const cand        = candidateMap[iv.candidate_id]

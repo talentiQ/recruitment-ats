@@ -1,96 +1,131 @@
 // lib/agent/jdAnalyzer.ts
-// Agent 1 — JD Analyzer
-//
-// Input:  raw job description text (pasted or typed by recruiter)
-// Output: structured JdRequirements object used by Agent 2 (Candidate Matcher)
-//
-// Design decisions:
-//   - Low temperature (0.1) for consistent structured output
-//   - Explicit JSON schema in the prompt — Llama 3.1 70B follows it reliably
-//   - must_have vs nice_to_have split — mirrors how recruiters actually think
-//   - experience_range stored as { min, max } not a string — easier to compare
-//   - location_flexibility enum: onsite | hybrid | remote | any
-
-import { groqChat } from '../groqClient'
+// Agent 1 — JD Analyzer (INTERNAL — NO GROQ)
 
 export interface JdRequirements {
   job_title:            string
-  must_have_skills:     string[]   // non-negotiable technical skills
-  nice_to_have_skills:  string[]   // preferred but not blocking
-  experience_range:     { min: number; max: number }  // years
-  education:            string     // e.g. "B.Tech/B.E.", "CA/CMA", "Any Graduate"
-  location:             string     // e.g. "Noida", "Delhi NCR", "Bangalore"
+  must_have_skills:     string[]
+  nice_to_have_skills:  string[]
+  experience_range:     { min: number; max: number }
+  education:            string
+  location:             string
   location_flexibility: 'onsite' | 'hybrid' | 'remote' | 'any'
-  industry_preference:  string[]   // e.g. ["Manufacturing", "Automobile", "FMCG"]
-  key_responsibilities: string[]   // top 3–5 summarised responsibilities
+  industry_preference:  string[]
+  key_responsibilities: string[]
   seniority_level:      'junior' | 'mid' | 'senior' | 'lead' | 'manager'
-  raw_summary:          string     // 2-sentence plain English summary
+  raw_summary:          string
 }
 
-const SYSTEM_PROMPT = `You are an expert recruitment analyst specialising in Indian job markets.
-Your job is to parse job descriptions and extract structured hiring requirements.
-You always respond with valid JSON only — no preamble, no explanation, no markdown.`
+// ─── Skill Dictionary ─────────────────────────────────────────────────────────
 
-function buildUserPrompt(jdText: string): string {
-  return `Parse this job description and return a JSON object matching EXACTLY this schema:
+const COMMON_SKILLS = [
+  'Java', 'Python', 'SQL', 'React', 'Node', 'Angular',
+  'AWS', 'Azure', 'GCP', 'Docker', 'Kubernetes',
+  'Excel', 'Power BI', 'Tableau',
+  'Sales', 'Marketing', 'Accounting', 'Finance',
+]
 
-{
-  "job_title": "string — exact or inferred title",
-  "must_have_skills": ["array of non-negotiable skills — max 8"],
-  "nice_to_have_skills": ["array of preferred skills — max 6"],
-  "experience_range": { "min": number, "max": number },
-  "education": "string — minimum qualification e.g. B.Tech, CA, MBA, Any Graduate",
-  "location": "string — city or region e.g. Noida, Delhi NCR, Bangalore",
-  "location_flexibility": "onsite | hybrid | remote | any",
-  "industry_preference": ["array of relevant industries — e.g. Manufacturing, IT, BFSI"],
-  "key_responsibilities": ["array of 3-5 core responsibilities, each under 10 words"],
-  "seniority_level": "junior | mid | senior | lead | manager",
-  "raw_summary": "2 sentences summarising the role and ideal candidate"
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function extractSkills(text: string): string[] {
+  const lower = text.toLowerCase()
+  const found: string[] = []
+
+  for (const skill of COMMON_SKILLS) {
+    if (lower.includes(skill.toLowerCase())) {
+      found.push(skill)
+    }
+  }
+
+  return [...new Set(found)]
 }
 
-Rules:
-- must_have_skills: only include skills explicitly required or strongly implied as essential
-- nice_to_have_skills: skills mentioned as preferred, good to have, or added advantage
-- experience_range.min and max must be integers (years). If JD says "5+ years" use min:5 max:10. If "3-7 years" use min:3 max:7.
-- For Indian professional qualifications (CA, CMA, ICWA, CS) include them in education AND must_have_skills
-- Normalise skill names: "ReactJS", "React.js", "React JS" all become "React"
-- location_flexibility defaults to "onsite" if not mentioned
-- seniority_level: junior=0-2yr, mid=2-6yr, senior=6-12yr, lead/manager=8yr+
+function extractExperience(text: string): { min: number; max: number } {
+  const rangeMatch = text.match(/(\d+)\s*[-to]{1,3}\s*(\d+)/i)
+  if (rangeMatch) {
+    return {
+      min: Number(rangeMatch[1]),
+      max: Number(rangeMatch[2]),
+    }
+  }
 
-JOB DESCRIPTION:
-${jdText}`
+  const singleMatch = text.match(/(\d+)\+?\s*years?/i)
+  if (singleMatch) {
+    const min = Number(singleMatch[1])
+    return { min, max: min + 5 }
+  }
+
+  return { min: 0, max: 10 }
 }
+
+function extractLocation(text: string): string {
+  const cities = ['Delhi', 'Noida', 'Gurgaon', 'Bangalore', 'Mumbai', 'Pune']
+  const lower = text.toLowerCase()
+
+  for (const city of cities) {
+    if (lower.includes(city.toLowerCase())) {
+      return city
+    }
+  }
+
+  return 'India'
+}
+
+function extractEducation(text: string): string {
+  if (/b\.?tech|b\.?e/i.test(text)) return 'B.Tech/B.E.'
+  if (/mba/i.test(text)) return 'MBA'
+  if (/ca|cma/i.test(text)) return 'CA/CMA'
+  return 'Any Graduate'
+}
+
+function extractSeniority(exp: number): JdRequirements['seniority_level'] {
+  if (exp <= 2) return 'junior'
+  if (exp <= 6) return 'mid'
+  if (exp <= 12) return 'senior'
+  return 'lead'
+}
+
+function extractResponsibilities(text: string): string[] {
+  return text
+    .split('.')
+    .map(s => s.trim())
+    .filter(s => s.length > 20)
+    .slice(0, 5)
+}
+
+// ─── MAIN PARSER ─────────────────────────────────────────────────────────────
+
+function simpleParseJD(jdText: string): JdRequirements {
+  const skills = extractSkills(jdText)
+  const exp = extractExperience(jdText)
+
+  return {
+    job_title: jdText.split('\n')[0]?.slice(0, 60) || 'Unknown Role',
+
+    must_have_skills: skills.slice(0, 6),
+    nice_to_have_skills: skills.slice(6, 10),
+
+    experience_range: exp,
+
+    education: extractEducation(jdText),
+    location: extractLocation(jdText),
+    location_flexibility: 'onsite',
+
+    industry_preference: [],
+
+    key_responsibilities: extractResponsibilities(jdText),
+
+    seniority_level: extractSeniority(exp.min),
+
+    raw_summary: jdText.slice(0, 200),
+  }
+}
+
+// ─── PUBLIC FUNCTION ─────────────────────────────────────────────────────────
 
 export async function analyzeJD(jdText: string): Promise<JdRequirements> {
   if (!jdText || jdText.trim().length < 50) {
     throw new Error('Job description is too short to analyse (minimum 50 characters)')
   }
 
-  const response = await groqChat(
-    [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user',   content: buildUserPrompt(jdText) },
-    ],
-    { json: true, temperature: 0.1, maxTokens: 1000 }
-  )
-
-  let parsed: JdRequirements
-  try {
-    parsed = JSON.parse(response.content)
-  } catch {
-    throw new Error(`JD Analyzer returned invalid JSON: ${response.content.slice(0, 200)}`)
-  }
-
-  // Basic validation — ensure required fields exist
-  const required: (keyof JdRequirements)[] = [
-    'job_title', 'must_have_skills', 'experience_range',
-    'location', 'seniority_level',
-  ]
-  for (const field of required) {
-    if (!parsed[field]) {
-      throw new Error(`JD Analyzer missing required field: ${field}`)
-    }
-  }
-
-  return parsed
+  return simpleParseJD(jdText)
 }
