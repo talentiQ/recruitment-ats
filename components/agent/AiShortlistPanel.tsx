@@ -314,7 +314,9 @@ export function AiShortlistPanel({ jobId, job }: Props) {
   const [runKey, setRunKey]         = useState(0)
 
   const handleRun = () => {
-    const jdText = buildJdText(job)
+  const jdText = buildJdText(job)
+  console.log('[AI Match] jobId:', jobId)
+  console.log('[AI Match] jdText length:', jdText?.length, '| preview:', jdText?.slice(0, 80))
     if (!jdText || jdText.length < 30) {
       alert('Please fill in at least job title, skills, and experience range before running AI match.')
       return
@@ -336,7 +338,7 @@ export function AiShortlistPanel({ jobId, job }: Props) {
           <h3 className="font-semibold text-gray-900 flex items-center gap-2">
             🤖 AI Shortlist
             <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded">
-              Groq · Llama 3.1 70B
+              Resume Match Engine
             </span>
           </h3>
           {typedResult && (

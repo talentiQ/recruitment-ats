@@ -1,5 +1,4 @@
 // lib/agent/jdAnalyzer.ts
-// Agent 1 — JD Analyzer (INTERNAL — NO GROQ)
 
 export interface JdRequirements {
   job_title:            string
@@ -15,16 +14,16 @@ export interface JdRequirements {
   raw_summary:          string
 }
 
-// ─── Skill Dictionary ─────────────────────────────────────────────────────────
+// ─── BASIC SKILL LIST (expand later) ──────────────────────────────────────────
 
 const COMMON_SKILLS = [
   'Java', 'Python', 'SQL', 'React', 'Node', 'Angular',
   'AWS', 'Azure', 'GCP', 'Docker', 'Kubernetes',
   'Excel', 'Power BI', 'Tableau',
-  'Sales', 'Marketing', 'Accounting', 'Finance',
+  'Sales', 'Marketing', 'Accounting', 'Finance'
 ]
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 function extractSkills(text: string): string[] {
   const lower = text.toLowerCase()
@@ -40,17 +39,14 @@ function extractSkills(text: string): string[] {
 }
 
 function extractExperience(text: string): { min: number; max: number } {
-  const rangeMatch = text.match(/(\d+)\s*[-to]{1,3}\s*(\d+)/i)
-  if (rangeMatch) {
-    return {
-      min: Number(rangeMatch[1]),
-      max: Number(rangeMatch[2]),
-    }
+  const range = text.match(/(\d+)\s*[-to]{1,3}\s*(\d+)/i)
+  if (range) {
+    return { min: Number(range[1]), max: Number(range[2]) }
   }
 
-  const singleMatch = text.match(/(\d+)\+?\s*years?/i)
-  if (singleMatch) {
-    const min = Number(singleMatch[1])
+  const single = text.match(/(\d+)\+?\s*years?/i)
+  if (single) {
+    const min = Number(single[1])
     return { min, max: min + 5 }
   }
 

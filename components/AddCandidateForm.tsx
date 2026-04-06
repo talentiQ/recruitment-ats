@@ -314,7 +314,7 @@ export default function AddCandidateForm({
   const saveMatchScore = async (candidateId: string, jobId: string) => {
     if (!user?.id || !jobId) return
     try {
-      await fetch('/api/match-resume', {
+      await fetch('/api/score-resume', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobId, candidateId, screenedBy: user.id }),
       })

@@ -84,8 +84,12 @@ export default function MatchScorePanel({
   const loadCached = async () => {
     setChecking(true)
     try {
-      const res = await fetch('/api/match-resume', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const res = await fetch('/api/score-resume', {
+        method: 'POST',
+        headers: {
+          'Content-Type':      'application/json',
+          'x-internal-secret': process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? '',
+        },
         body: JSON.stringify({ jobId, candidateId, resumeBankId, screenedBy: null, jobData }),
       })
       if (res.ok) {
@@ -107,8 +111,12 @@ export default function MatchScorePanel({
       if (rawText)      payload.rawText       = rawText
       if (jobData)      payload.jobData       = jobData
 
-      const res  = await fetch('/api/match-resume', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const res = await fetch('/api/score-resume', {
+        method: 'POST',
+        headers: {
+          'Content-Type':      'application/json',
+          'x-internal-secret': process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? '',
+        },
         body: JSON.stringify(payload),
       })
       const json = await res.json()

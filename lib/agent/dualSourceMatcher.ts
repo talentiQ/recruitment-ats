@@ -67,28 +67,10 @@ export interface DualMatchResult {
   candidates_count: number
   resume_bank_count: number
   run_at: string
-  groq_model: string
+  match_engine: string
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const BATCH_SIZE = 10
-const BATCH_DELAY = 0
-
-function sleep(ms: number) {
-  return new Promise(r => setTimeout(r, ms))
-}
-
-function normalisePhone(phone: string | null): string {
-  if (!phone) return ''
-  return phone.replace(/\D/g, '').slice(-10)
-}
-
-function monthsAgo(dateStr: string | null): number {
-  if (!dateStr) return 999
-  const diff = Date.now() - new Date(dateStr).getTime()
-  return Math.floor(diff / (1000 * 60 * 60 * 24 * 30.44))
-}
 
 function buildFallbackText(row: any): string {
   const parts: string[] = []
@@ -130,13 +112,10 @@ async function scoreRow(jd: JdRequirements, row: any): Promise<AiCandidateScore>
         jd.raw_summary,
         ...(jd.key_responsibilities ?? [])
       ].join(' | '),
-
       key_skills: jd.must_have_skills?.join(', ') ?? '',
       nice_to_have_skills: jd.nice_to_have_skills?.join(', ') ?? '',
-
       experience_min: jd.experience_range?.min ?? null,
       experience_max: jd.experience_range?.max ?? null,
-
       education_requirement: jd.education ?? '',
       location: jd.location ?? '',
     }
@@ -157,6 +136,50 @@ async function scoreRow(jd: JdRequirements, row: any): Promise<AiCandidateScore>
     shortlist_reason: result.summary,
     concern: result.recommendation === 'reject' ? 'Low match' : 'None',
   }
+}
+
+// ─── Batch Scorer ─────────────────────────────────────────────────────────────
+
+const BATCH_SIZE = 20
+
+async function scoreRows(
+  jd: JdRequirements,
+  rows: any[],
+  source: 'candidates' | 'resume_bank'
+): Promise<DualSourceCandidate[]> {
+  const results: DualSourceCandidate[] = []
+
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE)
+    const scored = await Promise.all(
+      batch.map(async row => {
+        const score = await scoreRow(jd, row)
+        return {
+          ...score,
+          source,
+          sourceId:            row.id,
+          phone:               row.phone               ?? null,
+          email:               row.email               ?? null,
+          current_company:     row.current_company     ?? null,
+          current_designation: row.current_designation ?? null,
+          current_stage:       source === 'candidates' ? (row.current_stage ?? null) : null,
+          has_red_flags:       row.has_red_flags       ?? false,
+          red_flag_critical:   row.red_flag_critical   ?? false,
+          red_flags:           row.red_flags           ?? [],
+          resume_url:          row.resume_url          ?? null,
+          uploaded_at:         source === 'resume_bank' ? (row.uploaded_at ?? null) : null,
+          sourced_by:          source === 'resume_bank' ? (row.users?.full_name ?? null) : null,
+          clientHistory:       [],
+          badges:              [source === 'candidates' ? 'active_candidate' : 'resume_bank'] as BadgeType[],
+          sameClientWarning:   null,
+          rank:                0,
+        } as DualSourceCandidate
+      })
+    )
+    results.push(...scored)
+  }
+
+  return results
 }
 
 // ─── Fetch ────────────────────────────────────────────────────────────────────
@@ -202,57 +225,15 @@ export async function dualSourceMatch(
     fetchResumeBank(),
   ])
 
-  const all: DualSourceCandidate[] = []
+  // ── Parallel batch scoring (replaces sequential for-loops) ────────────────
+  const [candidateScored, resumeBankScored] = await Promise.all([
+    scoreRows(jd, candidateRows, 'candidates'),
+    scoreRows(jd, resumeBankRows, 'resume_bank'),
+  ])
 
-  for (const row of candidateRows) {
-    const score = await scoreRow(jd, row)
-    all.push({
-      ...score,
-      source: 'candidates',
-      sourceId: row.id,
-      phone: row.phone,
-      email: row.email,
-      current_company: row.current_company,
-      current_designation: row.current_designation,
-      current_stage: row.current_stage,
-      has_red_flags: row.has_red_flags ?? false,
-      red_flag_critical: row.red_flag_critical ?? false,
-      red_flags: row.red_flags ?? [],
-      resume_url: row.resume_url,
-      uploaded_at: null,
-      sourced_by: null,
-      clientHistory: [],
-      badges: ['active_candidate'],
-      sameClientWarning: null,
-      rank: 0,
-    })
-  }
+  const all = [...candidateScored, ...resumeBankScored]
 
-  for (const row of resumeBankRows) {
-    const score = await scoreRow(jd, row)
-    all.push({
-      ...score,
-      source: 'resume_bank',
-      sourceId: row.id,
-      phone: row.phone,
-      email: row.email,
-      current_company: row.current_company,
-      current_designation: row.current_designation,
-      current_stage: null,
-      has_red_flags: false,
-      red_flag_critical: false,
-      red_flags: [],
-      resume_url: row.resume_url,
-      uploaded_at: row.uploaded_at,
-      sourced_by: row.users?.full_name ?? null,
-      clientHistory: [],
-      badges: ['resume_bank'],
-      sameClientWarning: null,
-      rank: 0,
-    })
-  }
-
-  const minScore = options.minScore ?? 0
+  const minScore  = options.minScore  ?? 0
   const maxResults = options.maxResults ?? 20
 
   const shortlist = all
@@ -262,15 +243,15 @@ export async function dualSourceMatch(
     .map((c, i) => ({ ...c, rank: i + 1 }))
 
   return {
-    job_id: jobId,
-    client_id: currentClientId,
-    jd_requirements: jd,
+    job_id:              jobId,
+    client_id:           currentClientId,
+    jd_requirements:     jd,
     shortlist,
-    total_evaluated: all.length,
-    total_shortlisted: shortlist.length,
-    candidates_count: candidateRows.length,
-    resume_bank_count: resumeBankRows.length,
-    run_at: new Date().toISOString(),
-    groq_model: 'internal-engine',
+    total_evaluated:     all.length,
+    total_shortlisted:   shortlist.length,
+    candidates_count:    candidateRows.length,
+    resume_bank_count:   resumeBankRows.length,
+    run_at:              new Date().toISOString(),
+    match_engine:        'internal',
   }
 }

@@ -1,12 +1,12 @@
-// app/api/agent/match-candidates/route.ts
-// Uses dualSourceMatch — now powered by internal resumeMatchEngine (NO GROQ)
+// app\api\match-resume\route.ts
+
 
 import { NextRequest, NextResponse } from 'next/server'
 import { analyzeJD } from '@/lib/agent/jdAnalyzer'
 import { dualSourceMatch } from '@/lib/agent/dualSourceMatcher'
 
 export async function POST(req: NextRequest) {
-  try {
+    try {
     const secret = req.headers.get('x-internal-secret')
 
     if (
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     const message =
       err instanceof Error ? err.message : 'Unknown error'
 
-    console.error('[match-candidates]', message)
+    console.error('[match-resume]', message)
 
     return NextResponse.json(
       { success: false, error: message },

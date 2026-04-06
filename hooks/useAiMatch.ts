@@ -34,7 +34,7 @@ export function useAiMatch(): UseAiMatchReturn {
       await new Promise(r => setTimeout(r, 150))
       setState(s => ({ ...s, progress: 'Scoring candidates against JD…' }))
 
-      const res = await fetch('/api/agent/match-candidates', {
+      const res = await fetch('/api/match-resume', {
         method:  'POST',
         headers: {
           'Content-Type':      'application/json',
