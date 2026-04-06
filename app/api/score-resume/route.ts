@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     const { jobId, parsedData, rawText, jobData } = body
 
     if (!jobId || !jobData) {
-      return NextResponse.json({ error: 'jobId and jobData are required' }, { status: 400 })
+      return NextResponse.json({message :  'Match Score is Loading..' })
     }
 
     const result = matchResumeToJob({
