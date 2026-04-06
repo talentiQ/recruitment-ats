@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     const { jobId, parsedData, rawText, jobData } = body
 
     if (!jobId || !jobData) {
-      return NextResponse.json({message :  'Match Score is Loading..' })
+    return NextResponse.json({ result: null, skipped: true })
     }
 
     const result = matchResumeToJob({
