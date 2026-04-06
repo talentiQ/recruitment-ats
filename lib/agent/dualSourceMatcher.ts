@@ -24,12 +24,25 @@ export interface ClientHistory {
   recruiterName: string | null
 }
 
+export interface ScoreDimension {
+  score: number
+  reasoning: string
+}
+
 export interface AiCandidateScore {
   candidate_id: string
   candidate_name: string
   total_score: number
   grade: 'A' | 'B' | 'C' | 'D'
-  dimensions: any
+  dimensions: {
+    skills:     ScoreDimension
+    experience: ScoreDimension
+    alignment:  ScoreDimension
+    education:  ScoreDimension
+    stability:  ScoreDimension
+    location:   ScoreDimension
+    industry:   ScoreDimension
+  }
   matched_skills: string[]
   missing_skills: string[]
   confidence: 'low' | 'medium' | 'high'
@@ -74,10 +87,10 @@ export interface DualMatchResult {
 
 function buildFallbackText(row: any): string {
   const parts: string[] = []
-  if (row.full_name) parts.push(row.full_name)
+  if (row.full_name)           parts.push(row.full_name)
   if (row.current_designation) parts.push(row.current_designation)
-  if (row.current_company) parts.push(row.current_company)
-  if (row.total_experience) parts.push(`${row.total_experience} years`)
+  if (row.current_company)     parts.push(row.current_company)
+  if (row.total_experience)    parts.push(`${row.total_experience} years`)
   const skills = [...(row.key_skills ?? []), ...(row.parsed_skills ?? [])]
   if (skills.length) parts.push(skills.join(', '))
   return parts.join(' ')
@@ -99,42 +112,56 @@ async function scoreRow(jd: JdRequirements, row: any): Promise<AiCandidateScore>
 
   const result = matchResumeToJob({
     resume: {
-      skills: [...(row.key_skills ?? []), ...(row.parsed_skills ?? [])],
-      total_experience: row.total_experience ?? null,
-      rawText: text,
-      education_degree: row.education_degree ?? null,
-      current_location: row.current_location ?? null,
-      current_company: row.current_company ?? null,
+      skills:           [...(row.key_skills ?? []), ...(row.parsed_skills ?? [])],
+      total_experience: row.total_experience  ?? null,
+      rawText:          text,
+      education_degree: row.education_degree  ?? null,
+      current_location: row.current_location  ?? null,
+      current_company:  row.current_company   ?? null,
     },
     job: {
-      job_title: jd.job_title,
-      job_description: [
-        jd.raw_summary,
-        ...(jd.key_responsibilities ?? [])
-      ].join(' | '),
-      key_skills: jd.must_have_skills?.join(', ') ?? '',
-      nice_to_have_skills: jd.nice_to_have_skills?.join(', ') ?? '',
-      experience_min: jd.experience_range?.min ?? null,
-      experience_max: jd.experience_range?.max ?? null,
-      education_requirement: jd.education ?? '',
-      location: jd.location ?? '',
+      job_title:             jd.job_title,
+      job_description:       [jd.raw_summary, ...(jd.key_responsibilities ?? [])].join(' | '),
+      key_skills:            jd.must_have_skills?.join(', ')    ?? '',
+      nice_to_have_skills:   jd.nice_to_have_skills?.join(', ') ?? '',
+      experience_min:        jd.experience_range?.min           ?? null,
+      experience_max:        jd.experience_range?.max           ?? null,
+      education_requirement: jd.education                       ?? '',
+      location:              jd.location                        ?? '',
     }
   })
 
+  const skillsReasoning = result.matched_skills.length > 0
+    ? `Matched: ${result.matched_skills.slice(0, 3).join(', ')}${result.matched_skills.length > 3 ? ` +${result.matched_skills.length - 3} more` : ''}`
+    : result.missing_skills.length > 0
+      ? `Missing: ${result.missing_skills.slice(0, 3).join(', ')}`
+      : 'No skill data available'
+
   return {
-    candidate_id: row.id,
+    candidate_id:   row.id,
     candidate_name: row.full_name,
-    total_score: result.match_score,
+    total_score:    result.match_score,
     grade:
       result.match_score >= 80 ? 'A' :
       result.match_score >= 65 ? 'B' :
       result.match_score >= 50 ? 'C' : 'D',
-    dimensions: {},
-    matched_skills: result.matched_skills,
-    missing_skills: result.missing_skills,
-    confidence: 'high',
+
+    // ── 7-dimension breakdown — consistent with MatchScorePanel ──────────────
+    dimensions: {
+      skills:     { score: result.breakdown.skills_score,         reasoning: skillsReasoning           },
+      experience: { score: result.breakdown.experience_score,     reasoning: result.experience_verdict },
+      alignment:  { score: result.breakdown.responsibility_score, reasoning: result.stability_verdict  },
+      education:  { score: result.breakdown.education_score,      reasoning: result.education_verdict  },
+      stability:  { score: result.breakdown.stability_score,      reasoning: result.stability_verdict  },
+      location:   { score: result.breakdown.location_score,       reasoning: result.location_verdict   },
+      industry:   { score: result.breakdown.industry_score,       reasoning: result.industry_verdict   },
+    },
+
+    matched_skills:   result.matched_skills,
+    missing_skills:   result.missing_skills,
+    confidence:       'high',
     shortlist_reason: result.summary,
-    concern: result.recommendation === 'reject' ? 'Low match' : 'None',
+    concern:          result.recommendation === 'reject' ? 'Low match' : 'None',
   }
 }
 
@@ -150,7 +177,7 @@ async function scoreRows(
   const results: DualSourceCandidate[] = []
 
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE)
+    const batch  = rows.slice(i, i + BATCH_SIZE)
     const scored = await Promise.all(
       batch.map(async row => {
         const score = await scoreRow(jd, row)
@@ -162,12 +189,12 @@ async function scoreRows(
           email:               row.email               ?? null,
           current_company:     row.current_company     ?? null,
           current_designation: row.current_designation ?? null,
-          current_stage:       source === 'candidates' ? (row.current_stage ?? null) : null,
-          has_red_flags:       row.has_red_flags       ?? false,
-          red_flag_critical:   row.red_flag_critical   ?? false,
-          red_flags:           row.red_flags           ?? [],
-          resume_url:          row.resume_url          ?? null,
-          uploaded_at:         source === 'resume_bank' ? (row.uploaded_at ?? null) : null,
+          current_stage:       source === 'candidates'  ? (row.current_stage   ?? null) : null,
+          has_red_flags:       row.has_red_flags        ?? false,
+          red_flag_critical:   row.red_flag_critical    ?? false,
+          red_flags:           row.red_flags            ?? [],
+          resume_url:          row.resume_url           ?? null,
+          uploaded_at:         source === 'resume_bank' ? (row.uploaded_at     ?? null) : null,
           sourced_by:          source === 'resume_bank' ? (row.users?.full_name ?? null) : null,
           clientHistory:       [],
           badges:              [source === 'candidates' ? 'active_candidate' : 'resume_bank'] as BadgeType[],
@@ -225,7 +252,7 @@ export async function dualSourceMatch(
     fetchResumeBank(),
   ])
 
-  // ── Parallel batch scoring (replaces sequential for-loops) ────────────────
+  // ── Parallel batch scoring ────────────────────────────────────────────────
   const [candidateScored, resumeBankScored] = await Promise.all([
     scoreRows(jd, candidateRows, 'candidates'),
     scoreRows(jd, resumeBankRows, 'resume_bank'),
@@ -233,7 +260,7 @@ export async function dualSourceMatch(
 
   const all = [...candidateScored, ...resumeBankScored]
 
-  const minScore  = options.minScore  ?? 0
+  const minScore   = options.minScore   ?? 0
   const maxResults = options.maxResults ?? 20
 
   const shortlist = all
@@ -243,15 +270,15 @@ export async function dualSourceMatch(
     .map((c, i) => ({ ...c, rank: i + 1 }))
 
   return {
-    job_id:              jobId,
-    client_id:           currentClientId,
-    jd_requirements:     jd,
+    job_id:            jobId,
+    client_id:         currentClientId,
+    jd_requirements:   jd,
     shortlist,
-    total_evaluated:     all.length,
-    total_shortlisted:   shortlist.length,
-    candidates_count:    candidateRows.length,
-    resume_bank_count:   resumeBankRows.length,
-    run_at:              new Date().toISOString(),
-    match_engine:        'internal',
+    total_evaluated:   all.length,
+    total_shortlisted: shortlist.length,
+    candidates_count:  candidateRows.length,
+    resume_bank_count: resumeBankRows.length,
+    run_at:            new Date().toISOString(),
+    match_engine:      'internal',
   }
 }

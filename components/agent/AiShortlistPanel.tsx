@@ -95,11 +95,14 @@ function CandidateCard({
 
   // Null-safe dimensions — each sub-object may be missing
   const dimensions = {
-    skills:     { score: c.dimensions?.skills?.score     ?? 0, reasoning: c.dimensions?.skills?.reasoning     ?? '' },
-    experience: { score: c.dimensions?.experience?.score ?? 0, reasoning: c.dimensions?.experience?.reasoning ?? '' },
-    alignment:  { score: c.dimensions?.alignment?.score  ?? 0, reasoning: c.dimensions?.alignment?.reasoning  ?? '' },
-    education:  { score: c.dimensions?.education?.score  ?? 0, reasoning: c.dimensions?.education?.reasoning  ?? '' },
-  }
+  skills:     { score: c.dimensions?.skills?.score     ?? 0, reasoning: c.dimensions?.skills?.reasoning     ?? '' },
+  experience: { score: c.dimensions?.experience?.score ?? 0, reasoning: c.dimensions?.experience?.reasoning ?? '' },
+  alignment:  { score: c.dimensions?.alignment?.score  ?? 0, reasoning: c.dimensions?.alignment?.reasoning  ?? '' },
+  education:  { score: c.dimensions?.education?.score  ?? 0, reasoning: c.dimensions?.education?.reasoning  ?? '' },
+  stability:  { score: c.dimensions?.stability?.score  ?? 0, reasoning: c.dimensions?.stability?.reasoning  ?? '' },
+  location:   { score: c.dimensions?.location?.score   ?? 0, reasoning: c.dimensions?.location?.reasoning   ?? '' },
+  industry:   { score: c.dimensions?.industry?.score   ?? 0, reasoning: c.dimensions?.industry?.reasoning   ?? '' },
+}
 
   const isResumeBank = c.source === 'resume_bank'
 
@@ -191,10 +194,13 @@ function CandidateCard({
 
             {/* Score bars */}
             <div className="space-y-1.5">
-              <ScoreBar score={dimensions.skills.score}     max={50} label="Skills" />
-              <ScoreBar score={dimensions.experience.score} max={25} label="Experience" />
-              <ScoreBar score={dimensions.alignment.score}  max={15} label="Alignment" />
-              <ScoreBar score={dimensions.education.score}  max={10} label="Education" />
+            <ScoreBar score={dimensions.skills.score}     max={30} label="Skills"     />
+            <ScoreBar score={dimensions.experience.score} max={20} label="Experience" />
+            <ScoreBar score={dimensions.alignment.score}  max={20} label="Alignment"  />
+            <ScoreBar score={dimensions.education.score}  max={10} label="Education"  />
+            <ScoreBar score={dimensions.stability.score}  max={10} label="Stability"  />
+            <ScoreBar score={dimensions.location.score}   max={5}  label="Location"   />
+            <ScoreBar score={dimensions.industry.score}   max={5}  label="Industry"   />
             </div>
 
             {/* Reasoning */}
@@ -203,6 +209,9 @@ function CandidateCard({
               {dimensions.experience.reasoning && <p><span className="font-medium">Experience:</span> {dimensions.experience.reasoning}</p>}
               {dimensions.alignment.reasoning  && <p><span className="font-medium">Alignment:</span> {dimensions.alignment.reasoning}</p>}
               {dimensions.education.reasoning  && <p><span className="font-medium">Education:</span> {dimensions.education.reasoning}</p>}
+              {dimensions.stability.reasoning && <p><span className="font-medium">Stability:</span> {dimensions.stability.reasoning}</p>}
+              {dimensions.location.reasoning  && <p><span className="font-medium">Location:</span>  {dimensions.location.reasoning}</p>}
+              {dimensions.industry.reasoning  && <p><span className="font-medium">Industry:</span>  {dimensions.industry.reasoning}</p>}
             </div>
 
             {/* Matched skills */}
