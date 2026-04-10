@@ -14,6 +14,12 @@ export default function ManagementOfferDetailPage() {
   const [loading, setLoading] = useState(true)
   const [offer,   setOffer]   = useState<any>(null)
 
+  // ── Edit state ─────────────────────────────────────────────────────────────
+  const [editing,          setEditing]          = useState(false)
+  const [savingEdit,       setSavingEdit]        = useState(false)
+  const [editFixedCTC,     setEditFixedCTC]      = useState('')
+  const [editJoiningDate,  setEditJoiningDate]   = useState('')
+
   // ── Auth ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     const userData = localStorage.getItem('user')
@@ -55,7 +61,6 @@ export default function ManagementOfferDetailPage() {
   // ── Data loader ────────────────────────────────────────────────────────────
   const loadOffer = async () => {
     try {
-      // 1. All users for hierarchy map (same as other management pages)
       const { data: allUsers } = await supabaseAdmin
         .from('users')
         .select('id, full_name, role, reports_to')
@@ -65,7 +70,6 @@ export default function ManagementOfferDetailPage() {
       const userMap: Record<string, any> = {}
       ;(allUsers || []).forEach((u: any) => { userMap[u.id] = u })
 
-      // 2. Offer with all related data
       const { data, error } = await supabaseAdmin
         .from('offers')
         .select(`
@@ -86,7 +90,6 @@ export default function ManagementOfferDetailPage() {
 
       if (error) throw error
 
-      // 3. Resolve team
       const recruiterName = userMap[data.recruiter_id]?.full_name || '—'
       const { teamName, tlName } = data.recruiter_id
         ? resolveTeamHead(data.recruiter_id, userMap)
@@ -96,7 +99,6 @@ export default function ManagementOfferDetailPage() {
       data._teamName      = teamName
       data._tlName        = tlName
 
-      // 4. Safety status
       if (data.status === 'joined' && data.candidates?.guarantee_period_ends) {
         const daysRemaining = Math.max(0, Math.floor(
           (new Date(data.candidates.guarantee_period_ends).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
@@ -109,10 +111,49 @@ export default function ManagementOfferDetailPage() {
       }
 
       setOffer(data)
+      // Pre-fill edit fields with current values
+      setEditFixedCTC(String(data.fixed_ctc || ''))
+      setEditJoiningDate(data.expected_joining_date
+        ? new Date(data.expected_joining_date).toISOString().split('T')[0]
+        : '')
     } catch (err) {
       console.error('Error:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // ── Save edit ──────────────────────────────────────────────────────────────
+  const handleSaveEdit = async () => {
+    if (!offer) return
+    setSavingEdit(true)
+    try {
+      const updates: Record<string, any> = {
+        fixed_ctc:              Number(editFixedCTC) || 0,
+        expected_joining_date:  editJoiningDate || null,
+        updated_at:             new Date().toISOString(),
+      }
+
+      // Recalculate billable_ctc and revenue if fixed_ctc changed
+      const feePercentage = offer.revenue_percentage || 8.33
+      updates.billable_ctc   = Number(editFixedCTC) || 0
+      updates.revenue_amount = ((Number(editFixedCTC) || 0) * feePercentage / 100)
+
+      const { error } = await supabaseAdmin
+        .from('offers')
+        .update(updates)
+        .eq('id', offerId)
+
+      if (error) throw error
+
+      alert('Offer updated successfully!')
+      setEditing(false)
+      await loadOffer()
+    } catch (err: any) {
+      console.error('Save error:', err)
+      alert('Failed to save: ' + (err.message || 'Unknown error'))
+    } finally {
+      setSavingEdit(false)
     }
   }
 
@@ -149,9 +190,10 @@ export default function ManagementOfferDetailPage() {
     )
   }
 
-  const feePercentage  = offer.revenue_percentage || 8.33
-  const expectedRevenue = ((offer.fixed_ctc || 0) * feePercentage / 100).toFixed(2)
-  const guaranteeDays  = offer.candidates?.jobs?.clients?.replacement_guarantee_days || 90
+  const feePercentage   = offer.revenue_percentage || 8.33
+  const displayFixedCTC = editing ? Number(editFixedCTC) || 0 : (offer.fixed_ctc || 0)
+  const expectedRevenue = (displayFixedCTC * feePercentage / 100).toFixed(2)
+  const guaranteeDays   = offer.candidates?.jobs?.clients?.replacement_guarantee_days || 90
 
   return (
     <DashboardLayout>
@@ -173,10 +215,50 @@ export default function ManagementOfferDetailPage() {
               </div>
             </div>
           </div>
-          <span className={`px-4 py-2 rounded-full text-sm font-bold ${getStatusBadge(offer.status)}`}>
-            {offer.status.toUpperCase()}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className={`px-4 py-2 rounded-full text-sm font-bold ${getStatusBadge(offer.status)}`}>
+              {offer.status.toUpperCase()}
+            </span>
+            {!editing ? (
+              <button
+                onClick={() => setEditing(true)}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition"
+              >
+                ✏️ Edit Offer
+              </button>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={savingEdit}
+                  className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition disabled:opacity-50"
+                >
+                  {savingEdit ? 'Saving…' : '✓ Save'}
+                </button>
+                <button
+                  onClick={() => {
+                    setEditing(false)
+                    setEditFixedCTC(String(offer.fixed_ctc || ''))
+                    setEditJoiningDate(offer.expected_joining_date
+                      ? new Date(offer.expected_joining_date).toISOString().split('T')[0]
+                      : '')
+                  }}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg hover:bg-gray-300 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* ── Edit notice ── */}
+        {editing && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-sm text-indigo-800 flex items-center gap-2">
+            <span>✏️</span>
+            <span>Editing mode — Fixed CTC and Expected Joining Date are editable. Revenue will be recalculated on save.</span>
+          </div>
+        )}
 
         {/* ── Safety Banners ── */}
         {offer._safetyStatus === 'critical' && (
@@ -216,11 +298,13 @@ export default function ManagementOfferDetailPage() {
           </div>
         )}
 
-        {/* ── Read-Only Notice ── */}
-        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800 flex items-center gap-2">
-          <span>👁️</span>
-          <span>Management view — read only. Offer actions are managed by the recruiter or team leader.</span>
-        </div>
+        {/* ── Read-Only Notice (only when not editing) ── */}
+        {!editing && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800 flex items-center gap-2">
+            <span>👁️</span>
+            <span>Management view — click <strong>Edit Offer</strong> to update Fixed CTC or Expected Joining Date.</span>
+          </div>
+        )}
 
         {/* ── CTC Details ── */}
         <div className="bg-white rounded-lg shadow p-6">
@@ -230,9 +314,19 @@ export default function ManagementOfferDetailPage() {
               <div className="text-xs text-gray-500 mb-1">Total CTC</div>
               <div className="text-2xl font-bold text-gray-900">₹{(offer.offered_ctc || 0).toLocaleString('en-IN')}</div>
             </div>
-            <div className="text-center p-4 bg-blue-50 rounded-lg">
-              <div className="text-xs text-blue-600 mb-1">Fixed CTC</div>
-              <div className="text-2xl font-bold text-blue-900">₹{(offer.fixed_ctc || 0).toLocaleString('en-IN')}</div>
+            <div className={`text-center p-4 rounded-lg ${editing ? 'bg-indigo-50 ring-2 ring-indigo-300' : 'bg-blue-50'}`}>
+              <div className="text-xs text-blue-600 mb-1">Fixed CTC {editing && <span className="text-indigo-600 font-bold">✏️</span>}</div>
+              {editing ? (
+                <input
+                  type="number"
+                  value={editFixedCTC}
+                  onChange={e => setEditFixedCTC(e.target.value)}
+                  className="w-full text-center text-xl font-bold text-indigo-900 bg-white border-2 border-indigo-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="0"
+                />
+              ) : (
+                <div className="text-2xl font-bold text-blue-900">₹{(offer.fixed_ctc || 0).toLocaleString('en-IN')}</div>
+              )}
             </div>
             <div className="text-center p-4 bg-yellow-50 rounded-lg">
               <div className="text-xs text-yellow-600 mb-1">Variable CTC</div>
@@ -241,6 +335,9 @@ export default function ManagementOfferDetailPage() {
             <div className="text-center p-4 bg-green-50 rounded-lg">
               <div className="text-xs text-green-600 mb-1">Revenue ({feePercentage}%)</div>
               <div className="text-2xl font-bold text-green-900">₹{expectedRevenue}</div>
+              {editing && Number(editFixedCTC) !== (offer.fixed_ctc || 0) && (
+                <div className="text-xs text-indigo-500 mt-1">↑ Will update on save</div>
+              )}
             </div>
           </div>
         </div>
@@ -257,9 +354,18 @@ export default function ManagementOfferDetailPage() {
               <div className="text-gray-500">Valid Until</div>
               <div className="font-semibold">{offer.offer_valid_until ? new Date(offer.offer_valid_until).toLocaleDateString() : 'N/A'}</div>
             </div>
-            <div>
-              <div className="text-gray-500">Expected Joining</div>
-              <div className="font-semibold text-blue-600">{offer.expected_joining_date ? new Date(offer.expected_joining_date).toLocaleDateString() : 'N/A'}</div>
+            <div className={editing ? 'ring-2 ring-indigo-300 rounded-lg p-2 bg-indigo-50' : ''}>
+              <div className="text-gray-500">Expected Joining {editing && <span className="text-indigo-600 font-bold text-xs">✏️</span>}</div>
+              {editing ? (
+                <input
+                  type="date"
+                  value={editJoiningDate}
+                  onChange={e => setEditJoiningDate(e.target.value)}
+                  className="mt-1 w-full border-2 border-indigo-300 rounded-lg px-2 py-1 text-sm font-semibold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              ) : (
+                <div className="font-semibold text-blue-600">{offer.expected_joining_date ? new Date(offer.expected_joining_date).toLocaleDateString() : 'N/A'}</div>
+              )}
             </div>
             {offer.actual_joining_date && (
               <div>
@@ -327,8 +433,35 @@ export default function ManagementOfferDetailPage() {
           </div>
         )}
 
+        {/* ── Floating save bar when editing ── */}
+        {editing && (
+          <div className="sticky bottom-4 bg-white border-2 border-indigo-300 rounded-xl shadow-lg px-6 py-4 flex items-center justify-between gap-4">
+            <p className="text-sm text-indigo-700 font-medium">📝 Unsaved changes — Fixed CTC and/or Expected Joining Date</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setEditing(false)
+                  setEditFixedCTC(String(offer.fixed_ctc || ''))
+                  setEditJoiningDate(offer.expected_joining_date
+                    ? new Date(offer.expected_joining_date).toISOString().split('T')[0]
+                    : '')
+                }}
+                className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-semibold rounded-lg hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={savingEdit}
+                className="px-6 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {savingEdit ? 'Saving…' : '✓ Save Changes'}
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
     </DashboardLayout>
   )
 }
-
