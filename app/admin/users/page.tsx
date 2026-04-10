@@ -15,7 +15,6 @@ export default function UsersManagementPage() {
   const [showAddForm,  setShowAddForm]  = useState(false)
   const [editingUser,  setEditingUser]  = useState<any>(null)
 
-  // Per-row reset state — tracks which user is currently sending
   const [resettingId,  setResettingId]  = useState<string | null>(null)
 
   const [formData, setFormData] = useState({
@@ -78,14 +77,7 @@ export default function UsersManagementPage() {
     }
   }
 
-  // ── Password reset ──────────────────────────────────────────────────────────
-  // Uses supabase.auth.resetPasswordForEmail() — works with anon key, no service role needed.
-  // Supabase sends a "Set/Reset your password" email to the user.
-  // For NEW users this acts as an invite link.
-  // For EXISTING users this resets their password.
-
   const handleResetPassword = async (email: string, userId: string, isNewUser = false) => {
-    const actionLabel = isNewUser ? 'send invite email' : 'send password reset email'
     if (!confirm(
       `${isNewUser ? 'Send invite email' : 'Send password reset email'} to ${email}?\n\n` +
       `The user will receive an email with a link to ${isNewUser ? 'set' : 'reset'} their password.`
@@ -112,8 +104,6 @@ export default function UsersManagementPage() {
     }
   }
 
-  // ── Submit: Create or Update user ──────────────────────────────────────────
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -126,7 +116,6 @@ export default function UsersManagementPage() {
 
     try {
       if (editingUser) {
-        // ── UPDATE ────────────────────────────────────────────────────────────
         const { data, error } = await supabase
           .from('users')
           .update({
@@ -156,10 +145,6 @@ export default function UsersManagementPage() {
         await loadData()
 
       } else {
-        // ── CREATE ────────────────────────────────────────────────────────────
-        // Step 1: Insert into users table with a client-generated UUID.
-        //         is_active = false until user sets their password.
-        //         Admin will send the invite email separately via the Reset Password button.
         const newUserId = crypto.randomUUID()
 
         const { error: insertError } = await supabase
@@ -203,8 +188,6 @@ export default function UsersManagementPage() {
       setLoading(false)
     }
   }
-
-  // ── Helpers ─────────────────────────────────────────────────────────────────
 
   const resetForm = () => setFormData({
     email: '', full_name: '', role: 'recruiter',
@@ -254,10 +237,10 @@ export default function UsersManagementPage() {
     }
   }
 
+  // ── FIXED: Sr. TLs are org-wide — no longer filtered by team_id ────────────
   const getFilteredManagers = () => {
     if (formData.role === 'team_leader') {
-      if (!formData.team_id) return []
-      return managers.filter(m => m.role === 'sr_team_leader' && m.team_id === formData.team_id)
+      return managers.filter(m => m.role === 'sr_team_leader')
     }
     if (formData.role === 'recruiter') {
       if (!formData.team_id) return []
@@ -282,14 +265,12 @@ export default function UsersManagementPage() {
     ceo:            'CEO',
     ops_head:       'OPS HEAD',
     sr_team_leader: 'SR. TEAM LEADER',
-    team_leader:    'TEAM LEADER',
+    team_leader:    'SBU LEADER',
     recruiter:      'RECRUITER',
   }[role] || role.toUpperCase())
 
   const getTeamName = (teamId: string) =>
     teams.find(t => t.id === teamId)?.name || ''
-
-  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <DashboardLayout>
@@ -309,7 +290,7 @@ export default function UsersManagementPage() {
           </button>
         </div>
 
-        {/* How password setup works — info banner */}
+        {/* Info banner */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-start gap-3">
           <span className="text-xl mt-0.5">ℹ️</span>
           <div className="text-sm text-blue-800">
@@ -333,7 +314,6 @@ export default function UsersManagementPage() {
               )}
             </div>
 
-            {/* New user guidance */}
             {!editingUser && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-sm text-amber-800">
                 <strong>📋 Two steps to create a user:</strong>
@@ -346,7 +326,6 @@ export default function UsersManagementPage() {
 
             <form onSubmit={handleSubmit} className="space-y-6">
 
-              {/* Basic Info */}
               <div>
                 <h4 className="font-semibold text-gray-900 mb-3">Basic Information</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -437,9 +416,9 @@ export default function UsersManagementPage() {
                     </select>
                     <p className="text-xs text-gray-500 mt-1">
                       {formData.role === 'recruiter'      && formData.team_id && 'Can report to TL (same team) or any Sr. TL'}
-                      {formData.role === 'team_leader'    && formData.team_id && 'Must report to Sr. TL from same team'}
+                      {formData.role === 'team_leader'    && 'Can report to any Sr. TL'}
                       {formData.role === 'sr_team_leader' && 'Reports to management'}
-                      {!formData.team_id && !['system_admin','ceo','ops_head','sr_team_leader'].includes(formData.role) && 'Select a team first'}
+                      {!formData.team_id && !['system_admin','ceo','ops_head','sr_team_leader','team_leader'].includes(formData.role) && 'Select a team first'}
                     </p>
                   </div>
 
@@ -543,7 +522,6 @@ export default function UsersManagementPage() {
                     <td>
                       <div className="flex items-center gap-3">
 
-                        {/* Edit */}
                         <button
                           onClick={() => handleEdit(user)}
                           className="text-blue-600 hover:text-blue-900 text-sm font-medium"
@@ -551,7 +529,6 @@ export default function UsersManagementPage() {
                           Edit
                         </button>
 
-                        {/* Reset Password — works for both new (invite) and existing users */}
                         <button
                           onClick={() => handleResetPassword(user.email, user.id)}
                           disabled={resettingId === user.id}
@@ -564,7 +541,6 @@ export default function UsersManagementPage() {
                           }
                         </button>
 
-                        {/* Deactivate */}
                         {user.is_active && user.role !== 'system_admin' && (
                           <button
                             onClick={() => handleDeactivate(user.id)}
