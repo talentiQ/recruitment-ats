@@ -377,7 +377,7 @@ export default function UsersManagementPage() {
                       required
                     >
                       <option value="recruiter">Recruiter</option>
-                      <option value="team_leader">Team Leader</option>
+                      <option value="team_leader">SBU Leader</option>
                       <option value="sr_team_leader">Sr. Team Leader</option>
                       <option value="ops_head">Operations Head</option>
                       <option value="ceo">CEO</option>
