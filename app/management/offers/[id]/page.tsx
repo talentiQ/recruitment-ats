@@ -136,8 +136,8 @@ export default function ManagementOfferDetailPage() {
 
       // Recalculate billable_ctc and revenue if fixed_ctc changed
       const feePercentage = offer.revenue_percentage || 8.33
-      updates.billable_ctc   = Number(editFixedCTC) || 0
-      updates.revenue_amount = ((Number(editFixedCTC) || 0) * feePercentage / 100)
+      updates.billable_ctc    = Number(editFixedCTC) || 0
+      updates.expected_revenue = ((Number(editFixedCTC) || 0) * feePercentage / 100)
 
       const { error } = await supabaseAdmin
         .from('offers')
