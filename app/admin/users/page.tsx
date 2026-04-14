@@ -145,7 +145,15 @@ export default function UsersManagementPage() {
         await loadData()
 
       } else {
-        const newUserId = crypto.randomUUID()
+        const newUserId = prompt(
+       '🔑 Enter the Auth UID for this user:\n\n' +
+        'Go to Supabase → Authentication → Users → find the user by email → copy their UID'
+        )?.trim()
+
+      if (!newUserId) {
+  setLoading(false)
+  return
+      }
 
         const { error: insertError } = await supabase
           .from('users')
