@@ -1,5 +1,4 @@
 // app/tl/offers/[id]/page.tsx
-
 'use client'
 export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
@@ -18,6 +17,12 @@ export default function TLOfferDetailPage() {
   const [user,     setUser]     = useState<any>(null)
   const [updating, setUpdating] = useState(false)
 
+  // ── Edit state ─────────────────────────────────────────────────────────────
+  const [editing,         setEditing]         = useState(false)
+  const [savingEdit,      setSavingEdit]       = useState(false)
+  const [editFixedCTC,    setEditFixedCTC]     = useState('')
+  const [editJoiningDate, setEditJoiningDate]  = useState('')
+
   useEffect(() => {
     const userData = localStorage.getItem('user')
     if (!userData) { router.push('/'); return }
@@ -31,7 +36,6 @@ export default function TLOfferDetailPage() {
 
   const loadOffer = async (tl: any) => {
     try {
-      // ── Team hierarchy: TL + direct recruiters ────────────────────────────
       const { data: directRecruiters } = await supabase
         .from('users').select('id, full_name, role, reports_to')
         .eq('reports_to', tl.id).eq('role', 'recruiter').eq('is_active', true)
@@ -41,11 +45,9 @@ export default function TLOfferDetailPage() {
         ...(directRecruiters || [])
       ]
       const allMemberIds = allMembers.map((m: any) => m.id)
-
       const memberMap: Record<string, any> = {}
       allMembers.forEach((m: any) => { memberMap[m.id] = m })
 
-      // ── Fetch offer ───────────────────────────────────────────────────────
       const { data, error } = await supabase
         .from('offers')
         .select(`
@@ -66,7 +68,6 @@ export default function TLOfferDetailPage() {
 
       if (error) throw error
 
-      // Guard: offer must belong to TL's scope
       if (!allMemberIds.includes(data.recruiter_id)) {
         alert('Access denied — this offer does not belong to your team.')
         router.push('/tl/offers'); return
@@ -77,7 +78,6 @@ export default function TLOfferDetailPage() {
       data._recruiterName = isSelf ? `${recruiter?.full_name} (You)` : (recruiter?.full_name || '—')
       data._isSelf        = isSelf
 
-      // Safety status
       if (data.status === 'joined' && data.candidates?.guarantee_period_ends) {
         const daysRemaining = Math.max(0, Math.floor(
           (new Date(data.candidates.guarantee_period_ends).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
@@ -90,10 +90,49 @@ export default function TLOfferDetailPage() {
       }
 
       setOffer(data)
+      // Pre-fill edit fields
+      setEditFixedCTC(String(data.fixed_ctc || ''))
+      setEditJoiningDate(data.expected_joining_date
+        ? new Date(data.expected_joining_date).toISOString().split('T')[0]
+        : '')
     } catch (err) {
       console.error('Error:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // ── Save edit ──────────────────────────────────────────────────────────────
+  const handleSaveEdit = async () => {
+    if (!offer) return
+    setSavingEdit(true)
+    try {
+      const feePercentage = offer.revenue_percentage || 8.33
+      const fixedCTC      = Number(editFixedCTC) || 0
+
+      const updates: Record<string, any> = {
+        fixed_ctc:             fixedCTC,
+        expected_joining_date: editJoiningDate || null,
+        billable_ctc:          fixedCTC,
+        expected_revenue:      (fixedCTC * feePercentage / 100),
+        updated_at:            new Date().toISOString(),
+      }
+
+      const { error } = await supabase
+        .from('offers')
+        .update(updates)
+        .eq('id', offerId)
+
+      if (error) throw error
+
+      alert('Offer updated successfully!')
+      setEditing(false)
+      await loadOffer(user)
+    } catch (err: any) {
+      console.error('Save error:', err)
+      alert('Failed to save: ' + (err.message || 'Unknown error'))
+    } finally {
+      setSavingEdit(false)
     }
   }
 
@@ -125,7 +164,6 @@ export default function TLOfferDetailPage() {
         performed_by: user.id,
       }])
 
-      // ── NOTIFICATION: Offer Accepted ──────────────────────────────────────
       await sendNotification({
         event:         'offer_accepted',
         recruiterId:   offer.recruiter_id || user.id,
@@ -168,7 +206,6 @@ export default function TLOfferDetailPage() {
         performed_by: user.id,
       }])
 
-      // ── NOTIFICATION: Offer Rejected ──────────────────────────────────────
       await sendNotification({
         event:         'offer_rejected',
         recruiterId:   offer.recruiter_id || user.id,
@@ -217,7 +254,8 @@ export default function TLOfferDetailPage() {
   )
 
   const feePercentage   = offer.revenue_percentage || 8.33
-  const expectedRevenue = ((offer.fixed_ctc || 0) * feePercentage / 100).toFixed(2)
+  const displayFixedCTC = editing ? (Number(editFixedCTC) || 0) : (offer.fixed_ctc || 0)
+  const expectedRevenue = (displayFixedCTC * feePercentage / 100).toFixed(2)
   const guaranteeDays   = offer.candidates?.jobs?.clients?.replacement_guarantee_days || 90
 
   return (
@@ -243,10 +281,58 @@ export default function TLOfferDetailPage() {
               </div>
             </div>
           </div>
-          <span className={`px-4 py-2 rounded-full text-sm font-bold ${getStatusBadge(offer.status)}`}>
-            {offer.status.toUpperCase()}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className={`px-4 py-2 rounded-full text-sm font-bold ${getStatusBadge(offer.status)}`}>
+              {offer.status.toUpperCase()}
+            </span>
+            {!editing ? (
+              <button
+                onClick={() => setEditing(true)}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition"
+              >
+                ✏️ Edit Offer
+              </button>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={savingEdit}
+                  className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition disabled:opacity-50"
+                >
+                  {savingEdit ? 'Saving…' : '✓ Save'}
+                </button>
+                <button
+                  onClick={() => {
+                    setEditing(false)
+                    setEditFixedCTC(String(offer.fixed_ctc || ''))
+                    setEditJoiningDate(offer.expected_joining_date
+                      ? new Date(offer.expected_joining_date).toISOString().split('T')[0]
+                      : '')
+                  }}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg hover:bg-gray-300 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* ── Edit notice ── */}
+        {editing && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-sm text-indigo-800 flex items-center gap-2">
+            <span>✏️</span>
+            <span>Editing mode — Fixed CTC and Expected Joining Date are editable. Revenue will be recalculated on save.</span>
+          </div>
+        )}
+
+        {/* ── Read-only notice ── */}
+        {!editing && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800 flex items-center gap-2">
+            <span>👁️</span>
+            <span>Click <strong>Edit Offer</strong> to update Fixed CTC or Expected Joining Date.</span>
+          </div>
+        )}
 
         {/* ── Safety Banners ── */}
         {offer._safetyStatus === 'critical' && (
@@ -360,9 +446,19 @@ export default function TLOfferDetailPage() {
               <div className="text-xs text-gray-500 mb-1">Total CTC</div>
               <div className="text-2xl font-bold text-gray-900">₹{(offer.offered_ctc || 0).toLocaleString('en-IN')}</div>
             </div>
-            <div className="text-center p-4 bg-blue-50 rounded-lg">
-              <div className="text-xs text-blue-600 mb-1">Fixed CTC</div>
-              <div className="text-2xl font-bold text-blue-900">₹{(offer.fixed_ctc || 0).toLocaleString('en-IN')}</div>
+            <div className={`text-center p-4 rounded-lg ${editing ? 'bg-indigo-50 ring-2 ring-indigo-300' : 'bg-blue-50'}`}>
+              <div className="text-xs text-blue-600 mb-1">Fixed CTC {editing && <span className="text-indigo-600 font-bold">✏️</span>}</div>
+              {editing ? (
+                <input
+                  type="number"
+                  value={editFixedCTC}
+                  onChange={e => setEditFixedCTC(e.target.value)}
+                  className="w-full text-center text-xl font-bold text-indigo-900 bg-white border-2 border-indigo-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="0"
+                />
+              ) : (
+                <div className="text-2xl font-bold text-blue-900">₹{(offer.fixed_ctc || 0).toLocaleString('en-IN')}</div>
+              )}
             </div>
             <div className="text-center p-4 bg-yellow-50 rounded-lg">
               <div className="text-xs text-yellow-600 mb-1">Variable CTC</div>
@@ -371,6 +467,9 @@ export default function TLOfferDetailPage() {
             <div className="text-center p-4 bg-green-50 rounded-lg">
               <div className="text-xs text-green-600 mb-1">Revenue ({feePercentage}%)</div>
               <div className="text-2xl font-bold text-green-900">₹{expectedRevenue}</div>
+              {editing && Number(editFixedCTC) !== (offer.fixed_ctc || 0) && (
+                <div className="text-xs text-indigo-500 mt-1">↑ Will update on save</div>
+              )}
             </div>
           </div>
         </div>
@@ -381,7 +480,19 @@ export default function TLOfferDetailPage() {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
             <div><div className="text-gray-500">Offer Date</div><div className="font-semibold">{offer.offer_date ? new Date(offer.offer_date).toLocaleDateString() : 'N/A'}</div></div>
             <div><div className="text-gray-500">Valid Until</div><div className="font-semibold">{offer.offer_valid_until ? new Date(offer.offer_valid_until).toLocaleDateString() : 'N/A'}</div></div>
-            <div><div className="text-gray-500">Expected Joining</div><div className="font-semibold text-blue-600">{offer.expected_joining_date ? new Date(offer.expected_joining_date).toLocaleDateString() : 'N/A'}</div></div>
+            <div className={editing ? 'ring-2 ring-indigo-300 rounded-lg p-2 bg-indigo-50' : ''}>
+              <div className="text-gray-500">Expected Joining {editing && <span className="text-indigo-600 font-bold text-xs">✏️</span>}</div>
+              {editing ? (
+                <input
+                  type="date"
+                  value={editJoiningDate}
+                  onChange={e => setEditJoiningDate(e.target.value)}
+                  className="mt-1 w-full border-2 border-indigo-300 rounded-lg px-2 py-1 text-sm font-semibold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              ) : (
+                <div className="font-semibold text-blue-600">{offer.expected_joining_date ? new Date(offer.expected_joining_date).toLocaleDateString() : 'N/A'}</div>
+              )}
+            </div>
             {offer.actual_joining_date && (
               <div><div className="text-gray-500">Actual Joining</div><div className="font-semibold text-green-600">{new Date(offer.actual_joining_date).toLocaleDateString()}</div></div>
             )}
@@ -437,6 +548,34 @@ export default function TLOfferDetailPage() {
           <div className="bg-white rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-2">📝 Notes</h3>
             <p className="text-gray-700">{offer.notes}</p>
+          </div>
+        )}
+
+        {/* ── Floating save bar ── */}
+        {editing && (
+          <div className="sticky bottom-4 bg-white border-2 border-indigo-300 rounded-xl shadow-lg px-6 py-4 flex items-center justify-between gap-4">
+            <p className="text-sm text-indigo-700 font-medium">📝 Unsaved changes — Fixed CTC and/or Expected Joining Date</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setEditing(false)
+                  setEditFixedCTC(String(offer.fixed_ctc || ''))
+                  setEditJoiningDate(offer.expected_joining_date
+                    ? new Date(offer.expected_joining_date).toISOString().split('T')[0]
+                    : '')
+                }}
+                className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-semibold rounded-lg hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={savingEdit}
+                className="px-6 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {savingEdit ? 'Saving…' : '✓ Save Changes'}
+              </button>
+            </div>
           </div>
         )}
 
