@@ -156,20 +156,29 @@ export default function ManagementBillingPage() {
 
   // ── Filters ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    let r = [...invoices]
-    if (statusFilter !== 'all') r = r.filter(i => i.status === statusFilter)
-    if (clientFilter !== 'all') r = r.filter(i => i.client_id === clientFilter)
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      r = r.filter(i =>
-        i.invoice_number.toLowerCase().includes(q) ||
-        i._candidateName.toLowerCase().includes(q) ||
-        i._clientName.toLowerCase().includes(q) ||
-        i._recruiterName.toLowerCase().includes(q)
-      )
-    }
-    setFiltered(r)
-  }, [invoices, statusFilter, clientFilter, search])
+  let r = [...invoices]
+  if (statusFilter === 'overdue') {
+    // 'overdue' tab must catch invoices whose DB status is 'overdue' OR
+    // issued/on_hold invoices that have simply passed their due date
+    r = r.filter(i =>
+      i.status === 'overdue' ||
+      (i._overdueDays > 0 && ['issued', 'on_hold'].includes(i.status))
+    )
+  } else if (statusFilter !== 'all') {
+    r = r.filter(i => i.status === statusFilter)
+  }
+  if (clientFilter !== 'all') r = r.filter(i => i.client_id === clientFilter)
+  if (search.trim()) {
+    const q = search.toLowerCase()
+    r = r.filter(i =>
+      i.invoice_number.toLowerCase().includes(q) ||
+      i._candidateName.toLowerCase().includes(q) ||
+      i._clientName.toLowerCase().includes(q) ||
+      i._recruiterName.toLowerCase().includes(q)
+    )
+  }
+  setFiltered(r)
+}, [invoices, statusFilter, clientFilter, search])
 
   // ── Load all data ─────────────────────────────────────────────────────────
   const loadAll = async () => {
