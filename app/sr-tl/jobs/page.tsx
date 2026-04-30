@@ -56,13 +56,36 @@ export default function SrTLJobsPage() {
     if (userData) {
       const parsedUser = JSON.parse(userData)
       setUser(parsedUser)
-      loadJobs(parsedUser.team_id)
+      loadJobs(parsedUser)
     }
   }, [])
 
-  const loadJobs = async (teamId: string) => {
+  const loadJobs = async (currentUser: any) => {
     setLoading(true)
     try {
+      // ── Step 1: Get all TLs who report directly to this Sr.TL ──────────────
+      const { data: tlsUnder } = await supabase
+        .from('users')
+        .select('id, team_id')
+        .eq('reports_to', currentUser.id)
+        .eq('role', 'team_leader')
+        .eq('is_active', true)
+
+      // ── Step 2: Collect all team_ids — Sr.TL's own + all TLs under them ────
+      const allTeamIds = [
+        currentUser.team_id,
+        ...(tlsUnder || []).map((t: any) => t.team_id),
+      ].filter(Boolean)
+
+      console.log('[SrTL Jobs] team_ids to query:', allTeamIds)
+
+      if (allTeamIds.length === 0) {
+        setJobs([])
+        setLoading(false)
+        return
+      }
+
+      // ── Step 3: Fetch jobs across all those team_ids ────────────────────────
       const { data: jobsData, error: jobsError } = await supabase
         .from('jobs')
         .select(`
@@ -70,13 +93,14 @@ export default function SrTLJobsPage() {
           clients (company_name),
           candidates (id, current_stage)
         `)
-        .eq('assigned_team_id', teamId)
+        .in('assigned_team_id', allTeamIds)
         .order('created_at', { ascending: false })
 
       if (jobsError) throw jobsError
 
       const jobIds = jobsData?.map(j => j.id) || []
 
+      // ── Step 4: Fetch recruiter assignments for those jobs ─────────────────
       const { data: assignments } = await supabase
         .from('job_recruiter_assignments')
         .select(`
@@ -94,6 +118,7 @@ export default function SrTLJobsPage() {
         assignmentsByJob[a.job_id].push({ id: u.id, name: u.full_name, positions: a.positions_allocated })
       })
 
+      // ── Step 5: Enrich jobs with candidate counts + allocations ───────────
       const jobsWithAllocations = jobsData?.map(job => {
         const candidates = job.candidates || []
         const inProgressCount = candidates.filter((c: any) =>
@@ -105,7 +130,7 @@ export default function SrTLJobsPage() {
           candidate_count: candidates.length,
           in_progress_count: inProgressCount,
           recruiter_count: assignmentsByJob[job.id]?.length || 0,
-          recruiter_allocations: assignmentsByJob[job.id] || []
+          recruiter_allocations: assignmentsByJob[job.id] || [],
         }
       }) || []
 
