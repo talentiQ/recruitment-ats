@@ -156,6 +156,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           icon: '💰',
           description: 'Billing & Invoices'
         },
+         {
+          name: 'Achievements & Rewards',
+          href: '/achievers',
+          icon: '📈',
+          description: 'Achievers Board'
+        },
         {
           name: 'Talent Pool Search',
           href: '/search/talent-pool',
@@ -214,6 +220,13 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         icon: '📅',
         description: 'Scheduled interviews'
       },
+
+       {
+          name: 'Achievements & Rewards',
+          href: '/achievers',
+          icon: '📈',
+          description: 'Achievers Board'
+        },
       {
         name: 'Talent Pool Search',
         href: '/search/talent-pool',
