@@ -162,8 +162,8 @@ function buildDateWindow(period: Period, month: number, year: number) {
   }
 
   // Annual: Indian FY Apr–Mar
-  const fyStart = month >= 3 ? year : year - 1
-  return { startDate: `${fyStart}-04-01`, endDate: `${fyStart + 1}-03-31` }
+  const fyStart = month >= 3 ? year : year
+  return { startDate: `${fyStart}-04-01`, endDate: `${fyStart }-03-31` }
 }
 
 function getPeriodLabel(period: Period, month: number, year: number): string {
