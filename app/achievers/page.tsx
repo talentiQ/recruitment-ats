@@ -88,8 +88,8 @@ function getRoleLabel(role: string) {
 function getRoleBadge(role: string) {
   const map: Record<string, { bg: string; color: string }> = {
     sr_team_leader: { bg: '#fef2f2', color: '#dc2626' },
-    team_leader: { bg: '#eff6ff', color: '#2563eb' },
-    recruiter: { bg: '#f0fdf4', color: '#16a34a' },
+    team_leader:    { bg: '#eff6ff', color: '#2563eb' },
+    recruiter:      { bg: '#f0fdf4', color: '#16a34a' },
   }
   return map[role] ?? map['recruiter']
 }
@@ -118,6 +118,28 @@ function fmtINR(n: number) {
   }).format(n)
 }
 
+// ── Indian FY Quarter helpers ─────────────────────────────────────────────────
+// Q1 = Apr–Jun  (month 3,4,5)  → start month = 3
+// Q2 = Jul–Sep  (month 6,7,8)  → start month = 6
+// Q3 = Oct–Dec  (month 9,10,11)→ start month = 9
+// Q4 = Jan–Mar  (month 0,1,2)  → start month = 0
+
+/** Returns the 0-indexed start month of the quarter containing `month` */
+function fyQuarterStartMonth(month: number): number {
+  if (month >= 3 && month <= 5) return 3
+  if (month >= 6 && month <= 8) return 6
+  if (month >= 9 && month <= 11) return 9
+  return 0 // Jan–Mar = Q4
+}
+
+/** Returns Q number (1–4) for display */
+function fyQuarterNumber(month: number): number {
+  if (month >= 3 && month <= 5) return 1
+  if (month >= 6 && month <= 8) return 2
+  if (month >= 9 && month <= 11) return 3
+  return 4
+}
+
 // ── Date window builder ───────────────────────────────────────────────────────
 
 function buildDateWindow(period: Period, month: number, year: number) {
@@ -127,15 +149,19 @@ function buildDateWindow(period: Period, month: number, year: number) {
     const e = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
     return { startDate: s, endDate: e }
   }
+
   if (period === 'quarterly') {
-    const q = Math.floor(month / 3)
-    const qs = q * 3
-    const qe = q * 3 + 2
-    const s = `${year}-${String(qs + 1).padStart(2, '0')}-01`
-    const lastDay = new Date(year, qe + 1, 0).getDate()
-    const e = `${year}-${String(qe + 1).padStart(2, '00')}-${String(lastDay).padStart(2, '0')}`
+    // month here is always the quarter START month (3, 6, 9, or 0)
+    const qStartMonth = month          // e.g. 3 for Q1
+    const qEndMonth   = month === 0 ? 2 : month + 2  // e.g. 5 for Q1
+    // Q4 (Jan–Mar): year passed in is already the correct calendar year
+    const s = `${year}-${String(qStartMonth + 1).padStart(2, '0')}-01`
+    const lastDay = new Date(year, qEndMonth + 1, 0).getDate()
+    const e = `${year}-${String(qEndMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
     return { startDate: s, endDate: e }
   }
+
+  // Annual: Indian FY Apr–Mar
   const fyStart = month >= 3 ? year : year - 1
   return { startDate: `${fyStart}-04-01`, endDate: `${fyStart + 1}-03-31` }
 }
@@ -143,8 +169,10 @@ function buildDateWindow(period: Period, month: number, year: number) {
 function getPeriodLabel(period: Period, month: number, year: number): string {
   if (period === 'monthly') return `${MONTHS[month]} ${year}`
   if (period === 'quarterly') {
-    const q = Math.floor(month / 3) + 1
-    return `Q${q} ${year}`
+    const q = fyQuarterNumber(month)
+    // Q4 spans two calendar years; show the FY year for clarity
+    const fyStart = month >= 3 ? year : year - 1
+    return `Q${q} FY${String(fyStart + 1).slice(2)}`
   }
   const fyStart = month >= 3 ? year : year - 1
   return `FY ${fyStart}-${String(fyStart + 1).slice(2)}`
@@ -205,9 +233,9 @@ async function fetchAchievers(
   const rows: AchieverRow[] = (users as UserRow[])
     .filter(u => (u[targetKey] as number ?? 0) > 0)
     .map(u => {
-      const target = (u[targetKey] as number) ?? 0
+      const target  = (u[targetKey] as number) ?? 0
       const achieved = revenueMap[u.id] ?? 0
-      const pct = target > 0 ? Math.round((achieved / target) * 100) : 0
+      const pct     = target > 0 ? Math.round((achieved / target) * 100) : 0
       return { id: u.id, full_name: u.full_name, role: u.role, target, achieved, pct }
     })
 
@@ -278,8 +306,8 @@ function PodiumCard({ person, rank }: { person: AchieverRow; rank: 1 | 2 | 3 }) 
     2: { border: '1px solid #c7d2fe', background: '#eef2ff' },
     3: { border: '1px solid #d1fae5', background: '#f0fdf4' },
   }
-  const medalBg: Record<number, string> = { 1: '#f59e0b', 2: '#6366f1', 3: '#10b981' }
-  const medals: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' }
+  const medalBg: Record<number, string>  = { 1: '#f59e0b', 2: '#6366f1', 3: '#10b981' }
+  const medals: Record<number, string>   = { 1: '🥇', 2: '🥈', 3: '🥉' }
   const pctColor: Record<number, string> = { 1: '#92400e', 2: '#4338ca', 3: '#065f46' }
 
   return (
@@ -329,14 +357,14 @@ function PodiumCard({ person, rank }: { person: AchieverRow; rank: 1 | 2 | 3 }) 
 }
 
 function LeaderboardRow({ person, rank }: { person: AchieverRow; rank: number }) {
-  const tier = getTier(person.pct)
+  const tier      = getTier(person.pct)
   const roleBadge = getRoleBadge(person.role)
 
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '40px 1fr 100px 80px 130px',
+        gridTemplateColumns: '40px 1fr 80px 130px',
         gap: 8, alignItems: 'center',
         padding: '12px 16px', borderRadius: 10, marginBottom: 4,
         background: tier ? tier.rowBg : '#fff',
@@ -368,14 +396,14 @@ function LeaderboardRow({ person, rank }: { person: AchieverRow; rank: number })
         </div>
       </div>
 
-            <div style={{ textAlign: 'right' }}>
+      <div style={{ textAlign: 'right' }}>
         <span style={{ fontSize: 17, fontWeight: 800, color: tier ? tier.pctColor : '#94a3b8' }}>
           {person.pct}%
         </span>
         <ProgressBar pct={Math.min(100, person.pct)} color={tier ? tier.barColor : '#e2e8f0'} />
       </div>
 
-      <div style={{ display: 'flex', rightalign: 'flex-end' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <TierBadge pct={person.pct} />
       </div>
     </div>
@@ -387,12 +415,12 @@ function LeaderboardRow({ person, rank }: { person: AchieverRow; rank: number })
 export default function AchieversPage() {
 
   const supabase = createClientComponentClient()
-  const now = new Date()
+  const now      = new Date()
 
   const [period, setPeriod] = useState<Period>('monthly')
-  const [month, setMonth] = useState(now.getMonth())
-  const [year, setYear] = useState(now.getFullYear())
-  const [data, setData] = useState<AchieverRow[]>([])
+  const [month,  setMonth]  = useState(now.getMonth())
+  const [year,   setYear]   = useState(now.getFullYear())
+  const [data,   setData]   = useState<AchieverRow[]>([])
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
@@ -404,22 +432,41 @@ export default function AchieversPage() {
 
   useEffect(() => { load() }, [load])
 
-  const periodLabel = getPeriodLabel(period, month, year)
-  const top3 = data.filter(d => d.pct > 0).slice(0, 3)
-  const legends   = data.filter(d => d.pct >= 200).length
-  const achievers = data.filter(d => d.pct >= 150 && d.pct < 200).length
-  const stars     = data.filter(d => d.pct >= 100 && d.pct < 150).length
+  const periodLabel  = getPeriodLabel(period, month, year)
+  const top3         = data.filter(d => d.pct > 0).slice(0, 3)
+  const legends      = data.filter(d => d.pct >= 200).length
+  const achievers    = data.filter(d => d.pct >= 150 && d.pct < 200).length
+  const stars        = data.filter(d => d.pct >= 100 && d.pct < 150).length
   const targetColLabel =
     period === 'monthly' ? 'Mo. Target' :
     period === 'quarterly' ? 'Qtr Target' : 'Ann. Target'
+
+  // ── Period tab switch — snap month to quarter start ───────────────────────
+  function handlePeriodChange(p: Period) {
+    setPeriod(p)
+    if (p === 'quarterly') setMonth(m => fyQuarterStartMonth(m))
+  }
+
+  // ── Navigation ────────────────────────────────────────────────────────────
+  // Indian FY quarter cycle (by start month): 3 → 6 → 9 → 0 → 3 …
+  // When crossing Q4→Q1 boundary the year increments; Q1→Q4 it decrements.
 
   function prevPeriod() {
     if (period === 'monthly') {
       if (month === 0) { setMonth(11); setYear(y => y - 1) }
       else setMonth(m => m - 1)
     } else if (period === 'quarterly') {
-      if (month < 3) { setMonth(9); setYear(y => y - 1) }
-      else setMonth(m => m - 3)
+      if (month === 3) {
+        // Q1 (Apr) → Q4 (Jan) of the same calendar year (Jan is earlier in the year)
+        setMonth(0)
+        // year stays the same — Jan of this year is before Apr of this year
+      } else if (month === 0) {
+        // Q4 (Jan) → Q3 (Oct) of the previous calendar year
+        setMonth(9); setYear(y => y - 1)
+      } else {
+        // Q3 (Oct)→Q2 (Jul) or Q2 (Jul)→Q1 (Apr): just subtract 3
+        setMonth(m => m - 3)
+      }
     } else {
       setYear(y => y - 1)
     }
@@ -430,8 +477,17 @@ export default function AchieversPage() {
       if (month === 11) { setMonth(0); setYear(y => y + 1) }
       else setMonth(m => m + 1)
     } else if (period === 'quarterly') {
-      if (month >= 9) { setMonth(0); setYear(y => y + 1) }
-      else setMonth(m => m + 3)
+      if (month === 9) {
+        // Q3 (Oct) → Q4 (Jan) of the next calendar year
+        setMonth(0); setYear(y => y + 1)
+      } else if (month === 0) {
+        // Q4 (Jan) → Q1 (Apr) of the same calendar year
+        setMonth(3)
+        // year stays the same — Apr of this year is after Jan of this year
+      } else {
+        // Q1 (Apr)→Q2 (Jul) or Q2 (Jul)→Q3 (Oct): just add 3
+        setMonth(m => m + 3)
+      }
     } else {
       setYear(y => y + 1)
     }
@@ -478,9 +534,10 @@ export default function AchieversPage() {
               </div>
             </div>
 
+            {/* Period tabs — use handlePeriodChange to snap quarter month */}
             <div style={{ display: 'flex', borderBottom: '2px solid #e5e7eb' }}>
               {(['monthly', 'quarterly', 'annual'] as Period[]).map(p => (
-                <button key={p} onClick={() => setPeriod(p)} style={{
+                <button key={p} onClick={() => handlePeriodChange(p)} style={{
                   padding: '10px 24px', border: 'none', background: 'transparent',
                   cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
                   color: period === p ? '#4f46e5' : '#6b7280',
@@ -543,9 +600,9 @@ export default function AchieversPage() {
             <>
               {/* Stats */}
               <div style={{ display: 'flex', gap: 12, marginBottom: 28 }}>
-                <StatCard value={legends}   label="👑 Legends"        color="#15803d" />
-                <StatCard value={achievers} label="🚀 Achievers"       color="#6d28d9" />
-                <StatCard value={stars}     label="⭐ Stars"           color="#92400e" />
+                <StatCard value={legends}   label="👑 Legends"  color="#15803d" />
+                <StatCard value={achievers} label="🚀 Achievers" color="#6d28d9" />
+                <StatCard value={stars}     label="⭐ Stars"     color="#92400e" />
                 <StatCard value={data.filter(d => d.pct >= 100).length} label="Total Qualifiers" color="#2563eb" />
               </div>
 
@@ -585,7 +642,7 @@ export default function AchieversPage() {
               }}>
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: '40px 1fr 100px 80px 130px',
+                  gridTemplateColumns: '40px 1fr 80px 130px',
                   gap: 8, padding: '10px 16px',
                   background: '#f8fafc', borderBottom: '1px solid #e5e7eb',
                   fontSize: 11, letterSpacing: '1px', textTransform: 'uppercase',
