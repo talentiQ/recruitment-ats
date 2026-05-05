@@ -162,17 +162,17 @@ function buildDateWindow(period: Period, month: number, year: number) {
   }
 
   // Annual: Indian FY Apr–Mar
-  const fyStart = month >= 3 ? year : year
-  return { startDate: `${fyStart}-04-01`, endDate: `${fyStart }-03-31` }
+  const fyStart = month >= 3 ? year : year - 1
+  return { startDate: `${fyStart}-04-01`, endDate: `${fyStart + 1}-03-31` }
 }
 
 function getPeriodLabel(period: Period, month: number, year: number): string {
   if (period === 'monthly') return `${MONTHS[month]} ${year}`
   if (period === 'quarterly') {
     const q = fyQuarterNumber(month)
-    // Q4 spans two calendar years; show the FY year for clarity
-    const fyStart = month >= 3 ? year : year - 1
-    return `Q${q} FY${String(fyStart + 1).slice(2)}`
+    // FY label: Apr 2026 belongs to FY26 (Apr 2026 – Mar 2027)
+    const fyYear = month >= 3 ? year : year - 1  // e.g. Apr 2026 → 2026 → "FY26"
+    return `Q${q} FY${String(fyYear).slice(2)}`
   }
   const fyStart = month >= 3 ? year : year - 1
   return `FY ${fyStart}-${String(fyStart + 1).slice(2)}`
