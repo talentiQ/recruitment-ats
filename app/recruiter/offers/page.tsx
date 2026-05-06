@@ -1,4 +1,4 @@
-//app/recruiter/offers/page.tsx
+// app/recruiter/offers/page.tsx
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
@@ -73,7 +73,7 @@ export default function RecruiterOffersPage() {
           daysRemaining = Math.max(0, Math.floor(
             (new Date(offer.candidates.guarantee_period_ends).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
           ))
-          
+
           if (offer.candidates.placement_status === 'safe') {
             safetyStatus = 'safe'
           } else if (daysRemaining <= 7) {
@@ -85,11 +85,7 @@ export default function RecruiterOffersPage() {
           }
         }
 
-        return {
-          ...offer,
-          daysRemaining,
-          safetyStatus
-        }
+        return { ...offer, daysRemaining, safetyStatus }
       }) || []
 
       setOffers(enhanced)
@@ -101,64 +97,65 @@ export default function RecruiterOffersPage() {
     }
   }
 
+  // ── FIX: always calculate from current offer fields (fixed_ctc × revenue_percentage)
+  // Never use candidates.revenue_earned — it was stored with the old rate at join time
+  // and won't reflect subsequent corrections to revenue_percentage.
+  const calculateRevenue = (offer: any): number => {
+    const percent = offer.revenue_percentage || 8.33
+    return (offer.fixed_ctc * percent) / 100
+  }
+
   const getStatusBadge = (status: string) => {
     const badges: { [key: string]: string } = {
       extended: 'bg-blue-100 text-blue-800',
       accepted: 'bg-green-100 text-green-800',
       rejected: 'bg-red-100 text-red-800',
-      expired: 'bg-gray-100 text-gray-800',
-      joined: 'bg-purple-100 text-purple-800',
-      renege: 'bg-orange-100 text-orange-800',
+      expired:  'bg-gray-100 text-gray-800',
+      joined:   'bg-purple-100 text-purple-800',
+      renege:   'bg-orange-100 text-orange-800',
     }
     return badges[status] || 'bg-gray-100 text-gray-800'
   }
 
   const getSafetyBadge = (safetyStatus: string | null, daysRemaining: number | null) => {
     if (!safetyStatus) return null
-    
-    const badges: { [key: string]: { class: string, label: string } } = {
-      critical: { class: 'bg-red-100 text-red-800 border-red-300', label: `🔴 ${daysRemaining}d left` },
-      at_risk: { class: 'bg-yellow-100 text-yellow-800 border-yellow-300', label: `🟡 ${daysRemaining}d left` },
-      monitoring: { class: 'bg-blue-100 text-blue-800 border-blue-300', label: `🟢 ${daysRemaining}d left` },
-      safe: { class: 'bg-green-100 text-green-800 border-green-300', label: '✅ Safe' },
+    const badges: { [key: string]: { class: string; label: string } } = {
+      critical:   { class: 'bg-red-100 text-red-800 border-red-300',       label: `🔴 ${daysRemaining}d left` },
+      at_risk:    { class: 'bg-yellow-100 text-yellow-800 border-yellow-300', label: `🟡 ${daysRemaining}d left` },
+      monitoring: { class: 'bg-blue-100 text-blue-800 border-blue-300',     label: `🟢 ${daysRemaining}d left` },
+      safe:       { class: 'bg-green-100 text-green-800 border-green-300',  label: '✅ Safe' },
     }
     return badges[safetyStatus]
   }
 
   const counts = {
-    all: offers.length,
+    all:      offers.length,
     extended: offers.filter(o => o.status === 'extended').length,
     accepted: offers.filter(o => o.status === 'accepted').length,
-    joined: offers.filter(o => o.status === 'joined').length,
-    renege: offers.filter(o => o.status === 'renege').length,
+    joined:   offers.filter(o => o.status === 'joined').length,
+    renege:   offers.filter(o => o.status === 'renege').length,
   }
 
-  // ✅ FIXED: Use stored revenue for joined
-  const totalRevenue = offers
-    .filter(o => o.status === 'joined')
-    .reduce((sum, o) => sum + (o.candidates?.revenue_earned || 0), 0)
+  // KPI totals — all use calculateRevenue() consistently
+  const joinedOffers       = offers.filter(o => o.status === 'joined')
+  const totalRevenue       = joinedOffers.reduce((s, o) => s + calculateRevenue(o), 0)
 
-  const criticalPlacements = offers.filter(o => o.safetyStatus === 'critical')
-  const atRiskPlacements = offers.filter(o => o.safetyStatus === 'at_risk')
+  const criticalPlacements   = offers.filter(o => o.safetyStatus === 'critical')
+  const atRiskPlacements     = offers.filter(o => o.safetyStatus === 'at_risk')
   const monitoringPlacements = offers.filter(o => o.safetyStatus === 'monitoring')
-  const safePlacements = offers.filter(o => o.safetyStatus === 'safe')
+  const safePlacements       = offers.filter(o => o.safetyStatus === 'safe')
 
-  const criticalRevenue = criticalPlacements.reduce((sum, o) => sum + (o.candidates?.revenue_earned || 0), 0)
-  const atRiskRevenue = atRiskPlacements.reduce((sum, o) => sum + (o.candidates?.revenue_earned || 0), 0)
-  const monitoringRevenue = monitoringPlacements.reduce((sum, o) => sum + (o.candidates?.revenue_earned || 0), 0)
-  const safeRevenue = safePlacements.reduce((sum, o) => sum + (o.candidates?.revenue_earned || 0), 0)
-
-  const calculateLiveRevenue = (offer: any) => {
-    const percent = offer.revenue_percentage || 8.33
-    return (offer.fixed_ctc * percent) / 100
-  }
+  const criticalRevenue   = criticalPlacements.reduce((s, o)   => s + calculateRevenue(o), 0)
+  const atRiskRevenue     = atRiskPlacements.reduce((s, o)     => s + calculateRevenue(o), 0)
+  const monitoringRevenue = monitoringPlacements.reduce((s, o) => s + calculateRevenue(o), 0)
+  const safeRevenue       = safePlacements.reduce((s, o)       => s + calculateRevenue(o), 0)
 
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
 
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">My Offers & Placements</h2>
+          <h2 className="text-2xl font-bold text-gray-900">My Offers &amp; Placements</h2>
           <p className="text-gray-600">Track offers and monitor placement safety</p>
         </div>
 
@@ -169,18 +166,14 @@ export default function RecruiterOffersPage() {
               <div className="text-center p-4 bg-white rounded-lg">
                 <div className="text-sm text-gray-600 mb-1">Total Revenue</div>
                 <div className="text-2xl font-bold text-blue-900">
-                  ₹{(totalRevenue).toFixed(2)}
+                  ₹{totalRevenue.toFixed(2)}
                 </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {counts.joined} placements
-                </div>
+                <div className="text-xs text-gray-500 mt-1">{counts.joined} placements</div>
               </div>
 
               <div className="text-center p-4 bg-red-50 rounded-lg border-2 border-red-200">
                 <div className="text-sm text-red-600 mb-1 font-semibold">🔴 Critical</div>
-                <div className="text-2xl font-bold text-red-900">
-                  {criticalPlacements.length}
-                </div>
+                <div className="text-2xl font-bold text-red-900">{criticalPlacements.length}</div>
                 <div className="text-xs text-red-600 mt-1 font-semibold">
                   ₹{criticalRevenue.toFixed(2)} at risk
                 </div>
@@ -188,9 +181,7 @@ export default function RecruiterOffersPage() {
 
               <div className="text-center p-4 bg-yellow-50 rounded-lg border-2 border-yellow-200">
                 <div className="text-sm text-yellow-600 mb-1 font-semibold">🟡 At Risk</div>
-                <div className="text-2xl font-bold text-yellow-900">
-                  {atRiskPlacements.length}
-                </div>
+                <div className="text-2xl font-bold text-yellow-900">{atRiskPlacements.length}</div>
                 <div className="text-xs text-yellow-600 mt-1 font-semibold">
                   ₹{atRiskRevenue.toFixed(2)} at risk
                 </div>
@@ -198,9 +189,7 @@ export default function RecruiterOffersPage() {
 
               <div className="text-center p-4 bg-blue-50 rounded-lg border-2 border-blue-200">
                 <div className="text-sm text-blue-600 mb-1 font-semibold">🟢 Monitoring</div>
-                <div className="text-2xl font-bold text-blue-900">
-                  {monitoringPlacements.length}
-                </div>
+                <div className="text-2xl font-bold text-blue-900">{monitoringPlacements.length}</div>
                 <div className="text-xs text-blue-600 mt-1 font-semibold">
                   ₹{monitoringRevenue.toFixed(2)} provisional
                 </div>
@@ -208,9 +197,7 @@ export default function RecruiterOffersPage() {
 
               <div className="text-center p-4 bg-green-50 rounded-lg border-2 border-green-200">
                 <div className="text-sm text-green-600 mb-1 font-semibold">✅ Safe</div>
-                <div className="text-2xl font-bold text-green-900">
-                  {safePlacements.length}
-                </div>
+                <div className="text-2xl font-bold text-green-900">{safePlacements.length}</div>
                 <div className="text-xs text-green-600 mt-1 font-semibold">
                   ₹{safeRevenue.toFixed(2)} confirmed
                 </div>
@@ -223,12 +210,9 @@ export default function RecruiterOffersPage() {
         {!loading && (
           <div className="space-y-4">
             {offers.map(offer => {
-              const safetyBadge = getSafetyBadge(offer.safetyStatus, offer.daysRemaining)
-
-              const revenueDisplay =
-                offer.status === 'joined'
-                  ? (offer.candidates?.revenue_earned || 0).toFixed(2)
-                  : calculateLiveRevenue(offer).toFixed(2)
+              const safetyBadge  = getSafetyBadge(offer.safetyStatus, offer.daysRemaining)
+              // FIX: single source of truth — always from offer fields
+              const revenueDisplay = calculateRevenue(offer).toFixed(2)
 
               return (
                 <div
@@ -258,19 +242,18 @@ export default function RecruiterOffersPage() {
                           <div className="text-xs text-gray-500">Total CTC</div>
                           <div className="text-sm font-bold">₹{offer.offered_ctc}</div>
                         </div>
-
                         <div>
                           <div className="text-xs text-gray-500">Fixed CTC</div>
                           <div className="text-sm font-bold text-blue-600">₹{offer.fixed_ctc}</div>
                         </div>
-
                         <div>
-                          <div className="text-xs text-gray-500">Revenue</div>
+                          <div className="text-xs text-gray-500">
+                            Revenue ({offer.revenue_percentage || 8.33}%)
+                          </div>
                           <div className="text-sm font-bold text-green-600">
                             ₹{revenueDisplay}
                           </div>
                         </div>
-
                       </div>
 
                     </div>
