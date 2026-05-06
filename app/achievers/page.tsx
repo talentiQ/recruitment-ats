@@ -75,6 +75,20 @@ const TIERS: TierConfig[] = [
   },
 ]
 
+// Motivational messages based on % bands
+const MOTIVATION: { min: number; max: number; msg: string; color: string }[] = [
+  { min: 200, max: Infinity, msg: "Absolutely legendary! 🔥",          color: '#15803d' },
+  { min: 150, max: 199,      msg: "Crushing it! Keep the streak! 🚀",  color: '#6d28d9' },
+  { min: 100, max: 149,      msg: "Target smashed! Aim higher! ⭐",    color: '#92400e' },
+  { min: 75,  max: 99,       msg: "So close! Final push! 💪",          color: '#0369a1' },
+  { min: 50,  max: 74,       msg: "Good progress, keep going! 📈",     color: '#0369a1' },
+  { min: 0,   max: 49,       msg: "Every joining counts! 🎯",          color: '#6b7280' },
+]
+
+function getMotivation(pct: number) {
+  return MOTIVATION.find(m => pct >= m.min && pct <= m.max) ?? MOTIVATION[MOTIVATION.length - 1]
+}
+
 function getTier(pct: number): TierConfig | null {
   return TIERS.find(t => pct >= t.min) ?? null
 }
@@ -119,20 +133,14 @@ function fmtINR(n: number) {
 }
 
 // ── Indian FY Quarter helpers ─────────────────────────────────────────────────
-// Q1 = Apr–Jun  (month 3,4,5)  → start month = 3
-// Q2 = Jul–Sep  (month 6,7,8)  → start month = 6
-// Q3 = Oct–Dec  (month 9,10,11)→ start month = 9
-// Q4 = Jan–Mar  (month 0,1,2)  → start month = 0
 
-/** Returns the 0-indexed start month of the quarter containing `month` */
 function fyQuarterStartMonth(month: number): number {
   if (month >= 3 && month <= 5) return 3
   if (month >= 6 && month <= 8) return 6
   if (month >= 9 && month <= 11) return 9
-  return 0 // Jan–Mar = Q4
+  return 0
 }
 
-/** Returns Q number (1–4) for display */
 function fyQuarterNumber(month: number): number {
   if (month >= 3 && month <= 5) return 1
   if (month >= 6 && month <= 8) return 2
@@ -149,19 +157,14 @@ function buildDateWindow(period: Period, month: number, year: number) {
     const e = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
     return { startDate: s, endDate: e }
   }
-
   if (period === 'quarterly') {
-    // month here is always the quarter START month (3, 6, 9, or 0)
-    const qStartMonth = month          // e.g. 3 for Q1
-    const qEndMonth   = month === 0 ? 2 : month + 2  // e.g. 5 for Q1
-    // Q4 (Jan–Mar): year passed in is already the correct calendar year
+    const qStartMonth = month
+    const qEndMonth   = month === 0 ? 2 : month + 2
     const s = `${year}-${String(qStartMonth + 1).padStart(2, '0')}-01`
     const lastDay = new Date(year, qEndMonth + 1, 0).getDate()
     const e = `${year}-${String(qEndMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
     return { startDate: s, endDate: e }
   }
-
-  // Annual: Indian FY Apr–Mar
   const fyStart = month >= 3 ? year : year - 1
   return { startDate: `${fyStart}-04-01`, endDate: `${fyStart + 1}-03-31` }
 }
@@ -170,8 +173,7 @@ function getPeriodLabel(period: Period, month: number, year: number): string {
   if (period === 'monthly') return `${MONTHS[month]} ${year}`
   if (period === 'quarterly') {
     const q = fyQuarterNumber(month)
-    // FY label: Apr 2026 belongs to FY26 (Apr 2026 – Mar 2027)
-    const fyYear = month >= 3 ? year : year - 1  // e.g. Apr 2026 → 2026 → "FY26"
+    const fyYear = month >= 3 ? year : year - 1
     return `Q${q} FY${String(fyYear).slice(2)}`
   }
   const fyStart = month >= 3 ? year : year - 1
@@ -233,9 +235,9 @@ async function fetchAchievers(
   const rows: AchieverRow[] = (users as UserRow[])
     .filter(u => (u[targetKey] as number ?? 0) > 0)
     .map(u => {
-      const target  = (u[targetKey] as number) ?? 0
+      const target   = (u[targetKey] as number) ?? 0
       const achieved = revenueMap[u.id] ?? 0
-      const pct     = target > 0 ? Math.round((achieved / target) * 100) : 0
+      const pct      = target > 0 ? Math.round((achieved / target) * 100) : 0
       return { id: u.id, full_name: u.full_name, role: u.role, target, achieved, pct }
     })
 
@@ -273,15 +275,17 @@ function TierBadge({ pct }: { pct: number }) {
   )
 }
 
-function ProgressBar({ pct, color }: { pct: number; color: string }) {
+function ProgressBar({ pct, color, animated = false }: { pct: number; color: string; animated?: boolean }) {
   return (
     <div style={{
-      width: '100%', height: 5, borderRadius: 100,
+      width: '100%', height: 6, borderRadius: 100,
       background: '#f1f5f9', overflow: 'hidden', marginTop: 5,
     }}>
       <div style={{
         width: `${Math.min(100, pct)}%`, height: '100%',
-        background: color, borderRadius: 100, transition: 'width 0.7s ease',
+        background: color, borderRadius: 100,
+        transition: 'width 0.9s cubic-bezier(.4,0,.2,1)',
+        boxShadow: animated ? `0 0 8px ${color}88` : 'none',
       }} />
     </div>
   )
@@ -292,7 +296,17 @@ function StatCard({ value, label, color }: { value: number; label: string; color
     <div style={{
       background: '#fff', border: '1px solid #e5e7eb',
       borderRadius: 12, padding: '16px 20px', textAlign: 'center', flex: 1,
-    }}>
+      transition: 'transform 0.15s, box-shadow 0.15s',
+    }}
+      onMouseEnter={e => {
+        (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-2px)'
+        ;(e.currentTarget as HTMLDivElement).style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)'
+      }}
+      onMouseLeave={e => {
+        (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)'
+        ;(e.currentTarget as HTMLDivElement).style.boxShadow = 'none'
+      }}
+    >
       <div style={{ fontSize: 30, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>{label}</div>
     </div>
@@ -302,37 +316,62 @@ function StatCard({ value, label, color }: { value: number; label: string; color
 function PodiumCard({ person, rank }: { person: AchieverRow; rank: 1 | 2 | 3 }) {
   const tier = getTier(person.pct)
   const cardStyle: Record<number, React.CSSProperties> = {
-    1: { border: '2px solid #f59e0b', background: '#fffbeb' },
-    2: { border: '1px solid #c7d2fe', background: '#eef2ff' },
-    3: { border: '1px solid #d1fae5', background: '#f0fdf4' },
+    1: { border: '2px solid #f59e0b', background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)' },
+    2: { border: '1px solid #c7d2fe', background: 'linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%)' },
+    3: { border: '1px solid #d1fae5', background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)' },
   }
   const medalBg: Record<number, string>  = { 1: '#f59e0b', 2: '#6366f1', 3: '#10b981' }
   const medals: Record<number, string>   = { 1: '🥇', 2: '🥈', 3: '🥉' }
   const pctColor: Record<number, string> = { 1: '#92400e', 2: '#4338ca', 3: '#065f46' }
+  const glow: Record<number, string>     = {
+    1: '0 8px 32px rgba(245,158,11,0.25)',
+    2: '0 8px 24px rgba(99,102,241,0.15)',
+    3: '0 8px 24px rgba(16,185,129,0.15)',
+  }
 
   return (
     <div
       style={{
         ...cardStyle[rank],
-        borderRadius: 16, padding: '28px 20px 20px',
+        borderRadius: 20, padding: '32px 20px 24px',
         textAlign: 'center', flex: 1, position: 'relative',
-        transition: 'transform 0.2s',
+        transition: 'transform 0.2s, box-shadow 0.2s',
+        boxShadow: rank === 1 ? glow[1] : 'none',
       }}
-      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-3px)' }}
-      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)' }}
+      onMouseEnter={e => {
+        (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-4px)'
+        ;(e.currentTarget as HTMLDivElement).style.boxShadow = glow[rank]
+      }}
+      onMouseLeave={e => {
+        (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)'
+        ;(e.currentTarget as HTMLDivElement).style.boxShadow = rank === 1 ? glow[1] : 'none'
+      }}
     >
+      {/* Rank badge */}
       <div style={{
-        position: 'absolute', top: -12, left: '50%',
+        position: 'absolute', top: -14, left: '50%',
         transform: 'translateX(-50%)',
         background: medalBg[rank], color: '#fff',
-        borderRadius: 100, padding: '2px 14px',
-        fontSize: 12, fontWeight: 700,
+        borderRadius: 100, padding: '4px 16px',
+        fontSize: 13, fontWeight: 700,
+        boxShadow: `0 2px 8px ${medalBg[rank]}66`,
       }}>
         {medals[rank]} #{rank}
       </div>
 
+      {/* Crown for #1 */}
+      {rank === 1 && (
+        <div style={{ fontSize: 28, marginBottom: 4, lineHeight: 1 }}>👑</div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
-        <Avatar name={person.full_name} size={52} />
+        <div style={{
+          padding: rank === 1 ? 3 : 0,
+          borderRadius: '50%',
+          background: rank === 1 ? 'linear-gradient(135deg, #f59e0b, #f97316)' : 'transparent',
+        }}>
+          <Avatar name={person.full_name} size={rank === 1 ? 58 : 48} />
+        </div>
       </div>
 
       <div style={{ fontWeight: 800, fontSize: rank === 1 ? 17 : 15, color: '#1e293b', lineHeight: 1.3 }}>
@@ -343,41 +382,56 @@ function PodiumCard({ person, rank }: { person: AchieverRow; rank: 1 | 2 | 3 }) 
       </div>
 
       <div style={{
-        fontSize: rank === 1 ? 42 : 34,
+        fontSize: rank === 1 ? 46 : 36,
         fontWeight: 800, color: pctColor[rank],
-        lineHeight: 1, margin: '14px 0 8px',
+        lineHeight: 1, margin: '16px 0 10px',
+        textShadow: rank === 1 ? '0 2px 8px rgba(146,64,14,0.15)' : 'none',
       }}>
         {person.pct}%
       </div>
 
       {tier && <TierBadge pct={person.pct} />}
-      {tier && <ProgressBar pct={Math.min(100, person.pct)} color={tier.barColor} />}
+      {tier && <ProgressBar pct={Math.min(100, person.pct)} color={tier.barColor} animated={rank === 1} />}
     </div>
   )
 }
 
+// ── Leaderboard Row with motivation tag ───────────────────────────────────────
+
 function LeaderboardRow({ person, rank }: { person: AchieverRow; rank: number }) {
-  const tier      = getTier(person.pct)
-  const roleBadge = getRoleBadge(person.role)
+  const tier       = getTier(person.pct)
+  const roleBadge  = getRoleBadge(person.role)
+  const motivation = getMotivation(person.pct)
 
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '40px 1fr 80px 130px',
+        gridTemplateColumns: '40px 1fr 120px 130px',
         gap: 8, alignItems: 'center',
         padding: '12px 16px', borderRadius: 10, marginBottom: 4,
         background: tier ? tier.rowBg : '#fff',
         border: `1px solid ${tier ? tier.rowBorder : '#f1f5f9'}`,
-        transition: 'box-shadow 0.15s',
+        transition: 'box-shadow 0.15s, transform 0.15s',
       }}
-      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)' }}
-      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
+      onMouseEnter={e => {
+        (e.currentTarget as HTMLDivElement).style.boxShadow = '0 2px 12px rgba(0,0,0,0.08)'
+        ;(e.currentTarget as HTMLDivElement).style.transform = 'translateX(2px)'
+      }}
+      onMouseLeave={e => {
+        (e.currentTarget as HTMLDivElement).style.boxShadow = 'none'
+        ;(e.currentTarget as HTMLDivElement).style.transform = 'translateX(0)'
+      }}
     >
+      {/* Rank */}
       <div style={{ fontWeight: 700, fontSize: 15, color: '#94a3b8', textAlign: 'center' }}>
-        {rank}
+        {rank <= 3
+          ? <span style={{ fontSize: 18 }}>{['🥇','🥈','🥉'][rank - 1]}</span>
+          : rank
+        }
       </div>
 
+      {/* Name + role */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <Avatar name={person.full_name} size={34} />
         <div style={{ minWidth: 0 }}>
@@ -396,15 +450,57 @@ function LeaderboardRow({ person, rank }: { person: AchieverRow; rank: number })
         </div>
       </div>
 
+      {/* Score + progress + motivation */}
       <div style={{ textAlign: 'right' }}>
         <span style={{ fontSize: 17, fontWeight: 800, color: tier ? tier.pctColor : '#94a3b8' }}>
           {person.pct}%
         </span>
         <ProgressBar pct={Math.min(100, person.pct)} color={tier ? tier.barColor : '#e2e8f0'} />
+        <div style={{ fontSize: 10, color: motivation.color, marginTop: 3, fontWeight: 600 }}>
+          {motivation.msg}
+        </div>
       </div>
 
+      {/* Tier badge */}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <TierBadge pct={person.pct} />
+      </div>
+    </div>
+  )
+}
+
+// ── Chasing Banner — shows who is closest to next tier ───────────────────────
+
+function ChasingBanner({ data }: { data: AchieverRow[] }) {
+  // Find someone between 75–99% — closest to 100
+  const chasing = data
+    .filter(d => d.pct >= 75 && d.pct < 100)
+    .sort((a, b) => b.pct - a.pct)[0]
+
+  if (!chasing) return null
+
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+      border: '1px solid #bfdbfe', borderRadius: 14,
+      padding: '14px 20px', marginBottom: 20,
+      display: 'flex', alignItems: 'center', gap: 12,
+    }}>
+      <div style={{ fontSize: 28 }}>⚡</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: '#1e40af' }}>
+          {chasing.full_name} is {100 - chasing.pct}% away from the Star tier!
+        </div>
+        <div style={{ fontSize: 12, color: '#3b82f6', marginTop: 2 }}>
+          Currently at {chasing.pct}% — one more joining could do it! 🎯
+        </div>
+      </div>
+      <div style={{
+        background: '#2563eb', color: '#fff',
+        borderRadius: 100, padding: '4px 14px',
+        fontSize: 12, fontWeight: 700,
+      }}>
+        {chasing.pct}%
       </div>
     </div>
   )
@@ -414,13 +510,13 @@ function LeaderboardRow({ person, rank }: { person: AchieverRow; rank: number })
 
 export default function AchieversPage() {
 
-  const supabase = createClientComponentClient()
-  const now      = new Date()
+  const supabase  = createClientComponentClient()
+  const now       = new Date()
 
-  const [period, setPeriod] = useState<Period>('monthly')
-  const [month,  setMonth]  = useState(now.getMonth())
-  const [year,   setYear]   = useState(now.getFullYear())
-  const [data,   setData]   = useState<AchieverRow[]>([])
+  const [period,  setPeriod]  = useState<Period>('monthly')
+  const [month,   setMonth]   = useState(now.getMonth())
+  const [year,    setYear]    = useState(now.getFullYear())
+  const [data,    setData]    = useState<AchieverRow[]>([])
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
@@ -432,41 +528,27 @@ export default function AchieversPage() {
 
   useEffect(() => { load() }, [load])
 
-  const periodLabel  = getPeriodLabel(period, month, year)
-  const top3         = data.filter(d => d.pct > 0).slice(0, 3)
-  const legends      = data.filter(d => d.pct >= 200).length
-  const achievers    = data.filter(d => d.pct >= 150 && d.pct < 200).length
-  const stars        = data.filter(d => d.pct >= 100 && d.pct < 150).length
-  const targetColLabel =
-    period === 'monthly' ? 'Mo. Target' :
-    period === 'quarterly' ? 'Qtr Target' : 'Ann. Target'
+  const periodLabel = getPeriodLabel(period, month, year)
 
-  // ── Period tab switch — snap month to quarter start ───────────────────────
+  // ── Key fix: podium only shows people at >= 100% ──────────────────────────
+  const top3      = data.filter(d => d.pct >= 100).slice(0, 3)
+  const legends   = data.filter(d => d.pct >= 200).length
+  const achievers = data.filter(d => d.pct >= 150 && d.pct < 200).length
+  const stars     = data.filter(d => d.pct >= 100 && d.pct < 150).length
+
   function handlePeriodChange(p: Period) {
     setPeriod(p)
     if (p === 'quarterly') setMonth(m => fyQuarterStartMonth(m))
   }
-
-  // ── Navigation ────────────────────────────────────────────────────────────
-  // Indian FY quarter cycle (by start month): 3 → 6 → 9 → 0 → 3 …
-  // When crossing Q4→Q1 boundary the year increments; Q1→Q4 it decrements.
 
   function prevPeriod() {
     if (period === 'monthly') {
       if (month === 0) { setMonth(11); setYear(y => y - 1) }
       else setMonth(m => m - 1)
     } else if (period === 'quarterly') {
-      if (month === 3) {
-        // Q1 (Apr) → Q4 (Jan) of the same calendar year (Jan is earlier in the year)
-        setMonth(0)
-        // year stays the same — Jan of this year is before Apr of this year
-      } else if (month === 0) {
-        // Q4 (Jan) → Q3 (Oct) of the previous calendar year
-        setMonth(9); setYear(y => y - 1)
-      } else {
-        // Q3 (Oct)→Q2 (Jul) or Q2 (Jul)→Q1 (Apr): just subtract 3
-        setMonth(m => m - 3)
-      }
+      if (month === 3)      { setMonth(0) }
+      else if (month === 0) { setMonth(9); setYear(y => y - 1) }
+      else                  { setMonth(m => m - 3) }
     } else {
       setYear(y => y - 1)
     }
@@ -477,17 +559,9 @@ export default function AchieversPage() {
       if (month === 11) { setMonth(0); setYear(y => y + 1) }
       else setMonth(m => m + 1)
     } else if (period === 'quarterly') {
-      if (month === 9) {
-        // Q3 (Oct) → Q4 (Jan) of the next calendar year
-        setMonth(0); setYear(y => y + 1)
-      } else if (month === 0) {
-        // Q4 (Jan) → Q1 (Apr) of the same calendar year
-        setMonth(3)
-        // year stays the same — Apr of this year is after Jan of this year
-      } else {
-        // Q1 (Apr)→Q2 (Jul) or Q2 (Jul)→Q3 (Oct): just add 3
-        setMonth(m => m + 3)
-      }
+      if (month === 9)      { setMonth(0); setYear(y => y + 1) }
+      else if (month === 0) { setMonth(3) }
+      else                  { setMonth(m => m + 3) }
     } else {
       setYear(y => y + 1)
     }
@@ -534,7 +608,6 @@ export default function AchieversPage() {
               </div>
             </div>
 
-            {/* Period tabs — use handlePeriodChange to snap quarter month */}
             <div style={{ display: 'flex', borderBottom: '2px solid #e5e7eb' }}>
               {(['monthly', 'quarterly', 'annual'] as Period[]).map(p => (
                 <button key={p} onClick={() => handlePeriodChange(p)} style={{
@@ -563,7 +636,11 @@ export default function AchieversPage() {
               border: '1px solid #e5e7eb', background: '#fff',
               cursor: 'pointer', fontSize: 18, color: '#374151',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>&#8249;</button>
+              transition: 'background 0.15s',
+            }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f1f5f9' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
+            >&#8249;</button>
             <span style={{
               fontSize: 18, fontWeight: 700, color: '#1e293b',
               minWidth: 200, textAlign: 'center',
@@ -575,10 +652,13 @@ export default function AchieversPage() {
               border: '1px solid #e5e7eb', background: '#fff',
               cursor: 'pointer', fontSize: 18, color: '#374151',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>&#8250;</button>
+              transition: 'background 0.15s',
+            }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f1f5f9' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
+            >&#8250;</button>
           </div>
 
-          {/* ── Content: loading / empty / data ── */}
           {loading ? (
             <div className="flex items-center justify-center h-64">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
@@ -599,21 +679,24 @@ export default function AchieversPage() {
           ) : (
             <>
               {/* Stats */}
-              <div style={{ display: 'flex', gap: 12, marginBottom: 28 }}>
-                <StatCard value={legends}   label="👑 Legends"  color="#15803d" />
-                <StatCard value={achievers} label="🚀 Achievers" color="#6d28d9" />
-                <StatCard value={stars}     label="⭐ Stars"     color="#92400e" />
-                <StatCard value={data.filter(d => d.pct >= 100).length} label="Total Qualifiers" color="#2563eb" />
+              <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
+                <StatCard value={legends}   label="👑 Legends"        color="#15803d" />
+                <StatCard value={achievers} label="🚀 Achievers"       color="#6d28d9" />
+                <StatCard value={stars}     label="⭐ Stars"           color="#92400e" />
+                <StatCard value={data.filter(d => d.pct >= 100).length} label="🎯 Qualifiers" color="#2563eb" />
               </div>
 
-              {/* Podium */}
+              {/* Chasing banner — shows who's closest to cracking 100% */}
+              <ChasingBanner data={data} />
+
+              {/* Podium — only qualifiers (>= 100%) */}
               {top3.length > 0 ? (
                 <div style={{ marginBottom: 36 }}>
                   <div style={{
                     fontSize: 11, letterSpacing: '2px', textTransform: 'uppercase',
                     color: '#94a3b8', textAlign: 'center', marginBottom: 20,
                   }}>
-                    Top Performers
+                    ✨ Top Performers — Target Crushers Only
                   </div>
                   <div style={{
                     display: 'grid',
@@ -627,11 +710,18 @@ export default function AchieversPage() {
                 </div>
               ) : (
                 <div style={{
-                  textAlign: 'center', padding: '28px',
-                  background: '#fff', borderRadius: 16, border: '1px solid #e5e7eb',
-                  marginBottom: 28, color: '#6b7280', fontSize: 14,
+                  textAlign: 'center', padding: '32px',
+                  background: 'linear-gradient(135deg, #fff7ed, #ffedd5)',
+                  borderRadius: 16, border: '1px solid #fed7aa',
+                  marginBottom: 28,
                 }}>
-                  No joinings recorded yet for {periodLabel}. Keep pushing! 💪
+                  <div style={{ fontSize: 40, marginBottom: 10 }}>🎯</div>
+                  <div style={{ fontWeight: 700, color: '#92400e', fontSize: 16 }}>
+                    No one has hit 100% yet for {periodLabel}
+                  </div>
+                  <div style={{ color: '#b45309', fontSize: 13, marginTop: 6 }}>
+                    Be the first to claim a podium spot! Every joining counts. 💪
+                  </div>
                 </div>
               )}
 
@@ -642,7 +732,7 @@ export default function AchieversPage() {
               }}>
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: '40px 1fr 80px 130px',
+                  gridTemplateColumns: '40px 1fr 120px 130px',
                   gap: 8, padding: '10px 16px',
                   background: '#f8fafc', borderBottom: '1px solid #e5e7eb',
                   fontSize: 11, letterSpacing: '1px', textTransform: 'uppercase',
