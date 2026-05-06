@@ -81,8 +81,8 @@ const MOTIVATION: { min: number; max: number; msg: string; color: string }[] = [
   { min: 150, max: 199,      msg: "Crushing it! Keep the streak! 🚀",  color: '#6d28d9' },
   { min: 100, max: 149,      msg: "Target smashed! Aim higher! ⭐",    color: '#92400e' },
   { min: 75,  max: 99,       msg: "So close! Final push! 💪",          color: '#0369a1' },
-  { min: 50,  max: 74,       msg: "Good progress, keep going! 📈",     color: '#0369a1' },
-  { min: 0,   max: 49,       msg: "Every joining counts! 🎯",          color: '#6b7280' },
+  { min: 50,  max: 74,       msg: "You are in mid-range, more effort needed! 📈",     color: '#0369a1' },
+  { min: 0,   max: 49,       msg: "Your efforts are not paying off , Need more focus! 🎯",          color: '#6b7280' },
 ]
 
 function getMotivation(pct: number) {
@@ -425,7 +425,7 @@ function LeaderboardRow({ person, rank }: { person: AchieverRow; rank: number })
     >
       {/* Rank */}
       <div style={{ fontWeight: 700, fontSize: 15, color: '#94a3b8', textAlign: 'center' }}>
-        {rank <= 3
+        {rank <= 3 && person.pct >= 100
           ? <span style={{ fontSize: 18 }}>{['🥇','🥈','🥉'][rank - 1]}</span>
           : rank
         }
