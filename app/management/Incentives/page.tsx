@@ -13,11 +13,9 @@ const HALF_YEARLY_SLABS = [
   { label: 'Slab V',   min: 200, max: Infinity, rate: 0.08, desc: '200%+',   color: '#10b981' },
 ]
 
-const MONTHLY_RATE = 0.01       // 1% flat at 100%+ achievement
-const MONTHLY_MIN_PCT = 50      // below 50% → nil
-const MONTHLY_BONUS_THRESHOLD = 150  // reward only applicable at 150%+
-
-// Half-yearly: if avg monthly achievement < 60% → null and void
+const MONTHLY_RATE = 0.01
+const MONTHLY_MIN_PCT = 50
+const MONTHLY_BONUS_THRESHOLD = 150
 const HY_AVG_MIN = 60
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -39,7 +37,6 @@ interface MonthEntry {
   incentive: number
   manual: number
   manualNote: string
-   
 }
 
 interface RecruiterCalc {
@@ -70,7 +67,6 @@ interface RecruiterCalc {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const MONTH_NAMES = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar']
-// FY months: Apr(0)..Mar(11) → calendar months: 3,4,5,6,7,8,9,10,11,0,1,2
 const FY_CAL_MONTHS = [3,4,5,6,7,8,9,10,11,0,1,2]
 
 function fyLabel(fyStart: number) {
@@ -127,37 +123,26 @@ export default function IncentivesPage() {
   const supabase = createClientComponentClient()
 
   const now = new Date()
-  // Current FY start year
   const defaultFY = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
   const [fyStart, setFyStart] = useState(defaultFY)
 
-  // Half: 'H1' = Apr-Sep, 'H2' = Oct-Mar
   const [half, setHalf] = useState<'H1'|'H2'>('H1')
-  const [view, setView] = useState<'monthly'|'halfyearly'|'annual'>('monthly')
+  const [view, setView] = useState<'monthly'|'halfyearly'|'annual'|'announce'>('monthly')
 
   const [users, setUsers] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Revenue data: keyed by userId → calendarMonth(0-11) → revenue
   const [revenueData, setRevenueData] = useState<Record<string, Record<number, number>>>({})
-
-  // Manual overrides: userId → { monthIndex(fy 0-11) → {amount, note} }
   const [manualMonthly, setManualMonthly] = useState<Record<string, Record<number, {amount:number;note:string}>>>({})
   const [paidMonthly, setPaidMonthly] = useState<Record<string, Record<number, number>>>({})
   const [manualHY, setManualHY] = useState<Record<string, {amount:number;note:string}>>({})
   const [manualAnnual, setManualAnnual] = useState<Record<string, {amount:number;note:string}>>({})
-
-  // Expanded recruiter
   const [expanded, setExpanded] = useState<string|null>(null)
-
-
-  // Monthly sub-view: bymonth = pick a month see all recruiters | byrecruiter = per-person accordion
   const [monthSubView, setMonthSubView] = useState<'bymonth'|'byrecruiter'>('bymonth')
 
-  // Selected FY month index: 0=Apr, 1=May ... 11=Mar
   const currentFyMonthIdx = FY_CAL_MONTHS.indexOf(now.getMonth()) >= 0 ? FY_CAL_MONTHS.indexOf(now.getMonth()) : 0
   const [selectedFyMonth, setSelectedFyMonth] = useState(currentFyMonthIdx)
-  // Load users
+
   const loadUsers = useCallback(async () => {
     setLoading(true)
     const { data, error } = await supabase
@@ -169,7 +154,6 @@ export default function IncentivesPage() {
     setLoading(false)
   }, [])
 
-  // Load revenue data from candidates for the full FY
   const loadRevenue = useCallback(async () => {
     const startDate = `${fyStart}-04-01`
     const endDate = `${fyStart + 1}-03-31`
@@ -184,7 +168,6 @@ export default function IncentivesPage() {
 
     if (error) { console.error(error); return }
 
-    // Aggregate by user → calendar month
     const map: Record<string, Record<number, number>> = {}
     for (const c of (candidates ?? [])) {
       if (!c.assigned_to || !c.date_joined) continue
@@ -207,7 +190,6 @@ export default function IncentivesPage() {
   // ── Compute per-recruiter ──────────────────────────────────────────────────
 
   function computeRecruiter(user: UserRow): RecruiterCalc {
-    // FY months: index 0=Apr ... 11=Mar
     const fyMonths = FY_CAL_MONTHS.map((calMonth, fyIdx) => {
       const yr = calMonth >= 3 ? fyStart : fyStart + 1
       const target = user.monthly_target ?? 0
@@ -222,7 +204,6 @@ export default function IncentivesPage() {
       }
     })
 
-    // Half-yearly window indices
     const hyIndices = half === 'H1' ? [0,1,2,3,4,5] : [6,7,8,9,10,11]
     const hyMonths = hyIndices.map(i => fyMonths[i])
     const hyTarget = hyMonths.reduce((s, m) => s + m.target, 0)
@@ -237,12 +218,11 @@ export default function IncentivesPage() {
     const hyManual = manualHY[user.id]?.amount ?? 0
     const hyManualNote = manualHY[user.id]?.note ?? ''
 
-    // Annual
     const annTarget = (user.annual_target > 0 ? user.annual_target : user.monthly_target * 12) || 0
     const annAchieved = fyMonths.reduce((s, m) => s + m.achieved, 0)
     const annPct = annTarget > 0 ? Math.round((annAchieved / annTarget) * 100) : 0
     const annEligible = annPct >= 100
-    const annPayout = annEligible ? annAchieved * 1.0 : 0 // 100% payout on 100% achievement
+    const annPayout = annEligible ? annAchieved * 1.0 : 0
     const annManual = manualAnnual[user.id]?.amount ?? 0
     const annManualNote = manualAnnual[user.id]?.note ?? ''
 
@@ -263,15 +243,6 @@ export default function IncentivesPage() {
   }
 
   const calcs = users.map(computeRecruiter)
-
-  // Summary totals
-  const totalMonthlyIncentive = calcs.reduce((s, c) => {
-    const idx = view === 'monthly' ? null : null
-    return s + c.months.reduce((ms, m) => ms + m.incentive + m.manual, 0)
-  }, 0)
-  const totalHYIncentive = calcs.reduce((s, c) => s + c.halfYearly.incentive + c.halfYearly.manualBonus, 0)
-
-  // ── Render ────────────────────────────────────────────────────────────────
 
   const hyLabel = half === 'H1' ? 'H1 (Apr – Sep)' : 'H2 (Oct – Mar)'
   const hyPayoutMonth = half === 'H1' ? 'December 2026' : 'July 2027'
@@ -295,7 +266,6 @@ export default function IncentivesPage() {
                 Management only · Policy effective April 2026 · {fyLabel(fyStart)}
               </p>
             </div>
-            {/* FY selector */}
             <div style={{ display:'flex', alignItems:'center', gap:8 }}>
               <button onClick={()=>setFyStart(y=>y-1)} style={navBtn}>‹</button>
               <span style={{ fontWeight:700, fontSize:15, color:'#1e293b', minWidth:100, textAlign:'center' }}>
@@ -307,7 +277,7 @@ export default function IncentivesPage() {
 
           {/* Tabs */}
           <div style={{ display:'flex', borderBottom:'2px solid #e5e7eb' }}>
-            {(['monthly','halfyearly','annual'] as const).map(t => (
+            {(['monthly','halfyearly','annual','announce'] as const).map(t => (
               <button key={t} onClick={()=>setView(t)} style={{
                 padding:'10px 24px', border:'none', background:'transparent',
                 cursor:'pointer', fontSize:14, fontWeight:600, fontFamily:'inherit',
@@ -315,7 +285,10 @@ export default function IncentivesPage() {
                 borderBottom: view===t ? '2px solid #4f46e5' : '2px solid transparent',
                 marginBottom:-2, transition:'all 0.15s',
               }}>
-                {t === 'monthly' ? '📅 Monthly Rewards' : t === 'halfyearly' ? '📊 Half-Yearly Incentive' : '🏅 Annual Variable'}
+                {t === 'monthly' ? '📅 Monthly Rewards'
+                  : t === 'halfyearly' ? '📊 Half-Yearly Incentive'
+                  : t === 'annual' ? '🏅 Annual Variable'
+                  : '📣 Announce Winners'}
               </button>
             ))}
           </div>
@@ -324,15 +297,19 @@ export default function IncentivesPage() {
 
       <div style={{ maxWidth:1100, margin:'0 auto', padding:'28px 32px 0' }}>
 
-        {/* Policy summary banner */}
-        <PolicyBanner view={view} half={half} setHalf={setHalf} hyPayoutMonth={hyPayoutMonth} />
+        {/* Policy summary banner — hide on announce tab */}
+        {view !== 'announce' && (
+          <PolicyBanner view={view} half={half} setHalf={setHalf} hyPayoutMonth={hyPayoutMonth} />
+        )}
 
         {loading ? (
           <div style={{ textAlign:'center', padding:'60px 0', color:'#94a3b8' }}>Loading recruiters...</div>
         ) : (
           <>
-            {/* Summary bar */}
-            <SummaryBar calcs={calcs} view={view} half={half} />
+            {/* Summary bar — hide on announce tab */}
+            {view !== 'announce' && (
+              <SummaryBar calcs={calcs} view={view} half={half} />
+            )}
 
             {/* Monthly sub-view toggle */}
             {view === 'monthly' && (
@@ -371,7 +348,7 @@ export default function IncentivesPage() {
             )}
 
             {/* Per-recruiter accordion view */}
-            {(view !== 'monthly' || monthSubView === 'byrecruiter') && (
+            {(view === 'halfyearly' || view === 'annual' || (view === 'monthly' && monthSubView === 'byrecruiter')) && (
               <div style={{ display:'flex', flexDirection:'column', gap:12, marginTop:20 }}>
                 {calcs.map(calc => (
                   <RecruiterCard
@@ -396,6 +373,15 @@ export default function IncentivesPage() {
                   />
                 ))}
               </div>
+            )}
+
+            {/* Announce Winners tab */}
+            {view === 'announce' && (
+              <AnnounceWinnersTab
+                calcs={calcs}
+                fyStart={fyStart}
+                defaultFyMonth={currentFyMonthIdx}
+              />
             )}
           </>
         )}
@@ -422,7 +408,6 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
   const [editingPaidUser, setEditingPaidUser] = useState<string|null>(null)
   const [editPaidAmt, setEditPaidAmt] = useState('')
 
-  // Rows for selected month
   const rows = calcs.map(calc => {
     const m = calc.months[selectedFyMonth]
     const manual = manualMonthly[calc.user.id]?.[selectedFyMonth]?.amount ?? 0
@@ -516,7 +501,6 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
               }}>
                 <div style={{ fontSize:13, fontWeight:600, color:'#94a3b8', textAlign:'center' }}>{idx+1}</div>
 
-                {/* Name */}
                 <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>
                   <div style={{
                     width:32, height:32, borderRadius:'50%', background:bg, color,
@@ -537,7 +521,6 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
                 <div style={{ fontSize:13, fontWeight:600, color:'#374151', textAlign:'right' }}>{fmtINR(m.achieved)}</div>
                 <div style={{ fontSize:14, fontWeight:800, color:pctColor, textAlign:'right' }}>{m.pct}%</div>
 
-                {/* Eligibility */}
                 <div style={{ textAlign:'right' }}>
                   {eligible
                     ? <span style={{ fontSize:11, fontWeight:600, color:'#16a34a', background:'#f0fdf4', padding:'2px 8px', borderRadius:100, border:'1px solid #bbf7d0' }}>✓ Eligible</span>
@@ -545,12 +528,10 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
                   }
                 </div>
 
-                {/* Policy reward */}
                 <div style={{ fontSize:14, fontWeight:700, color: eligible?'#15803d':'#9ca3af', textAlign:'right' }}>
                   {eligible ? fmtINR(m.incentive) : 'Nil'}
                 </div>
 
-                {/* Manual bonus — inline edit */}
                 <div style={{ textAlign:'right' }}>
                   {isEditing ? (
                     <div style={{ display:'flex', gap:4, justifyContent:'flex-end' }}>
@@ -577,7 +558,7 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
                     </div>
                   )}
                 </div>
-                {/* Paid — inline edit */}
+
                 <div style={{ textAlign:'right' }}>
                   {editingPaidUser === calc.user.id ? (
                     <div style={{ display:'flex', gap:4, justifyContent:'flex-end' }}>
@@ -603,7 +584,7 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
                     </div>
                   )}
                 </div>
-                {/* Balance */}
+
                 <div style={{ textAlign:'right' }}>
                   {(() => {
                     const balance = m.incentive + manual - paid
@@ -694,7 +675,6 @@ function PolicyBanner({ view, half, setHalf, hyPayoutMonth }: {
           ))}
         </div>
       </div>
-      {/* Slab table */}
       <div style={{
         background:'#fff', border:'1px solid #e5e7eb', borderRadius:12,
         overflow:'hidden', marginBottom:4,
@@ -739,8 +719,6 @@ function PolicyBanner({ view, half, setHalf, hyPayoutMonth }: {
 // ── Summary Bar ───────────────────────────────────────────────────────────────
 
 function SummaryBar({ calcs, view, half }: { calcs: RecruiterCalc[]; view: string; half: 'H1'|'H2' }) {
-  const hyIndices = half === 'H1' ? [0,1,2,3,4,5] : [6,7,8,9,10,11]
-
   const totalMonthly = calcs.reduce((s,c) => s + c.months.reduce((ms,m) => ms+m.incentive+m.manual, 0), 0)
   const totalHY = calcs.reduce((s,c) => s + c.halfYearly.incentive + c.halfYearly.manualBonus, 0)
   const totalAnn = calcs.reduce((s,c) => s + c.annual.payout + c.annual.manualBonus, 0)
@@ -794,7 +772,6 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
   const roleBadge = getRoleColor(user.role)
   const hyIndices = half === 'H1' ? [0,1,2,3,4,5] : [6,7,8,9,10,11]
 
-  // What to show in summary row
   const monthlyTotal = months.reduce((s,m) => s+m.incentive+m.manual, 0)
   const hyTotal = halfYearly.incentive + halfYearly.manualBonus
 
@@ -817,7 +794,6 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
       boxShadow: expanded ? '0 4px 16px rgba(0,0,0,0.08)' : 'none',
       transition:'box-shadow 0.2s',
     }}>
-      {/* Summary row */}
       <div
         onClick={onToggle}
         style={{
@@ -872,11 +848,9 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
         </div>
       </div>
 
-      {/* Detail panel */}
       {expanded && (
         <div style={{ borderTop:'1px solid #f1f5f9', padding:'20px' }}>
 
-          {/* ── Monthly view ── */}
           {view === 'monthly' && (
             <div>
               <div style={{
@@ -920,10 +894,8 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
             </div>
           )}
 
-          {/* ── Half-yearly view ── */}
           {view === 'halfyearly' && (
             <div>
-              {/* Month breakdown */}
               <div style={{ marginBottom:16 }}>
                 <div style={{ fontSize:12, fontWeight:700, color:'#374151', marginBottom:8 }}>
                   Monthly breakdown ({half === 'H1' ? 'Apr–Sep' : 'Oct–Mar'})
@@ -950,7 +922,6 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
                 </div>
               </div>
 
-              {/* HY summary */}
               <div style={{
                 display:'grid', gridTemplateColumns:'repeat(4,1fr)',
                 gap:12, marginBottom:16,
@@ -998,7 +969,6 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
                 </div>
               )}
 
-              {/* Manual bonus */}
               <ManualInput
                 label="Special / Manual Bonus"
                 value={halfYearly.manualBonus}
@@ -1008,7 +978,6 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
             </div>
           )}
 
-          {/* ── Annual view ── */}
           {view === 'annual' && (
             <div>
               <div style={{
@@ -1217,6 +1186,190 @@ function ManualInput({ label, value, note, onChange }: {
           Current: {fmtINR(value)} {note ? `— "${note}"` : ''}
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Announce Winners Tab ──────────────────────────────────────────────────────
+
+function AnnounceWinnersTab({ calcs, fyStart, defaultFyMonth }: {
+  calcs: RecruiterCalc[]
+  fyStart: number
+  defaultFyMonth: number
+}) {
+  const [selectedFyMonth, setSelectedFyMonth] = useState(defaultFyMonth)
+  const [copied, setCopied] = useState(false)
+  const [headerText, setHeaderText] = useState('🏆 *Star Performers of the Month!*')
+  const [footerText, setFooterText] = useState("Keep pushing! 💪 Let's make next month even bigger!")
+
+  const RANK_EMOJI = ['🥇', '🥈', '🥉', '⭐', '⭐', '⭐', '⭐', '⭐']
+
+  const winners = calcs
+    .map(c => ({ ...c, m: c.months[selectedFyMonth] }))
+    .filter(c => c.m.incentive > 0 || c.m.manual > 0)
+    .sort((a, b) => b.m.pct - a.m.pct)
+
+  const monthLabel = `${MONTH_NAMES[selectedFyMonth]} ${
+    selectedFyMonth <= 8 ? fyStart : fyStart + 1
+  }`
+
+  function tierEmoji(pct: number) {
+    return pct >= 200 ? '🚀' : pct >= 150 ? '🔥' : pct >= 100 ? '⭐' : ''
+  }
+
+  const message = [
+    headerText,
+    `📅 *${monthLabel}*`,
+    '',
+    ...winners.flatMap((w, i) => [
+      `${RANK_EMOJI[i] ?? '⭐'} *${w.user.full_name}* (${getRoleLabel(w.user.role)})`,
+      `   ${tierEmoji(w.m.pct)} Achievement: *${w.m.pct}%*`,
+      `   💰 Reward: *${fmtINR(w.m.incentive + w.m.manual)}*`,
+      ...(i < winners.length - 1 ? [''] : []),
+    ]),
+    '',
+    '─────────────────',
+    footerText,
+  ].join('\n')
+
+  function handleCopy() {
+    navigator.clipboard.writeText(message).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      {/* Month pills */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20 }}>
+        {MONTH_NAMES.map((mn, i) => (
+          <button key={i} onClick={() => setSelectedFyMonth(i)} style={{
+            padding: '6px 14px', borderRadius: 100, cursor: 'pointer',
+            fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+            border: '1px solid #e5e7eb',
+            background: selectedFyMonth === i ? '#4f46e5' : '#fff',
+            color: selectedFyMonth === i ? '#fff' : '#6b7280',
+            transition: 'all 0.15s',
+          }}>{mn}</button>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+        {/* Left: winner cards */}
+        <div>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: '#6b7280',
+            textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 10,
+          }}>
+            {winners.length} winner{winners.length !== 1 ? 's' : ''} · {monthLabel}
+          </div>
+
+          {winners.length === 0 ? (
+            <div style={{
+              padding: '32px', textAlign: 'center', color: '#94a3b8',
+              background: '#f8fafc', borderRadius: 12, border: '1px dashed #e5e7eb',
+            }}>
+              No eligible winners this month
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {winners.map((w, i) => {
+                const [bg, color] = avatarColor(w.user.full_name)
+                const rb = getRoleColor(w.user.role)
+                const pct = w.m.pct
+                const pctColor = pct >= 200 ? '#15803d' : pct >= 150 ? '#7c3aed' : '#1d4ed8'
+                return (
+                  <div key={w.user.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    background: '#fff', border: '1px solid #e5e7eb',
+                    borderRadius: 12, padding: '12px 16px',
+                  }}>
+                    <span style={{ fontSize: 20, flexShrink: 0 }}>{RANK_EMOJI[i] ?? '⭐'}</span>
+                    <div style={{
+                      width: 38, height: 38, borderRadius: '50%',
+                      background: bg, color,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontWeight: 700, fontSize: 12, flexShrink: 0,
+                    }}>{initials(w.user.full_name)}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: '#1e293b' }}>
+                        {w.user.full_name}
+                      </div>
+                      <span style={{
+                        fontSize: 10, padding: '2px 7px', borderRadius: 100,
+                        background: rb.bg, color: rb.color, fontWeight: 600,
+                      }}>
+                        {getRoleLabel(w.user.role)}
+                      </span>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: 16, color: pctColor }}>
+                        {pct}%
+                      </div>
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>
+                        {fmtINR(w.m.incentive + w.m.manual)}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Right: message preview + copy */}
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>Header</div>
+              <input
+                value={headerText}
+                onChange={e => setHeaderText(e.target.value)}
+                style={{
+                  width: '100%', padding: '7px 10px', borderRadius: 8,
+                  border: '1px solid #e5e7eb', fontSize: 12, fontFamily: 'inherit',
+                }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>Closing line</div>
+              <input
+                value={footerText}
+                onChange={e => setFooterText(e.target.value)}
+                style={{
+                  width: '100%', padding: '7px 10px', borderRadius: 8,
+                  border: '1px solid #e5e7eb', fontSize: 12, fontFamily: 'inherit',
+                }}
+              />
+            </div>
+          </div>
+
+          <textarea
+            readOnly
+            value={message}
+            rows={16}
+            style={{
+              width: '100%', fontFamily: 'monospace', fontSize: 13,
+              lineHeight: 1.7, padding: 14, borderRadius: 10,
+              border: '1px solid #e5e7eb', background: '#f8fafc',
+              resize: 'none', outline: 'none', color: '#374151',
+              boxSizing: 'border-box',
+            }}
+          />
+
+          <button onClick={handleCopy} style={{
+            marginTop: 10, display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 20px',
+            background: copied ? '#0f6e56' : '#25d366',
+            color: '#fff', border: 'none', borderRadius: 8,
+            cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
+            transition: 'background 0.2s',
+          }}>
+            {copied ? '✓ Copied!' : '📋 Copy for WhatsApp'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
