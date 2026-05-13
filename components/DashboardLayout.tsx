@@ -162,6 +162,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           icon: '📈',
           description: 'Achievers Board'
         },
+          {
+          name: 'Incentives & Bonuses',
+          href: '/management/Incentives',
+          icon: '💰',
+          description: 'Incentive & Bonus Management'
+        },
         {
           name: 'Talent Pool Search',
           href: '/search/talent-pool',
