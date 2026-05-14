@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import StaleCandidatesBanner from '@/components/StaleCandidatesBanner'
+import TLRewardsSection from '@/components/TLRewardsSection'
 
 // Terminal/rejected stages — used consistently throughout
 const TERMINAL_STAGES = ['joined', 'screening_rejected', 'interview_rejected', 'offer_rejected', 'renege']
@@ -430,7 +431,13 @@ export default function TLDashboard() {
             </div>
           </div>
         </div>
-
+        {/* Rewards & Incentives */}
+        
+        <TLRewardsSection
+        tlUserId={user?.id}
+        recruiterDetails={stats.recruiterDetails}
+        />
+        
         {/* Detailed Team Member Performance */}
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-4">

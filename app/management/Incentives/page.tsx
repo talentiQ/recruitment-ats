@@ -3,20 +3,20 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 
-// ── Policy Constants (Effective April 2026) ───────────────────────────────────
+// ── Policy Constants ──────────────────────────────────────────────────────────
 
 const HALF_YEARLY_SLABS = [
-  { label: 'Slab I',   min: 0,   max: 84.99, rate: 0,    desc: '0 – 84%',    color: '#6b7280' },
-  { label: 'Slab II',  min: 85,  max: 99.99, rate: 0.03, desc: '85 – 99%',   color: '#f59e0b' },
-  { label: 'Slab III', min: 100, max: 149.99,rate: 0.06, desc: '100 – 149%', color: '#3b82f6' },
-  { label: 'Slab IV',  min: 150, max: 199.99,rate: 0.07, desc: '150 – 199%', color: '#8b5cf6' },
-  { label: 'Slab V',   min: 200, max: Infinity, rate: 0.08, desc: '200%+',   color: '#10b981' },
+  { label: 'Slab I',   min: 0,   max: 84.99,    rate: 0,    desc: '0 – 84%',    color: '#6b7280' },
+  { label: 'Slab II',  min: 85,  max: 99.99,    rate: 0.03, desc: '85 – 99%',   color: '#f59e0b' },
+  { label: 'Slab III', min: 100, max: 149.99,   rate: 0.06, desc: '100 – 149%', color: '#3b82f6' },
+  { label: 'Slab IV',  min: 150, max: 199.99,   rate: 0.07, desc: '150 – 199%', color: '#8b5cf6' },
+  { label: 'Slab V',   min: 200, max: Infinity, rate: 0.08, desc: '200%+',      color: '#10b981' },
 ]
 
-const MONTHLY_RATE = 0.01
-const MONTHLY_MIN_PCT = 50
+const MONTHLY_RATE            = 0.01
 const MONTHLY_BONUS_THRESHOLD = 150
-const HY_AVG_MIN = 60
+const MONTHLY_MIN_PCT         = 50
+const HY_AVG_MIN              = 60
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -66,7 +66,7 @@ interface RecruiterCalc {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const MONTH_NAMES = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar']
+const MONTH_NAMES   = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar']
 const FY_CAL_MONTHS = [3,4,5,6,7,8,9,10,11,0,1,2]
 
 function fyLabel(fyStart: number) {
@@ -96,13 +96,13 @@ function calcMonthlyIncentive(achieved: number, pct: number): number {
 
 function getRoleLabel(role: string) {
   if (role === 'sr_team_leader') return 'Sr. TL'
-  if (role === 'team_leader') return 'TL'
+  if (role === 'team_leader')    return 'TL'
   return 'Recruiter'
 }
 
 function getRoleColor(role: string) {
   if (role === 'sr_team_leader') return { bg: '#fef2f2', color: '#dc2626' }
-  if (role === 'team_leader') return { bg: '#eff6ff', color: '#2563eb' }
+  if (role === 'team_leader')    return { bg: '#eff6ff', color: '#2563eb' }
   return { bg: '#f0fdf4', color: '#16a34a' }
 }
 
@@ -114,7 +114,7 @@ function avatarColor(name: string): [string,string] {
   return AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length]
 }
 function initials(name: string) {
-  return name.split(' ').slice(0,2).map((w:string)=>w[0]).join('').toUpperCase()
+  return name.split(' ').slice(0,2).map((w: string) => w[0]).join('').toUpperCase()
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
@@ -122,26 +122,40 @@ function initials(name: string) {
 export default function IncentivesPage() {
   const supabase = createClientComponentClient()
 
-  const now = new Date()
+  const now       = new Date()
   const defaultFY = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
+
   const [fyStart, setFyStart] = useState(defaultFY)
+  const [half,    setHalf]    = useState<'H1'|'H2'>('H1')
+  const [view,    setView]    = useState<'monthly'|'halfyearly'|'annual'|'announce'>('monthly')
 
-  const [half, setHalf] = useState<'H1'|'H2'>('H1')
-  const [view, setView] = useState<'monthly'|'halfyearly'|'annual'|'announce'>('monthly')
-
-  const [users, setUsers] = useState<UserRow[]>([])
+  const [users,   setUsers]   = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
 
-  const [revenueData, setRevenueData] = useState<Record<string, Record<number, number>>>({})
-  const [manualMonthly, setManualMonthly] = useState<Record<string, Record<number, {amount:number;note:string}>>>({})
-  const [paidMonthly, setPaidMonthly] = useState<Record<string, Record<number, number>>>({})
-  const [manualHY, setManualHY] = useState<Record<string, {amount:number;note:string}>>({})
-  const [manualAnnual, setManualAnnual] = useState<Record<string, {amount:number;note:string}>>({})
-  const [expanded, setExpanded] = useState<string|null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string|null>(null)
+
+  const [revenueData,   setRevenueData]   = useState<Record<string, Record<number, number>>>({})
+  const [manualMonthly, setManualMonthly] = useState<Record<string, Record<number, { amount: number; note: string }>>>({})
+  const [paidMonthly,   setPaidMonthly]   = useState<Record<string, Record<number, number>>>({})
+  const [manualHY,      setManualHY]      = useState<Record<string, { amount: number; note: string }>>({})
+  const [manualAnnual,  setManualAnnual]  = useState<Record<string, { amount: number; note: string }>>({})
+
+  const [expanded,     setExpanded]     = useState<string|null>(null)
   const [monthSubView, setMonthSubView] = useState<'bymonth'|'byrecruiter'>('bymonth')
 
-  const currentFyMonthIdx = FY_CAL_MONTHS.indexOf(now.getMonth()) >= 0 ? FY_CAL_MONTHS.indexOf(now.getMonth()) : 0
+  const currentFyMonthIdx = FY_CAL_MONTHS.indexOf(now.getMonth()) >= 0
+    ? FY_CAL_MONTHS.indexOf(now.getMonth()) : 0
   const [selectedFyMonth, setSelectedFyMonth] = useState(currentFyMonthIdx)
+
+  // ── Auth ──────────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setCurrentUserId(data.user?.id ?? null)
+    })
+  }, [supabase])
+
+  // ── Load users ────────────────────────────────────────────────────────────────
 
   const loadUsers = useCallback(async () => {
     setLoading(true)
@@ -152,11 +166,15 @@ export default function IncentivesPage() {
       .eq('is_active', true)
     if (!error && data) setUsers(data as UserRow[])
     setLoading(false)
-  }, [])
+  }, [supabase])
+
+  useEffect(() => { loadUsers() }, [loadUsers])
+
+  // ── Load revenue ──────────────────────────────────────────────────────────────
 
   const loadRevenue = useCallback(async () => {
     const startDate = `${fyStart}-04-01`
-    const endDate = `${fyStart + 1}-03-31`
+    const endDate   = `${fyStart + 1}-03-31`
 
     const { data: candidates, error } = await supabase
       .from('candidates')
@@ -166,65 +184,131 @@ export default function IncentivesPage() {
       .gte('date_joined', startDate)
       .lte('date_joined', endDate)
 
-    if (error) { console.error(error); return }
+    if (error) { console.error('Revenue load error:', error); return }
 
     const map: Record<string, Record<number, number>> = {}
     for (const c of (candidates ?? [])) {
       if (!c.assigned_to || !c.date_joined) continue
       const calMonth = new Date(c.date_joined).getMonth()
-      const rev = c.revenue_earned ?? 0
-      const renegeDate = c.renege_date
-      const isRenegedThisMonth = c.is_renege && renegeDate &&
-        new Date(renegeDate).getMonth() === calMonth &&
-        new Date(renegeDate).getFullYear() === new Date(c.date_joined).getFullYear()
-      const net = isRenegedThisMonth ? 0 : rev
+      const rev      = c.revenue_earned ?? 0
+      const isRenegedSameMonth =
+        c.is_renege && c.renege_date &&
+        new Date(c.renege_date).getMonth() === calMonth &&
+        new Date(c.renege_date).getFullYear() === new Date(c.date_joined).getFullYear()
+      const net = isRenegedSameMonth ? 0 : rev
       if (!map[c.assigned_to]) map[c.assigned_to] = {}
       map[c.assigned_to][calMonth] = (map[c.assigned_to][calMonth] ?? 0) + net
     }
     setRevenueData(map)
-  }, [fyStart])
+  }, [fyStart, supabase])
 
-  useEffect(() => { loadUsers() }, [loadUsers])
   useEffect(() => { loadRevenue() }, [loadRevenue])
 
-  // ── Compute per-recruiter ──────────────────────────────────────────────────
+  // ── Load overrides ────────────────────────────────────────────────────────────
+  // IMPORTANT: dependency array has ONLY [fyStart, supabase] — no state refs,
+  // which was the root cause of the stale-closure / data-not-loading bug.
+
+  const loadOverrides = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('incentive_overrides')
+      .select('*')
+      .eq('fy_start', fyStart)
+
+    if (error) { console.error('Overrides load error:', error); return }
+    if (!data)  return
+
+    const newManualMonthly: Record<string, Record<number, { amount: number; note: string }>> = {}
+    const newPaidMonthly:   Record<string, Record<number, number>> = {}
+    const newManualHY:      Record<string, { amount: number; note: string }> = {}
+    const newManualAnnual:  Record<string, { amount: number; note: string }> = {}
+
+    for (const row of data) {
+      const uid = row.user_id
+      if (row.period_type === 'monthly') {
+        const fyIdx = Number(row.period_key)
+        if (!newManualMonthly[uid]) newManualMonthly[uid] = {}
+        if (!newPaidMonthly[uid])   newPaidMonthly[uid]   = {}
+        newManualMonthly[uid][fyIdx] = { amount: row.manual_amount ?? 0, note: row.manual_note ?? '' }
+        newPaidMonthly[uid][fyIdx]   = row.paid_amount ?? 0
+      } else if (row.period_type === 'halfyearly') {
+        newManualHY[uid] = { amount: row.manual_amount ?? 0, note: row.manual_note ?? '' }
+      } else if (row.period_type === 'annual') {
+        newManualAnnual[uid] = { amount: row.manual_amount ?? 0, note: row.manual_note ?? '' }
+      }
+    }
+
+    setManualMonthly(newManualMonthly)
+    setPaidMonthly(newPaidMonthly)
+    setManualHY(newManualHY)
+    setManualAnnual(newManualAnnual)
+  }, [fyStart, supabase])
+
+  useEffect(() => { loadOverrides() }, [loadOverrides])
+
+  // ── Upsert override to Supabase ───────────────────────────────────────────────
+
+  const upsertOverride = useCallback(async (
+    userId:       string,
+    periodType:   'monthly' | 'halfyearly' | 'annual',
+    periodKey:    string,
+    manualAmount: number,
+    manualNote:   string,
+    paidAmount:   number,
+    updatedBy:    string | null,
+  ) => {
+    const { error } = await supabase
+      .from('incentive_overrides')
+      .upsert(
+        {
+          user_id:       userId,
+          fy_start:      fyStart,
+          period_type:   periodType,
+          period_key:    periodKey,
+          manual_amount: manualAmount,
+          manual_note:   manualNote,
+          paid_amount:   paidAmount,
+          updated_by:    updatedBy,
+          updated_at:    new Date().toISOString(),
+        },
+        { onConflict: 'user_id,fy_start,period_type,period_key' }
+      )
+    if (error) console.error('Upsert error:', error)
+  }, [supabase, fyStart])
+
+  // ── Compute per-recruiter ─────────────────────────────────────────────────────
 
   function computeRecruiter(user: UserRow): RecruiterCalc {
     const fyMonths = FY_CAL_MONTHS.map((calMonth, fyIdx) => {
-      const yr = calMonth >= 3 ? fyStart : fyStart + 1
-      const target = user.monthly_target ?? 0
-      const achieved = revenueData[user.id]?.[calMonth] ?? 0
-      const pct = target > 0 ? Math.round((achieved / target) * 100) : 0
-      const incentive = calcMonthlyIncentive(achieved, pct)
-      const manual = manualMonthly[user.id]?.[fyIdx]?.amount ?? 0
-      const manualNote = manualMonthly[user.id]?.[fyIdx]?.note ?? ''
-      return {
-        month: `${MONTH_NAMES[fyIdx]} ${yr}`,
-        target, achieved, pct, incentive, manual, manualNote,
-      }
+      const yr         = calMonth >= 3 ? fyStart : fyStart + 1
+      const target     = user.monthly_target ?? 0
+      const achieved   = revenueData[user.id]?.[calMonth] ?? 0
+      const pct        = target > 0 ? Math.round((achieved / target) * 100) : 0
+      const incentive  = calcMonthlyIncentive(achieved, pct)
+      const manual     = manualMonthly[user.id]?.[fyIdx]?.amount ?? 0
+      const manualNote = manualMonthly[user.id]?.[fyIdx]?.note   ?? ''
+      return { month: `${MONTH_NAMES[fyIdx]} ${yr}`, target, achieved, pct, incentive, manual, manualNote }
     })
 
-    const hyIndices = half === 'H1' ? [0,1,2,3,4,5] : [6,7,8,9,10,11]
-    const hyMonths = hyIndices.map(i => fyMonths[i])
-    const hyTarget = hyMonths.reduce((s, m) => s + m.target, 0)
-    const hyAchieved = hyMonths.reduce((s, m) => s + m.achieved, 0)
-    const hyPct = hyTarget > 0 ? Math.round((hyAchieved / hyTarget) * 100) : 0
+    const hyIndices     = half === 'H1' ? [0,1,2,3,4,5] : [6,7,8,9,10,11]
+    const hyMonths      = hyIndices.map(i => fyMonths[i])
+    const hyTarget      = hyMonths.reduce((s, m) => s + m.target,   0)
+    const hyAchieved    = hyMonths.reduce((s, m) => s + m.achieved, 0)
+    const hyPct         = hyTarget > 0 ? Math.round((hyAchieved / hyTarget) * 100) : 0
     const avgMonthlyPct = hyMonths.length > 0
-      ? Math.round(hyMonths.reduce((s, m) => s + m.pct, 0) / hyMonths.length)
-      : 0
-    const isVoid = avgMonthlyPct < HY_AVG_MIN
-    const hySlab = isVoid ? null : getHalfYearlySlab(hyPct)
-    const hyIncentive = isVoid ? 0 : calcHalfYearlyIncentive(hyAchieved, hyPct)
-    const hyManual = manualHY[user.id]?.amount ?? 0
-    const hyManualNote = manualHY[user.id]?.note ?? ''
+      ? Math.round(hyMonths.reduce((s, m) => s + m.pct, 0) / hyMonths.length) : 0
+    const isVoid       = avgMonthlyPct < HY_AVG_MIN
+    const hySlab       = isVoid ? null : getHalfYearlySlab(hyPct)
+    const hyIncentive  = isVoid ? 0    : calcHalfYearlyIncentive(hyAchieved, hyPct)
+    const hyManual     = manualHY[user.id]?.amount ?? 0
+    const hyManualNote = manualHY[user.id]?.note   ?? ''
 
-    const annTarget = (user.annual_target > 0 ? user.annual_target : user.monthly_target * 12) || 0
-    const annAchieved = fyMonths.reduce((s, m) => s + m.achieved, 0)
-    const annPct = annTarget > 0 ? Math.round((annAchieved / annTarget) * 100) : 0
-    const annEligible = annPct >= 100
-    const annPayout = annEligible ? annAchieved * 1.0 : 0
-    const annManual = manualAnnual[user.id]?.amount ?? 0
-    const annManualNote = manualAnnual[user.id]?.note ?? ''
+    const annTarget     = (user.annual_target > 0 ? user.annual_target : user.monthly_target * 12) || 0
+    const annAchieved   = fyMonths.reduce((s, m) => s + m.achieved, 0)
+    const annPct        = annTarget > 0 ? Math.round((annAchieved / annTarget) * 100) : 0
+    const annEligible   = annPct >= 100
+    const annPayout     = annEligible ? annAchieved * 1.0 : 0
+    const annManual     = manualAnnual[user.id]?.amount ?? 0
+    const annManualNote = manualAnnual[user.id]?.note   ?? ''
 
     return {
       user,
@@ -242,10 +326,10 @@ export default function IncentivesPage() {
     }
   }
 
-  const calcs = users.map(computeRecruiter)
-
-  const hyLabel = half === 'H1' ? 'H1 (Apr – Sep)' : 'H2 (Oct – Mar)'
+  const calcs         = users.map(computeRecruiter)
   const hyPayoutMonth = half === 'H1' ? 'December 2026' : 'July 2027'
+
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div style={{
@@ -254,7 +338,7 @@ export default function IncentivesPage() {
     }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div style={{ background:'#fff', borderBottom:'1px solid #e5e7eb', padding:'24px 32px 0' }}>
         <div style={{ maxWidth:1100, margin:'0 auto' }}>
           <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:12 }}>
@@ -267,28 +351,27 @@ export default function IncentivesPage() {
               </p>
             </div>
             <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-              <button onClick={()=>setFyStart(y=>y-1)} style={navBtn}>‹</button>
+              <button onClick={() => setFyStart(y => y - 1)} style={navBtn}>‹</button>
               <span style={{ fontWeight:700, fontSize:15, color:'#1e293b', minWidth:100, textAlign:'center' }}>
                 {fyLabel(fyStart)}
               </span>
-              <button onClick={()=>setFyStart(y=>y+1)} style={navBtn}>›</button>
+              <button onClick={() => setFyStart(y => y + 1)} style={navBtn}>›</button>
             </div>
           </div>
 
-          {/* Tabs */}
           <div style={{ display:'flex', borderBottom:'2px solid #e5e7eb' }}>
             {(['monthly','halfyearly','annual','announce'] as const).map(t => (
-              <button key={t} onClick={()=>setView(t)} style={{
+              <button key={t} onClick={() => setView(t)} style={{
                 padding:'10px 24px', border:'none', background:'transparent',
                 cursor:'pointer', fontSize:14, fontWeight:600, fontFamily:'inherit',
-                color: view===t ? '#4f46e5' : '#6b7280',
-                borderBottom: view===t ? '2px solid #4f46e5' : '2px solid transparent',
-                marginBottom:-2, transition:'all 0.15s',
+                color: view === t ? '#4f46e5' : '#6b7280',
+                borderBottom: view === t ? '2px solid #4f46e5' : '2px solid transparent',
+                marginBottom: -2, transition:'all 0.15s',
               }}>
-                {t === 'monthly' ? '📅 Monthly Rewards'
+                {t === 'monthly'     ? '📅 Monthly Rewards'
                   : t === 'halfyearly' ? '📊 Half-Yearly Incentive'
-                  : t === 'annual' ? '🏅 Annual Variable'
-                  : '📣 Announce Winners'}
+                  : t === 'annual'     ? '🏅 Annual Variable'
+                  :                     '📣 Announce Winners'}
               </button>
             ))}
           </div>
@@ -296,8 +379,6 @@ export default function IncentivesPage() {
       </div>
 
       <div style={{ maxWidth:1100, margin:'0 auto', padding:'28px 32px 0' }}>
-
-        {/* Policy summary banner — hide on announce tab */}
         {view !== 'announce' && (
           <PolicyBanner view={view} half={half} setHalf={setHalf} hyPayoutMonth={hyPayoutMonth} />
         )}
@@ -306,28 +387,22 @@ export default function IncentivesPage() {
           <div style={{ textAlign:'center', padding:'60px 0', color:'#94a3b8' }}>Loading recruiters...</div>
         ) : (
           <>
-            {/* Summary bar — hide on announce tab */}
-            {view !== 'announce' && (
-              <SummaryBar calcs={calcs} view={view} half={half} />
-            )}
+            {view !== 'announce' && <SummaryBar calcs={calcs} view={view} half={half} />}
 
-            {/* Monthly sub-view toggle */}
             {view === 'monthly' && (
               <div style={{ display:'flex', gap:6, margin:'20px 0 0' }}>
-                {([['bymonth','📅 By Month'],['byrecruiter','👤 By Recruiter']] as const).map(([v,label]) => (
+                {([['bymonth','📅 By Month'],['byrecruiter','👤 By Recruiter']] as const).map(([v, label]) => (
                   <button key={v} onClick={() => setMonthSubView(v)} style={{
                     padding:'7px 18px', borderRadius:100, cursor:'pointer',
-                    fontSize:13, fontWeight:600, fontFamily:'inherit',
-                    border:'1px solid #e5e7eb',
-                    background: monthSubView===v ? '#4f46e5' : '#fff',
-                    color: monthSubView===v ? '#fff' : '#6b7280',
-                    transition:'all 0.15s',
+                    fontSize:13, fontWeight:600, fontFamily:'inherit', border:'1px solid #e5e7eb',
+                    background: monthSubView === v ? '#4f46e5' : '#fff',
+                    color:      monthSubView === v ? '#fff'    : '#6b7280',
+                    transition: 'all 0.15s',
                   }}>{label}</button>
                 ))}
               </div>
             )}
 
-            {/* Monthly By-Month view */}
             {view === 'monthly' && monthSubView === 'bymonth' && (
               <MonthlyByMonthView
                 calcs={calcs}
@@ -336,19 +411,27 @@ export default function IncentivesPage() {
                 manualMonthly={manualMonthly}
                 paidMonthly={paidMonthly}
                 onPaidMonthly={(userId, fyIdx, amount) => {
-                  setPaidMonthly(prev => ({ ...prev, [userId]: { ...(prev[userId]??{}), [fyIdx]: amount } }))
+                  setPaidMonthly(prev => ({
+                    ...prev,
+                    [userId]: { ...(prev[userId] ?? {}), [fyIdx]: amount },
+                  }))
+                  const manual = manualMonthly[userId]?.[fyIdx]?.amount ?? 0
+                  const note   = manualMonthly[userId]?.[fyIdx]?.note   ?? ''
+                  upsertOverride(userId, 'monthly', String(fyIdx), manual, note, amount, currentUserId)
                 }}
                 onMonthManual={(userId, fyIdx, amount, note) => {
                   setManualMonthly(prev => ({
                     ...prev,
-                    [userId]: { ...(prev[userId]??{}), [fyIdx]: {amount, note} }
+                    [userId]: { ...(prev[userId] ?? {}), [fyIdx]: { amount, note } },
                   }))
+                  const paid = paidMonthly[userId]?.[fyIdx] ?? 0
+                  upsertOverride(userId, 'monthly', String(fyIdx), amount, note, paid, currentUserId)
                 }}
               />
             )}
 
-            {/* Per-recruiter accordion view */}
-            {(view === 'halfyearly' || view === 'annual' || (view === 'monthly' && monthSubView === 'byrecruiter')) && (
+            {(view === 'halfyearly' || view === 'annual' ||
+              (view === 'monthly' && monthSubView === 'byrecruiter')) && (
               <div style={{ display:'flex', flexDirection:'column', gap:12, marginTop:20 }}>
                 {calcs.map(calc => (
                   <RecruiterCard
@@ -361,27 +444,26 @@ export default function IncentivesPage() {
                     onMonthManual={(fyIdx, amount, note) => {
                       setManualMonthly(prev => ({
                         ...prev,
-                        [calc.user.id]: { ...(prev[calc.user.id]??{}), [fyIdx]: {amount, note} }
+                        [calc.user.id]: { ...(prev[calc.user.id] ?? {}), [fyIdx]: { amount, note } },
                       }))
+                      const paid = paidMonthly[calc.user.id]?.[fyIdx] ?? 0
+                      upsertOverride(calc.user.id, 'monthly', String(fyIdx), amount, note, paid, currentUserId)
                     }}
                     onHYManual={(amount, note) => {
-                      setManualHY(prev => ({ ...prev, [calc.user.id]: {amount, note} }))
+                      setManualHY(prev => ({ ...prev, [calc.user.id]: { amount, note } }))
+                      upsertOverride(calc.user.id, 'halfyearly', half, amount, note, 0, currentUserId)
                     }}
                     onAnnualManual={(amount, note) => {
-                      setManualAnnual(prev => ({ ...prev, [calc.user.id]: {amount, note} }))
+                      setManualAnnual(prev => ({ ...prev, [calc.user.id]: { amount, note } }))
+                      upsertOverride(calc.user.id, 'annual', 'annual', amount, note, 0, currentUserId)
                     }}
                   />
                 ))}
               </div>
             )}
 
-            {/* Announce Winners tab */}
             {view === 'announce' && (
-              <AnnounceWinnersTab
-                calcs={calcs}
-                fyStart={fyStart}
-                defaultFyMonth={currentFyMonthIdx}
-              />
+              <AnnounceWinnersTab calcs={calcs} fyStart={fyStart} defaultFyMonth={currentFyMonthIdx} />
             )}
           </>
         )}
@@ -390,89 +472,80 @@ export default function IncentivesPage() {
   )
 }
 
-
 // ── Monthly By-Month View ─────────────────────────────────────────────────────
 
-function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manualMonthly, onMonthManual, paidMonthly, onPaidMonthly }: {
+function MonthlyByMonthView({
+  calcs, selectedFyMonth, setSelectedFyMonth,
+  manualMonthly, onMonthManual, paidMonthly, onPaidMonthly,
+}: {
   calcs: RecruiterCalc[]
   selectedFyMonth: number
   setSelectedFyMonth: (i: number) => void
-  manualMonthly: Record<string, Record<number, {amount:number;note:string}>>
+  manualMonthly: Record<string, Record<number, { amount: number; note: string }>>
   onMonthManual: (userId: string, fyIdx: number, amount: number, note: string) => void
   paidMonthly: Record<string, Record<number, number>>
   onPaidMonthly: (userId: string, fyIdx: number, amount: number) => void
 }) {
-  const [editingUser, setEditingUser] = useState<string|null>(null)
-  const [editAmt, setEditAmt] = useState('')
-  const [editNote, setEditNote] = useState('')
+  const [editingUser,     setEditingUser]     = useState<string|null>(null)
+  const [editAmt,         setEditAmt]         = useState('')
+  const [editNote,        setEditNote]        = useState('')
   const [editingPaidUser, setEditingPaidUser] = useState<string|null>(null)
-  const [editPaidAmt, setEditPaidAmt] = useState('')
+  const [editPaidAmt,     setEditPaidAmt]     = useState('')
 
   const rows = calcs.map(calc => {
-    const m = calc.months[selectedFyMonth]
-    const manual = manualMonthly[calc.user.id]?.[selectedFyMonth]?.amount ?? 0
-    const manualNote = manualMonthly[calc.user.id]?.[selectedFyMonth]?.note ?? ''
-    const paid = paidMonthly[calc.user.id]?.[selectedFyMonth] ?? 0
+    const m          = calc.months[selectedFyMonth]
+    const manual     = manualMonthly[calc.user.id]?.[selectedFyMonth]?.amount ?? 0
+    const manualNote = manualMonthly[calc.user.id]?.[selectedFyMonth]?.note   ?? ''
+    const paid       = paidMonthly[calc.user.id]?.[selectedFyMonth] ?? 0
     return { calc, m, manual, manualNote, paid }
   }).sort((a, b) => b.m.pct - a.m.pct)
 
-  const eligible = rows.filter(r => r.m.incentive > 0)
-  const totalPolicy = rows.reduce((s, r) => s + r.m.incentive, 0)
-  const totalManual = rows.reduce((s, r) => s + r.manual, 0)
-  const totalPayout = totalPolicy + totalManual
-  const totalPaid = rows.reduce((s, r) => s + r.paid, 0)
+  const eligible     = rows.filter(r => r.m.incentive > 0)
+  const totalPolicy  = rows.reduce((s, r) => s + r.m.incentive, 0)
+  const totalManual  = rows.reduce((s, r) => s + r.manual,      0)
+  const totalPayout  = totalPolicy + totalManual
+  const totalPaid    = rows.reduce((s, r) => s + r.paid,        0)
   const totalBalance = totalPayout - totalPaid
-
-  const monthName = calcs[0]?.months[selectedFyMonth]?.month ?? MONTH_NAMES[selectedFyMonth]
+  const monthName    = calcs[0]?.months[selectedFyMonth]?.month ?? MONTH_NAMES[selectedFyMonth]
 
   return (
     <div style={{ marginTop: 20 }}>
-      {/* Month selector pills */}
       <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:20 }}>
         {MONTH_NAMES.map((mn, i) => (
           <button key={i} onClick={() => setSelectedFyMonth(i)} style={{
             padding:'6px 14px', borderRadius:100, cursor:'pointer',
-            fontSize:12, fontWeight:600, fontFamily:'inherit',
-            border:'1px solid #e5e7eb',
-            background: selectedFyMonth===i ? '#4f46e5' : '#fff',
-            color: selectedFyMonth===i ? '#fff' : '#6b7280',
-            transition:'all 0.15s',
+            fontSize:12, fontWeight:600, fontFamily:'inherit', border:'1px solid #e5e7eb',
+            background: selectedFyMonth === i ? '#4f46e5' : '#fff',
+            color:      selectedFyMonth === i ? '#fff'    : '#6b7280',
+            transition: 'all 0.15s',
           }}>{mn}</button>
         ))}
       </div>
 
-      {/* Summary cards */}
       <div style={{ display:'flex', gap:12, marginBottom:20 }}>
         {[
-          { label:`Eligible Recruiters`, val: String(eligible.length), color:'#16a34a' },
-          { label:`Policy Rewards`, val: fmtINR(totalPolicy), color:'#2563eb' },
-          { label:`Manual Bonuses`, val: fmtINR(totalManual), color:'#7c3aed' },
-          { label:`Total Payable`, val: fmtINR(totalPayout), color:'#1e293b' },
-          { label:`Paid`, val: fmtINR(totalPaid), color:'#16a34a' },
-          { label:`Balance`, val: fmtINR(totalBalance), color: totalBalance > 0 ? '#dc2626' : '#16a34a' },
+          { label:'Eligible Recruiters', val: String(eligible.length), color:'#16a34a' },
+          { label:'Policy Rewards',      val: fmtINR(totalPolicy),     color:'#2563eb' },
+          { label:'Manual Bonuses',      val: fmtINR(totalManual),     color:'#7c3aed' },
+          { label:'Total Payable',       val: fmtINR(totalPayout),     color:'#1e293b' },
+          { label:'Paid',                val: fmtINR(totalPaid),       color:'#16a34a' },
+          { label:'Balance',             val: fmtINR(totalBalance),    color: totalBalance > 0 ? '#dc2626' : '#16a34a' },
         ].map(item => (
-          <div key={item.label} style={{
-            flex:1, background:'#fff', border:'1px solid #e5e7eb',
-            borderRadius:12, padding:'14px 18px',
-          }}>
+          <div key={item.label} style={{ flex:1, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, padding:'14px 18px' }}>
             <div style={{ fontSize:20, fontWeight:800, color:item.color }}>{item.val}</div>
             <div style={{ fontSize:11, color:'#6b7280', marginTop:3 }}>{item.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Table */}
       <div style={{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:14, overflow:'hidden' }}>
-        {/* Header */}
         <div style={{
-          display:'grid', gridTemplateColumns:'36px 1fr 90px 100px 55px 90px 100px 100px 100px 100px',
-          gap:8, padding:'10px 16px',
-          background:'#f8fafc', borderBottom:'1px solid #e5e7eb',
-          fontSize:11, letterSpacing:'1px', textTransform:'uppercase',
-          color:'#94a3b8', fontWeight:600,
+          display:'grid',
+          gridTemplateColumns:'36px 1fr 90px 100px 55px 90px 100px 100px 100px 100px',
+          gap:8, padding:'10px 16px', background:'#f8fafc', borderBottom:'1px solid #e5e7eb',
+          fontSize:11, letterSpacing:'1px', textTransform:'uppercase', color:'#94a3b8', fontWeight:600,
         }}>
-          <div>#</div>
-          <div>Recruiter</div>
+          <div>#</div><div>Recruiter</div>
           <div style={{textAlign:'right'}}>Target</div>
           <div style={{textAlign:'right'}}>Achieved</div>
           <div style={{textAlign:'right'}}>%</div>
@@ -483,23 +556,24 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
           <div style={{textAlign:'right', color:'#dc2626'}}>Balance</div>
         </div>
 
-        {/* Rows */}
         <div style={{ padding:'6px 8px' }}>
           {rows.map(({ calc, m, manual, manualNote, paid }, idx) => {
-            const isEditing = editingUser === calc.user.id
-            const pctColor = m.pct >= 200 ? '#15803d' : m.pct >= 150 ? '#7c3aed' : m.pct >= 100 ? '#2563eb' : m.pct >= 85 ? '#b45309' : '#6b7280'
-            const rowBg = m.pct >= 150 ? '#faf5ff' : m.pct >= 100 ? '#eff6ff' : 'transparent'
-            const eligible = m.incentive > 0
+            const isEditing  = editingUser === calc.user.id
+            const pctColor   = m.pct >= 200 ? '#15803d' : m.pct >= 150 ? '#7c3aed' : m.pct >= 100 ? '#2563eb' : m.pct >= 85 ? '#b45309' : '#6b7280'
+            const rowBg      = m.pct >= 150 ? '#faf5ff' : m.pct >= 100 ? '#eff6ff' : 'transparent'
+            const isEligible = m.incentive > 0
             const [bg, color] = avatarColor(calc.user.full_name)
-            const roleBadge = getRoleColor(calc.user.role)
+            const roleBadge   = getRoleColor(calc.user.role)
+            const balance     = m.incentive + manual - paid
 
             return (
               <div key={calc.user.id} style={{
-                display:'grid', gridTemplateColumns:'36px 1fr 90px 100px 55px 90px 100px 100px 100px 100px',
+                display:'grid',
+                gridTemplateColumns:'36px 1fr 90px 100px 55px 90px 100px 100px 100px 100px',
                 gap:8, padding:'10px 8px', borderRadius:8,
                 background:rowBg, marginBottom:2, alignItems:'center',
               }}>
-                <div style={{ fontSize:13, fontWeight:600, color:'#94a3b8', textAlign:'center' }}>{idx+1}</div>
+                <div style={{ fontSize:13, fontWeight:600, color:'#94a3b8', textAlign:'center' }}>{idx + 1}</div>
 
                 <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>
                   <div style={{
@@ -522,38 +596,32 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
                 <div style={{ fontSize:14, fontWeight:800, color:pctColor, textAlign:'right' }}>{m.pct}%</div>
 
                 <div style={{ textAlign:'right' }}>
-                  {eligible
+                  {isEligible
                     ? <span style={{ fontSize:11, fontWeight:600, color:'#16a34a', background:'#f0fdf4', padding:'2px 8px', borderRadius:100, border:'1px solid #bbf7d0' }}>✓ Eligible</span>
                     : <span style={{ fontSize:11, color:'#9ca3af' }}>—</span>
                   }
                 </div>
 
-                <div style={{ fontSize:14, fontWeight:700, color: eligible?'#15803d':'#9ca3af', textAlign:'right' }}>
-                  {eligible ? fmtINR(m.incentive) : 'Nil'}
+                <div style={{ fontSize:14, fontWeight:700, color: isEligible ? '#15803d' : '#9ca3af', textAlign:'right' }}>
+                  {isEligible ? fmtINR(m.incentive) : 'Nil'}
                 </div>
 
                 <div style={{ textAlign:'right' }}>
                   {isEditing ? (
                     <div style={{ display:'flex', gap:4, justifyContent:'flex-end' }}>
-                      <input
-                        type="number"
-                        value={editAmt}
-                        onChange={e => setEditAmt(e.target.value)}
-                        placeholder="0"
-                        style={{ width:72, padding:'4px 6px', borderRadius:6, border:'1px solid #8b5cf6', fontSize:12, fontFamily:'inherit', outline:'none' }}
-                      />
+                      <input type="number" value={editAmt} onChange={e => setEditAmt(e.target.value)} placeholder="0"
+                        style={{ width:72, padding:'4px 6px', borderRadius:6, border:'1px solid #8b5cf6', fontSize:12, fontFamily:'inherit', outline:'none' }} />
                       <button onClick={() => {
-                        onMonthManual(calc.user.id, selectedFyMonth, Number(editAmt)||0, editNote)
+                        onMonthManual(calc.user.id, selectedFyMonth, Number(editAmt) || 0, editNote)
                         setEditingUser(null)
                       }} style={{ padding:'4px 8px', background:'#7c3aed', color:'#fff', border:'none', borderRadius:6, cursor:'pointer', fontSize:12 }}>✓</button>
-                      <button onClick={() => setEditingUser(null)} style={{ padding:'4px 6px', background:'transparent', color:'#6b7280', border:'1px solid #e5e7eb', borderRadius:6, cursor:'pointer', fontSize:12 }}>✕</button>
+                      <button onClick={() => setEditingUser(null)}
+                        style={{ padding:'4px 6px', background:'transparent', color:'#6b7280', border:'1px solid #e5e7eb', borderRadius:6, cursor:'pointer', fontSize:12 }}>✕</button>
                     </div>
                   ) : (
-                    <div
-                      onClick={() => { setEditingUser(calc.user.id); setEditAmt(String(manual||'')); setEditNote(manualNote) }}
-                      style={{ cursor:'pointer', fontSize:13, fontWeight: manual>0?700:400, color: manual>0?'#7c3aed':'#d1d5db' }}
-                      title={manualNote || 'Click to add manual bonus'}
-                    >
+                    <div onClick={() => { setEditingUser(calc.user.id); setEditAmt(String(manual || '')); setEditNote(manualNote) }}
+                      style={{ cursor:'pointer', fontSize:13, fontWeight: manual > 0 ? 700 : 400, color: manual > 0 ? '#7c3aed' : '#d1d5db' }}
+                      title={manualNote || 'Click to add manual bonus'}>
                       {manual > 0 ? fmtINR(manual) : '+ Add'}
                     </div>
                   )}
@@ -562,72 +630,57 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
                 <div style={{ textAlign:'right' }}>
                   {editingPaidUser === calc.user.id ? (
                     <div style={{ display:'flex', gap:4, justifyContent:'flex-end' }}>
-                      <input
-                        type='number'
-                        value={editPaidAmt}
-                        onChange={e => setEditPaidAmt(e.target.value)}
-                        placeholder='0'
-                        style={{ width:72, padding:'4px 6px', borderRadius:6, border:'1px solid #16a34a', fontSize:12, fontFamily:'inherit', outline:'none' }}
-                      />
+                      <input type="number" value={editPaidAmt} onChange={e => setEditPaidAmt(e.target.value)} placeholder="0"
+                        style={{ width:72, padding:'4px 6px', borderRadius:6, border:'1px solid #16a34a', fontSize:12, fontFamily:'inherit', outline:'none' }} />
                       <button onClick={() => {
-                        onPaidMonthly(calc.user.id, selectedFyMonth, Number(editPaidAmt)||0)
+                        onPaidMonthly(calc.user.id, selectedFyMonth, Number(editPaidAmt) || 0)
                         setEditingPaidUser(null)
                       }} style={{ padding:'4px 8px', background:'#16a34a', color:'#fff', border:'none', borderRadius:6, cursor:'pointer', fontSize:12 }}>✓</button>
-                      <button onClick={() => setEditingPaidUser(null)} style={{ padding:'4px 6px', background:'transparent', color:'#6b7280', border:'1px solid #e5e7eb', borderRadius:6, cursor:'pointer', fontSize:12 }}>✕</button>
+                      <button onClick={() => setEditingPaidUser(null)}
+                        style={{ padding:'4px 6px', background:'transparent', color:'#6b7280', border:'1px solid #e5e7eb', borderRadius:6, cursor:'pointer', fontSize:12 }}>✕</button>
                     </div>
                   ) : (
-                    <div
-                      onClick={() => { setEditingPaidUser(calc.user.id); setEditPaidAmt(String(paid||'')) }}
-                      style={{ cursor:'pointer', fontSize:13, fontWeight: paid>0?700:400, color: paid>0?'#16a34a':'#d1d5db' }}
-                    >
+                    <div onClick={() => { setEditingPaidUser(calc.user.id); setEditPaidAmt(String(paid || '')) }}
+                      style={{ cursor:'pointer', fontSize:13, fontWeight: paid > 0 ? 700 : 400, color: paid > 0 ? '#16a34a' : '#d1d5db' }}>
                       {paid > 0 ? fmtINR(paid) : '+ Add'}
                     </div>
                   )}
                 </div>
 
                 <div style={{ textAlign:'right' }}>
-                  {(() => {
-                    const balance = m.incentive + manual - paid
-                    return balance === 0
-                      ? <span style={{ fontSize:12, color:'#16a34a', fontWeight:600 }}>✓ Settled</span>
-                      : <span style={{ fontSize:14, fontWeight:800, color: balance > 0 ? '#dc2626' : '#16a34a' }}>{fmtINR(Math.abs(balance))}{balance < 0 ? ' ↑' : ''}</span>
-                  })()}
+                  {balance === 0
+                    ? <span style={{ fontSize:12, color:'#16a34a', fontWeight:600 }}>✓ Settled</span>
+                    : <span style={{ fontSize:14, fontWeight:800, color: balance > 0 ? '#dc2626' : '#16a34a' }}>
+                        {fmtINR(Math.abs(balance))}{balance < 0 ? ' ↑' : ''}
+                      </span>
+                  }
                 </div>
               </div>
             )
           })}
         </div>
 
-        {/* Footer totals */}
         <div style={{
-          display:'grid', gridTemplateColumns:'36px 1fr 90px 100px 55px 90px 100px 100px 100px 100px',
-          gap:8, padding:'12px 16px',
-          borderTop:'2px solid #e5e7eb', background:'#f8fafc',
+          display:'grid',
+          gridTemplateColumns:'36px 1fr 90px 100px 55px 90px 100px 100px 100px 100px',
+          gap:8, padding:'12px 16px', borderTop:'2px solid #e5e7eb', background:'#f8fafc',
         }}>
           <div />
-          <div style={{ fontWeight:700, fontSize:13, color:'#374151' }}>
-            {monthName} Total
+          <div style={{ fontWeight:700, fontSize:13, color:'#374151' }}>{monthName} Total</div>
+          <div style={{ fontSize:13, fontWeight:600, color:'#374151', textAlign:'right' }}>
+            {fmtINR(rows.reduce((s, r) => s + r.m.target, 0))}
           </div>
           <div style={{ fontSize:13, fontWeight:600, color:'#374151', textAlign:'right' }}>
-            {fmtINR(rows.reduce((s,r)=>s+r.m.target,0))}
-          </div>
-          <div style={{ fontSize:13, fontWeight:600, color:'#374151', textAlign:'right' }}>
-            {fmtINR(rows.reduce((s,r)=>s+r.m.achieved,0))}
+            {fmtINR(rows.reduce((s, r) => s + r.m.achieved, 0))}
           </div>
           <div style={{ fontSize:14, fontWeight:800, color:'#1e293b', textAlign:'right' }}>
-            {rows.length > 0 ? Math.round(rows.reduce((s,r)=>s+r.m.pct,0)/rows.length) : 0}%
+            {rows.length > 0 ? Math.round(rows.reduce((s, r) => s + r.m.pct, 0) / rows.length) : 0}%
           </div>
           <div />
-          <div style={{ fontSize:14, fontWeight:800, color:'#15803d', textAlign:'right' }}>
-            {fmtINR(totalPolicy)}
-          </div>
-          <div style={{ fontSize:14, fontWeight:800, color:'#7c3aed', textAlign:'right' }}>
-            {fmtINR(totalManual)}
-          </div>
-          <div style={{ fontSize:14, fontWeight:800, color:'#16a34a', textAlign:'right' }}>
-            {fmtINR(totalPaid)}
-          </div>
-          <div style={{ fontSize:14, fontWeight:800, color: totalBalance>0?'#dc2626':'#16a34a', textAlign:'right' }}>
+          <div style={{ fontSize:14, fontWeight:800, color:'#15803d', textAlign:'right' }}>{fmtINR(totalPolicy)}</div>
+          <div style={{ fontSize:14, fontWeight:800, color:'#7c3aed', textAlign:'right' }}>{fmtINR(totalManual)}</div>
+          <div style={{ fontSize:14, fontWeight:800, color:'#16a34a', textAlign:'right' }}>{fmtINR(totalPaid)}</div>
+          <div style={{ fontSize:14, fontWeight:800, color: totalBalance > 0 ? '#dc2626' : '#16a34a', textAlign:'right' }}>
             {fmtINR(totalBalance)}
           </div>
         </div>
@@ -644,18 +697,18 @@ function MonthlyByMonthView({ calcs, selectedFyMonth, setSelectedFyMonth, manual
 
 function PolicyBanner({ view, half, setHalf, hyPayoutMonth }: {
   view: string; half: 'H1'|'H2'
-  setHalf: (h:'H1'|'H2') => void
+  setHalf: (h: 'H1'|'H2') => void
   hyPayoutMonth: string
 }) {
   if (view === 'monthly') return (
     <div style={{
       background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:12,
       padding:'14px 20px', marginBottom:20, fontSize:13, color:'#1e40af',
-      display:'flex', flexWrap:'wrap', gap:16, alignItems:'center',
     }}>
-      <span>📋 <strong>Monthly Reward Policy:</strong> Flat 1% on achievement · Min 150% threshold · Below 50% avg = Nil · Reneges reversed next month</span>
+      📋 <strong>Monthly Reward Policy:</strong> Flat 1% on achievement · Min 150% threshold · Below 50% avg = Nil · Reneges reversed next month
     </div>
   )
+
   if (view === 'halfyearly') return (
     <div style={{ marginBottom:20 }}>
       <div style={{
@@ -669,16 +722,13 @@ function PolicyBanner({ view, half, setHalf, hyPayoutMonth }: {
             <button key={h} onClick={() => setHalf(h)} style={{
               padding:'5px 16px', borderRadius:100, cursor:'pointer', fontWeight:600,
               fontSize:13, fontFamily:'inherit', border:'1px solid #8b5cf6',
-              background: half===h ? '#7c3aed' : 'transparent',
-              color: half===h ? '#fff' : '#7c3aed',
-            }}>{h} {h==='H1'?'(Apr–Sep)':'(Oct–Mar)'}</button>
+              background: half === h ? '#7c3aed' : 'transparent',
+              color:      half === h ? '#fff'    : '#7c3aed',
+            }}>{h} {h === 'H1' ? '(Apr–Sep)' : '(Oct–Mar)'}</button>
           ))}
         </div>
       </div>
-      <div style={{
-        background:'#fff', border:'1px solid #e5e7eb', borderRadius:12,
-        overflow:'hidden', marginBottom:4,
-      }}>
+      <div style={{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, overflow:'hidden' }}>
         <div style={{
           display:'grid', gridTemplateColumns:'100px 1fr 80px 1fr',
           background:'#f8fafc', borderBottom:'1px solid #e5e7eb',
@@ -690,22 +740,22 @@ function PolicyBanner({ view, half, setHalf, hyPayoutMonth }: {
         {HALF_YEARLY_SLABS.map(s => (
           <div key={s.label} style={{
             display:'grid', gridTemplateColumns:'100px 1fr 80px 1fr',
-            padding:'8px 16px', fontSize:13, borderBottom:'1px solid #f1f5f9',
-            alignItems:'center',
+            padding:'8px 16px', fontSize:13, borderBottom:'1px solid #f1f5f9', alignItems:'center',
           }}>
-            <div style={{ fontWeight:600, color: s.color }}>{s.label}</div>
+            <div style={{ fontWeight:600, color:s.color }}>{s.label}</div>
             <div style={{ color:'#374151' }}>{s.desc}</div>
-            <div style={{ fontWeight:700, color: s.rate===0?'#9ca3af':s.color }}>
-              {s.rate===0 ? 'Nil' : `${(s.rate*100).toFixed(0)}%`}
+            <div style={{ fontWeight:700, color: s.rate === 0 ? '#9ca3af' : s.color }}>
+              {s.rate === 0 ? 'Nil' : `${(s.rate * 100).toFixed(0)}%`}
             </div>
             <div style={{ color:'#6b7280', fontSize:12 }}>
-              {s.rate===0 ? '—' : fmtINR(1_00_00_000 * s.rate)}
+              {s.rate === 0 ? '—' : fmtINR(1_00_00_000 * s.rate)}
             </div>
           </div>
         ))}
       </div>
     </div>
   )
+
   return (
     <div style={{
       background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:12,
@@ -719,34 +769,31 @@ function PolicyBanner({ view, half, setHalf, hyPayoutMonth }: {
 // ── Summary Bar ───────────────────────────────────────────────────────────────
 
 function SummaryBar({ calcs, view, half }: { calcs: RecruiterCalc[]; view: string; half: 'H1'|'H2' }) {
-  const totalMonthly = calcs.reduce((s,c) => s + c.months.reduce((ms,m) => ms+m.incentive+m.manual, 0), 0)
-  const totalHY = calcs.reduce((s,c) => s + c.halfYearly.incentive + c.halfYearly.manualBonus, 0)
-  const totalAnn = calcs.reduce((s,c) => s + c.annual.payout + c.annual.manualBonus, 0)
-  const voidCount = calcs.filter(c => c.halfYearly.isVoid).length
+  const totalMonthly = calcs.reduce((s, c) => s + c.months.reduce((ms, m) => ms + m.incentive + m.manual, 0), 0)
+  const totalHY      = calcs.reduce((s, c) => s + c.halfYearly.incentive + c.halfYearly.manualBonus, 0)
+  const totalAnn     = calcs.reduce((s, c) => s + c.annual.payout + c.annual.manualBonus, 0)
+  const voidCount    = calcs.filter(c => c.halfYearly.isVoid).length
   const qualifiedAnn = calcs.filter(c => c.annual.eligible).length
 
   const items =
     view === 'monthly' ? [
-      { label:'Total Monthly Payout', value: fmtINR(totalMonthly), color:'#2563eb' },
-      { label:'Recruiters with Rewards', value: String(calcs.filter(c=>c.months.some(m=>m.incentive>0)).length), color:'#16a34a' },
-      { label:'Recruiters at 150%+', value: String(calcs.filter(c=>c.months.some(m=>m.pct>=150)).length), color:'#7c3aed' },
+      { label:'Total Monthly Payout',    value: fmtINR(totalMonthly), color:'#2563eb' },
+      { label:'Recruiters with Rewards', value: String(calcs.filter(c => c.months.some(m => m.incentive > 0)).length), color:'#16a34a' },
+      { label:'Recruiters at 150%+',     value: String(calcs.filter(c => c.months.some(m => m.pct >= 150)).length),    color:'#7c3aed' },
     ] : view === 'halfyearly' ? [
-      { label:`${half} Total Incentive`, value: fmtINR(totalHY), color:'#7c3aed' },
-      { label:'Void (avg < 60%)', value: String(voidCount), color:'#dc2626' },
-      { label:'Eligible Recruiters', value: String(calcs.length - voidCount), color:'#16a34a' },
+      { label:`${half} Total Incentive`, value: fmtINR(totalHY),                    color:'#7c3aed' },
+      { label:'Void (avg < 60%)',        value: String(voidCount),                   color:'#dc2626' },
+      { label:'Eligible Recruiters',     value: String(calcs.length - voidCount),    color:'#16a34a' },
     ] : [
-      { label:'Annual Variable Pool', value: fmtINR(totalAnn), color:'#15803d' },
-      { label:'Eligible (≥100%)', value: String(qualifiedAnn), color:'#16a34a' },
-      { label:'Not Eligible', value: String(calcs.length - qualifiedAnn), color:'#dc2626' },
+      { label:'Annual Variable Pool',    value: fmtINR(totalAnn),                    color:'#15803d' },
+      { label:'Eligible (≥100%)',        value: String(qualifiedAnn),                color:'#16a34a' },
+      { label:'Not Eligible',            value: String(calcs.length - qualifiedAnn), color:'#dc2626' },
     ]
 
   return (
     <div style={{ display:'flex', gap:12 }}>
       {items.map(item => (
-        <div key={item.label} style={{
-          flex:1, background:'#fff', border:'1px solid #e5e7eb',
-          borderRadius:12, padding:'16px 20px',
-        }}>
+        <div key={item.label} style={{ flex:1, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, padding:'16px 20px' }}>
           <div style={{ fontSize:22, fontWeight:800, color:item.color }}>{item.value}</div>
           <div style={{ fontSize:12, color:'#6b7280', marginTop:3 }}>{item.label}</div>
         </div>
@@ -758,71 +805,57 @@ function SummaryBar({ calcs, view, half }: { calcs: RecruiterCalc[]; view: strin
 // ── Recruiter Card ────────────────────────────────────────────────────────────
 
 function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, onHYManual, onAnnualManual }: {
-  calc: RecruiterCalc
-  view: string
-  half: 'H1'|'H2'
-  expanded: boolean
-  onToggle: () => void
+  calc: RecruiterCalc; view: string; half: 'H1'|'H2'
+  expanded: boolean; onToggle: () => void
   onMonthManual: (fyIdx: number, amount: number, note: string) => void
   onHYManual: (amount: number, note: string) => void
   onAnnualManual: (amount: number, note: string) => void
 }) {
   const { user, months, halfYearly, annual } = calc
   const [bg, color] = avatarColor(user.full_name)
-  const roleBadge = getRoleColor(user.role)
-  const hyIndices = half === 'H1' ? [0,1,2,3,4,5] : [6,7,8,9,10,11]
+  const roleBadge   = getRoleColor(user.role)
+  const hyIndices   = half === 'H1' ? [0,1,2,3,4,5] : [6,7,8,9,10,11]
 
-  const monthlyTotal = months.reduce((s,m) => s+m.incentive+m.manual, 0)
-  const hyTotal = halfYearly.incentive + halfYearly.manualBonus
+  const monthlyTotal = months.reduce((s, m) => s + m.incentive + m.manual, 0)
+  const hyTotal      = halfYearly.incentive + halfYearly.manualBonus
 
   const summaryPct = view === 'monthly'
-    ? (months.reduce((s,m)=>s+m.pct,0)/12).toFixed(0)
-    : view === 'halfyearly'
-    ? halfYearly.pct
-    : annual.pct
+    ? (months.reduce((s, m) => s + m.pct, 0) / 12).toFixed(0)
+    : view === 'halfyearly' ? String(halfYearly.pct) : String(annual.pct)
 
   const summaryAmt = view === 'monthly' ? monthlyTotal
     : view === 'halfyearly' ? hyTotal
     : annual.payout + annual.manualBonus
 
-  const pctColor = Number(summaryPct) >= 150 ? '#15803d' : Number(summaryPct) >= 100 ? '#1d4ed8' : Number(summaryPct) >= 85 ? '#b45309' : '#dc2626'
+  const pctColor = Number(summaryPct) >= 150 ? '#15803d'
+    : Number(summaryPct) >= 100 ? '#1d4ed8'
+    : Number(summaryPct) >= 85  ? '#b45309' : '#dc2626'
 
   return (
     <div style={{
-      background:'#fff', border:'1px solid #e5e7eb',
-      borderRadius:14, overflow:'hidden',
-      boxShadow: expanded ? '0 4px 16px rgba(0,0,0,0.08)' : 'none',
-      transition:'box-shadow 0.2s',
+      background:'#fff', border:'1px solid #e5e7eb', borderRadius:14, overflow:'hidden',
+      boxShadow: expanded ? '0 4px 16px rgba(0,0,0,0.08)' : 'none', transition:'box-shadow 0.2s',
     }}>
-      <div
-        onClick={onToggle}
-        style={{
-          display:'grid',
-          gridTemplateColumns:'36px 1fr 100px 120px 140px 36px',
-          gap:12, alignItems:'center', padding:'16px 20px',
-          cursor:'pointer',
-        }}
-      >
+      <div onClick={onToggle} style={{
+        display:'grid', gridTemplateColumns:'36px 1fr 100px 120px 140px 36px',
+        gap:12, alignItems:'center', padding:'16px 20px', cursor:'pointer',
+      }}>
         <div style={{
           width:36, height:36, borderRadius:'50%', background:bg, color,
-          display:'flex', alignItems:'center', justifyContent:'center',
-          fontWeight:700, fontSize:13, flexShrink:0,
+          display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:13, flexShrink:0,
         }}>{initials(user.full_name)}</div>
 
         <div>
           <div style={{ fontWeight:700, fontSize:15, color:'#1e293b' }}>{user.full_name}</div>
-          <span style={{
-            fontSize:10, padding:'2px 8px', borderRadius:100,
-            background:roleBadge.bg, color:roleBadge.color, fontWeight:600,
-          }}>{getRoleLabel(user.role)}</span>
+          <span style={{ fontSize:10, padding:'2px 8px', borderRadius:100, background:roleBadge.bg, color:roleBadge.color, fontWeight:600 }}>
+            {getRoleLabel(user.role)}
+          </span>
         </div>
 
         <div style={{ textAlign:'right' }}>
           <div style={{ fontSize:12, color:'#94a3b8' }}>Target</div>
           <div style={{ fontWeight:600, fontSize:13, color:'#374151' }}>
-            {fmtINR(view==='monthly' ? user.monthly_target
-              : view==='halfyearly' ? halfYearly.totalTarget
-              : annual.totalTarget)}
+            {fmtINR(view === 'monthly' ? user.monthly_target : view === 'halfyearly' ? halfYearly.totalTarget : annual.totalTarget)}
           </div>
         </div>
 
@@ -833,19 +866,15 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
 
         <div style={{ textAlign:'right' }}>
           <div style={{ fontSize:12, color:'#94a3b8' }}>
-            {view==='monthly' ? 'Total Rewards' : view==='halfyearly' ? `${half} Incentive` : 'Annual Variable'}
+            {view === 'monthly' ? 'Total Rewards' : view === 'halfyearly' ? `${half} Incentive` : 'Annual Variable'}
           </div>
-          <div style={{ fontWeight:800, fontSize:16, color:'#1e293b' }}>
-            {fmtINR(summaryAmt)}
-          </div>
-          {view==='halfyearly' && halfYearly.isVoid && (
+          <div style={{ fontWeight:800, fontSize:16, color:'#1e293b' }}>{fmtINR(summaryAmt)}</div>
+          {view === 'halfyearly' && halfYearly.isVoid && (
             <span style={{ fontSize:10, color:'#dc2626', fontWeight:600 }}>⚠️ Void</span>
           )}
         </div>
 
-        <div style={{ fontSize:18, color:'#94a3b8', textAlign:'center' }}>
-          {expanded ? '▲' : '▼'}
-        </div>
+        <div style={{ fontSize:18, color:'#94a3b8', textAlign:'center' }}>{expanded ? '▲' : '▼'}</div>
       </div>
 
       {expanded && (
@@ -854,42 +883,29 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
           {view === 'monthly' && (
             <div>
               <div style={{
-                display:'grid',
-                gridTemplateColumns:'80px 90px 100px 60px 90px 90px 1fr',
-                gap:8, padding:'6px 8px',
-                fontSize:11, color:'#94a3b8', fontWeight:600,
-                letterSpacing:'0.8px', textTransform:'uppercase',
-                borderBottom:'1px solid #f1f5f9', marginBottom:4,
+                display:'grid', gridTemplateColumns:'80px 90px 100px 60px 90px 90px 1fr',
+                gap:8, padding:'6px 8px', fontSize:11, color:'#94a3b8', fontWeight:600,
+                letterSpacing:'0.8px', textTransform:'uppercase', borderBottom:'1px solid #f1f5f9', marginBottom:4,
               }}>
-                <div>Month</div><div style={{textAlign:'right'}}>Target</div>
+                <div>Month</div>
+                <div style={{textAlign:'right'}}>Target</div>
                 <div style={{textAlign:'right'}}>Achieved</div>
                 <div style={{textAlign:'right'}}>%</div>
                 <div style={{textAlign:'right'}}>Reward</div>
-                <div style={{textAlign:'right'}}>Manual Bonus</div>
+                <div style={{textAlign:'right'}}>Manual</div>
                 <div style={{textAlign:'right'}}>Note</div>
               </div>
               {months.map((m, fyIdx) => (
-                <MonthRow
-                  key={fyIdx} month={m} fyIdx={fyIdx}
-                  onManual={(amount, note) => onMonthManual(fyIdx, amount, note)}
-                />
+                <MonthRow key={fyIdx} month={m} fyIdx={fyIdx}
+                  onManual={(amount, note) => onMonthManual(fyIdx, amount, note)} />
               ))}
-              <div style={{
-                display:'flex', justifyContent:'flex-end', gap:24,
-                padding:'12px 8px 4px', borderTop:'1px solid #f1f5f9', marginTop:8,
-              }}>
-                <span style={{ fontSize:13, color:'#6b7280' }}>Total Policy Rewards</span>
-                <span style={{ fontWeight:800, fontSize:16, color:'#1e293b' }}>
-                  {fmtINR(months.reduce((s,m)=>s+m.incentive,0))}
-                </span>
-                <span style={{ fontSize:13, color:'#6b7280', marginLeft:16 }}>Total Manual</span>
-                <span style={{ fontWeight:800, fontSize:16, color:'#7c3aed' }}>
-                  {fmtINR(months.reduce((s,m)=>s+m.manual,0))}
-                </span>
+              <div style={{ display:'flex', justifyContent:'flex-end', gap:24, padding:'12px 8px 4px', borderTop:'1px solid #f1f5f9', marginTop:8 }}>
+                <span style={{ fontSize:13, color:'#6b7280' }}>Policy Total</span>
+                <span style={{ fontWeight:800, fontSize:16, color:'#1e293b' }}>{fmtINR(months.reduce((s, m) => s + m.incentive, 0))}</span>
+                <span style={{ fontSize:13, color:'#6b7280', marginLeft:16 }}>Manual Total</span>
+                <span style={{ fontWeight:800, fontSize:16, color:'#7c3aed' }}>{fmtINR(months.reduce((s, m) => s + m.manual, 0))}</span>
                 <span style={{ fontSize:13, color:'#6b7280', marginLeft:16 }}>Grand Total</span>
-                <span style={{ fontWeight:800, fontSize:16, color:'#16a34a' }}>
-                  {fmtINR(months.reduce((s,m)=>s+m.incentive+m.manual,0))}
-                </span>
+                <span style={{ fontWeight:800, fontSize:16, color:'#16a34a' }}>{fmtINR(months.reduce((s, m) => s + m.incentive + m.manual, 0))}</span>
               </div>
             </div>
           )}
@@ -900,19 +916,12 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
                 <div style={{ fontSize:12, fontWeight:700, color:'#374151', marginBottom:8 }}>
                   Monthly breakdown ({half === 'H1' ? 'Apr–Sep' : 'Oct–Mar'})
                 </div>
-                <div style={{
-                  display:'grid',
-                  gridTemplateColumns:'repeat(6,1fr)',
-                  gap:8,
-                }}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:8 }}>
                   {hyIndices.map(fyIdx => {
-                    const m = months[fyIdx]
+                    const m    = months[fyIdx]
                     const tier = m.pct >= 200 ? '#10b981' : m.pct >= 150 ? '#8b5cf6' : m.pct >= 100 ? '#3b82f6' : m.pct >= 85 ? '#f59e0b' : '#6b7280'
                     return (
-                      <div key={fyIdx} style={{
-                        background:'#f8fafc', borderRadius:10, padding:'10px 12px',
-                        border:'1px solid #e5e7eb', textAlign:'center',
-                      }}>
+                      <div key={fyIdx} style={{ background:'#f8fafc', borderRadius:10, padding:'10px 12px', border:'1px solid #e5e7eb', textAlign:'center' }}>
                         <div style={{ fontSize:11, color:'#6b7280', marginBottom:4 }}>{m.month.split(' ')[0]}</div>
                         <div style={{ fontWeight:800, fontSize:17, color:tier }}>{m.pct}%</div>
                         <div style={{ fontSize:11, color:'#94a3b8' }}>{fmtINR(m.achieved)}</div>
@@ -922,20 +931,14 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
                 </div>
               </div>
 
-              <div style={{
-                display:'grid', gridTemplateColumns:'repeat(4,1fr)',
-                gap:12, marginBottom:16,
-              }}>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:16 }}>
                 {[
-                  { label:'Total Target', val: fmtINR(halfYearly.totalTarget), color:'#374151' },
+                  { label:'Total Target',   val: fmtINR(halfYearly.totalTarget),   color:'#374151' },
                   { label:'Total Achieved', val: fmtINR(halfYearly.totalAchieved), color:'#374151' },
-                  { label:'Achievement %', val: `${halfYearly.pct}%`, color: halfYearly.isVoid?'#dc2626':'#1d4ed8' },
-                  { label:'Avg Monthly %', val: `${halfYearly.avgMonthlyPct}%`, color: halfYearly.avgMonthlyPct < HY_AVG_MIN ? '#dc2626':'#16a34a' },
+                  { label:'Achievement %',  val: `${halfYearly.pct}%`,             color: halfYearly.isVoid ? '#dc2626' : '#1d4ed8' },
+                  { label:'Avg Monthly %',  val: `${halfYearly.avgMonthlyPct}%`,   color: halfYearly.avgMonthlyPct < HY_AVG_MIN ? '#dc2626' : '#16a34a' },
                 ].map(item => (
-                  <div key={item.label} style={{
-                    background:'#f8fafc', borderRadius:10, padding:'12px 16px',
-                    border:'1px solid #e5e7eb',
-                  }}>
+                  <div key={item.label} style={{ background:'#f8fafc', borderRadius:10, padding:'12px 16px', border:'1px solid #e5e7eb' }}>
                     <div style={{ fontSize:11, color:'#94a3b8' }}>{item.label}</div>
                     <div style={{ fontWeight:800, fontSize:20, color:item.color }}>{item.val}</div>
                   </div>
@@ -943,57 +946,37 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
               </div>
 
               {halfYearly.isVoid ? (
-                <div style={{
-                  background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10,
-                  padding:'12px 16px', color:'#dc2626', fontWeight:600, marginBottom:16,
-                }}>
+                <div style={{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10, padding:'12px 16px', color:'#dc2626', fontWeight:600, marginBottom:16 }}>
                   ⚠️ Incentive is NULL & VOID — Average monthly achievement ({halfYearly.avgMonthlyPct}%) is below 60% threshold.
                 </div>
               ) : (
-                <div style={{
-                  background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:10,
-                  padding:'12px 16px', marginBottom:16, display:'flex', alignItems:'center', gap:16,
-                }}>
+                <div style={{ background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:10, padding:'12px 16px', marginBottom:16, display:'flex', alignItems:'center', gap:16 }}>
                   <div>
                     <div style={{ fontSize:12, color:'#6b7280' }}>Applicable Slab</div>
                     <div style={{ fontWeight:700, fontSize:15, color: halfYearly.slab?.color }}>
-                      {halfYearly.slab?.label} — {halfYearly.slab?.desc} @ {halfYearly.slab ? (halfYearly.slab.rate*100).toFixed(0) : 0}%
+                      {halfYearly.slab?.label} — {halfYearly.slab?.desc} @ {halfYearly.slab ? (halfYearly.slab.rate * 100).toFixed(0) : 0}%
                     </div>
                   </div>
                   <div style={{ marginLeft:'auto' }}>
                     <div style={{ fontSize:12, color:'#6b7280' }}>Policy Incentive</div>
-                    <div style={{ fontWeight:800, fontSize:22, color:'#15803d' }}>
-                      {fmtINR(halfYearly.incentive)}
-                    </div>
+                    <div style={{ fontWeight:800, fontSize:22, color:'#15803d' }}>{fmtINR(halfYearly.incentive)}</div>
                   </div>
                 </div>
               )}
-
-              <ManualInput
-                label="Special / Manual Bonus"
-                value={halfYearly.manualBonus}
-                note={halfYearly.manualNote}
-                onChange={onHYManual}
-              />
+              <ManualInput label="Special / Manual Bonus" value={halfYearly.manualBonus} note={halfYearly.manualNote} onChange={onHYManual} />
             </div>
           )}
 
           {view === 'annual' && (
             <div>
-              <div style={{
-                display:'grid', gridTemplateColumns:'repeat(4,1fr)',
-                gap:12, marginBottom:16,
-              }}>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:16 }}>
                 {[
-                  { label:'Annual Target', val: fmtINR(annual.totalTarget), color:'#374151' },
+                  { label:'Annual Target',  val: fmtINR(annual.totalTarget),   color:'#374151' },
                   { label:'Total Achieved', val: fmtINR(annual.totalAchieved), color:'#374151' },
-                  { label:'Achievement %', val: `${annual.pct}%`, color: annual.eligible ? '#15803d':'#dc2626' },
-                  { label:'Eligibility', val: annual.eligible ? '✅ Eligible':'❌ Not Eligible', color: annual.eligible ? '#15803d':'#dc2626' },
+                  { label:'Achievement %',  val: `${annual.pct}%`,             color: annual.eligible ? '#15803d' : '#dc2626' },
+                  { label:'Eligibility',    val: annual.eligible ? '✅ Eligible' : '❌ Not Eligible', color: annual.eligible ? '#15803d' : '#dc2626' },
                 ].map(item => (
-                  <div key={item.label} style={{
-                    background:'#f8fafc', borderRadius:10, padding:'12px 16px',
-                    border:'1px solid #e5e7eb',
-                  }}>
+                  <div key={item.label} style={{ background:'#f8fafc', borderRadius:10, padding:'12px 16px', border:'1px solid #e5e7eb' }}>
                     <div style={{ fontSize:11, color:'#94a3b8' }}>{item.label}</div>
                     <div style={{ fontWeight:800, fontSize:18, color:item.color }}>{item.val}</div>
                   </div>
@@ -1001,33 +984,19 @@ function RecruiterCard({ calc, view, half, expanded, onToggle, onMonthManual, on
               </div>
 
               {annual.eligible ? (
-                <div style={{
-                  background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:10,
-                  padding:'12px 16px', marginBottom:16, display:'flex', alignItems:'center', gap:16,
-                }}>
+                <div style={{ background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:10, padding:'12px 16px', marginBottom:16, display:'flex', alignItems:'center', gap:16 }}>
                   <div>
                     <div style={{ fontSize:13, color:'#6b7280' }}>Annual Variable Payout (100% of achieved revenue)</div>
                     <div style={{ fontSize:11, color:'#94a3b8', marginTop:2 }}>100% target achieved — full variable unlocked</div>
                   </div>
-                  <div style={{ fontWeight:800, fontSize:24, color:'#15803d', marginLeft:'auto' }}>
-                    {fmtINR(annual.payout)}
-                  </div>
+                  <div style={{ fontWeight:800, fontSize:24, color:'#15803d', marginLeft:'auto' }}>{fmtINR(annual.payout)}</div>
                 </div>
               ) : (
-                <div style={{
-                  background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10,
-                  padding:'12px 16px', color:'#dc2626', fontWeight:600, marginBottom:16,
-                }}>
+                <div style={{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10, padding:'12px 16px', color:'#dc2626', fontWeight:600, marginBottom:16 }}>
                   Annual target not achieved ({annual.pct}% vs 100% required). Variable payout = Nil.
                 </div>
               )}
-
-              <ManualInput
-                label="Special / Manual Annual Bonus"
-                value={annual.manualBonus}
-                note={annual.manualNote}
-                onChange={onAnnualManual}
-              />
+              <ManualInput label="Special / Manual Annual Bonus" value={annual.manualBonus} note={annual.manualNote} onChange={onAnnualManual} />
             </div>
           )}
         </div>
@@ -1043,22 +1012,23 @@ function MonthRow({ month: m, fyIdx, onManual }: {
   onManual: (amount: number, note: string) => void
 }) {
   const [editing, setEditing] = useState(false)
-  const [amt, setAmt] = useState(String(m.manual || ''))
+  const [amt,  setAmt]  = useState(String(m.manual || ''))
   const [note, setNote] = useState(m.manualNote || '')
 
+  useEffect(() => { setAmt(String(m.manual || '')) },  [m.manual])
+  useEffect(() => { setNote(m.manualNote || '') },      [m.manualNote])
+
   const pctColor = m.pct >= 200 ? '#15803d' : m.pct >= 150 ? '#7c3aed' : m.pct >= 100 ? '#1d4ed8' : m.pct >= 85 ? '#b45309' : '#6b7280'
-  const rowBg = m.pct >= 150 ? '#faf5ff' : m.pct >= 100 ? '#eff6ff' : 'transparent'
+  const rowBg    = m.pct >= 150 ? '#faf5ff' : m.pct >= 100 ? '#eff6ff' : 'transparent'
 
   return (
     <div style={{
-      display:'grid',
-      gridTemplateColumns:'80px 90px 100px 60px 90px 90px 1fr',
-      gap:8, alignItems:'center', padding:'8px 8px',
-      borderRadius:8, background:rowBg, marginBottom:2,
+      display:'grid', gridTemplateColumns:'80px 90px 100px 60px 90px 90px 1fr',
+      gap:8, alignItems:'center', padding:'8px 8px', borderRadius:8, background:rowBg, marginBottom:2,
     }}>
       <div style={{ fontSize:13, fontWeight:600, color:'#374151' }}>{m.month.split(' ')[0]}</div>
       <div style={{ fontSize:13, color:'#6b7280', textAlign:'right' }}>{fmtINR(m.target)}</div>
-      <div style={{ fontSize:13, color:'#374151', textAlign:'right' }}>{fmtINR(m.achieved)}</div>
+      <div style={{ fontSize:13, color:'#374151',  textAlign:'right' }}>{fmtINR(m.achieved)}</div>
       <div style={{ fontWeight:700, fontSize:14, color:pctColor, textAlign:'right' }}>{m.pct}%</div>
       <div style={{ fontWeight:700, fontSize:13, color:'#15803d', textAlign:'right' }}>
         {m.incentive > 0 ? fmtINR(m.incentive) : <span style={{color:'#94a3b8'}}>—</span>}
@@ -1066,58 +1036,25 @@ function MonthRow({ month: m, fyIdx, onManual }: {
       {editing ? (
         <>
           <div style={{ display:'flex', gap:4 }}>
-            <input
-              type="number"
-              value={amt}
-              onChange={e => setAmt(e.target.value)}
-              placeholder="0"
-              style={{
-                width:'100%', padding:'4px 8px', borderRadius:6,
-                border:'1px solid #8b5cf6', fontSize:12,
-                fontFamily:'inherit', outline:'none',
-              }}
-            />
+            <input type="number" value={amt} onChange={e => setAmt(e.target.value)} placeholder="0"
+              style={{ width:'100%', padding:'4px 8px', borderRadius:6, border:'1px solid #8b5cf6', fontSize:12, fontFamily:'inherit', outline:'none' }} />
           </div>
           <div style={{ display:'flex', gap:4 }}>
-            <input
-              type="text"
-              value={note}
-              onChange={e => setNote(e.target.value)}
-              placeholder="Reason..."
-              style={{
-                flex:1, padding:'4px 8px', borderRadius:6,
-                border:'1px solid #e5e7eb', fontSize:12,
-                fontFamily:'inherit', outline:'none',
-              }}
-            />
-            <button
-              onClick={() => { onManual(Number(amt)||0, note); setEditing(false) }}
-              style={{
-                padding:'4px 10px', background:'#7c3aed', color:'#fff',
-                border:'none', borderRadius:6, cursor:'pointer', fontSize:12,
-                fontFamily:'inherit',
-              }}>✓</button>
-            <button
-              onClick={() => setEditing(false)}
-              style={{
-                padding:'4px 8px', background:'transparent', color:'#6b7280',
-                border:'1px solid #e5e7eb', borderRadius:6, cursor:'pointer', fontSize:12,
-              }}>✕</button>
+            <input type="text" value={note} onChange={e => setNote(e.target.value)} placeholder="Reason..."
+              style={{ flex:1, padding:'4px 8px', borderRadius:6, border:'1px solid #e5e7eb', fontSize:12, fontFamily:'inherit', outline:'none' }} />
+            <button onClick={() => { onManual(Number(amt) || 0, note); setEditing(false) }}
+              style={{ padding:'4px 10px', background:'#7c3aed', color:'#fff', border:'none', borderRadius:6, cursor:'pointer', fontSize:12 }}>✓</button>
+            <button onClick={() => setEditing(false)}
+              style={{ padding:'4px 8px', background:'transparent', color:'#6b7280', border:'1px solid #e5e7eb', borderRadius:6, cursor:'pointer', fontSize:12 }}>✕</button>
           </div>
         </>
       ) : (
         <>
-          <div
-            onClick={() => setEditing(true)}
-            style={{
-              fontSize:13, color: m.manual>0 ? '#7c3aed':'#d1d5db',
-              textAlign:'right', cursor:'pointer', fontWeight: m.manual>0?700:400,
-            }}>
+          <div onClick={() => setEditing(true)}
+            style={{ fontSize:13, color: m.manual > 0 ? '#7c3aed' : '#d1d5db', textAlign:'right', cursor:'pointer', fontWeight: m.manual > 0 ? 700 : 400 }}>
             {m.manual > 0 ? fmtINR(m.manual) : '+ Add'}
           </div>
-          <div style={{ fontSize:12, color:'#94a3b8', textAlign:'right' }}>
-            {m.manualNote || '—'}
-          </div>
+          <div style={{ fontSize:12, color:'#94a3b8', textAlign:'right' }}>{m.manualNote || '—'}</div>
         </>
       )}
     </div>
@@ -1131,53 +1068,27 @@ function ManualInput({ label, value, note, onChange }: {
   onChange: (amount: number, note: string) => void
 }) {
   const [amt, setAmt] = useState(String(value || ''))
-  const [n, setN] = useState(note || '')
+  const [n,   setN]   = useState(note || '')
+
+  useEffect(() => { setAmt(String(value || '')) }, [value])
+  useEffect(() => { setN(note || '') },             [note])
 
   return (
-    <div style={{
-      background:'#faf5ff', border:'1px dashed #c4b5fd', borderRadius:10,
-      padding:'14px 16px',
-    }}>
-      <div style={{ fontSize:12, fontWeight:700, color:'#7c3aed', marginBottom:10 }}>
-        ✦ {label}
-      </div>
+    <div style={{ background:'#faf5ff', border:'1px dashed #c4b5fd', borderRadius:10, padding:'14px 16px' }}>
+      <div style={{ fontSize:12, fontWeight:700, color:'#7c3aed', marginBottom:10 }}>✦ {label}</div>
       <div style={{ display:'flex', gap:10, alignItems:'flex-end' }}>
         <div style={{ flex:'0 0 160px' }}>
           <div style={{ fontSize:11, color:'#6b7280', marginBottom:4 }}>Amount (₹)</div>
-          <input
-            type="number"
-            value={amt}
-            onChange={e => setAmt(e.target.value)}
-            placeholder="Enter amount..."
-            style={{
-              width:'100%', padding:'8px 12px', borderRadius:8,
-              border:'1px solid #c4b5fd', fontSize:14,
-              fontFamily:'inherit', outline:'none',
-            }}
-          />
+          <input type="number" value={amt} onChange={e => setAmt(e.target.value)} placeholder="Enter amount..."
+            style={{ width:'100%', padding:'8px 12px', borderRadius:8, border:'1px solid #c4b5fd', fontSize:14, fontFamily:'inherit', outline:'none' }} />
         </div>
         <div style={{ flex:1 }}>
           <div style={{ fontSize:11, color:'#6b7280', marginBottom:4 }}>Reason / Note</div>
-          <input
-            type="text"
-            value={n}
-            onChange={e => setN(e.target.value)}
-            placeholder="e.g. Special category bonus, Performance award..."
-            style={{
-              width:'100%', padding:'8px 12px', borderRadius:8,
-              border:'1px solid #c4b5fd', fontSize:13,
-              fontFamily:'inherit', outline:'none',
-            }}
-          />
+          <input type="text" value={n} onChange={e => setN(e.target.value)} placeholder="e.g. Special category bonus..."
+            style={{ width:'100%', padding:'8px 12px', borderRadius:8, border:'1px solid #c4b5fd', fontSize:13, fontFamily:'inherit', outline:'none' }} />
         </div>
-        <button
-          onClick={() => onChange(Number(amt)||0, n)}
-          style={{
-            padding:'8px 20px', background:'#7c3aed', color:'#fff',
-            border:'none', borderRadius:8, cursor:'pointer',
-            fontSize:14, fontWeight:600, fontFamily:'inherit',
-            flexShrink:0,
-          }}>
+        <button onClick={() => onChange(Number(amt) || 0, n)}
+          style={{ padding:'8px 20px', background:'#7c3aed', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:14, fontWeight:600, fontFamily:'inherit', flexShrink:0 }}>
           Save
         </button>
       </div>
@@ -1193,25 +1104,21 @@ function ManualInput({ label, value, note, onChange }: {
 // ── Announce Winners Tab ──────────────────────────────────────────────────────
 
 function AnnounceWinnersTab({ calcs, fyStart, defaultFyMonth }: {
-  calcs: RecruiterCalc[]
-  fyStart: number
-  defaultFyMonth: number
+  calcs: RecruiterCalc[]; fyStart: number; defaultFyMonth: number
 }) {
   const [selectedFyMonth, setSelectedFyMonth] = useState(defaultFyMonth)
-  const [copied, setCopied] = useState(false)
+  const [copied,     setCopied]     = useState(false)
   const [headerText, setHeaderText] = useState('🏆 *Star Performers of the Month!*')
   const [footerText, setFooterText] = useState("Keep pushing! 💪 Let's make next month even bigger!")
 
-  const RANK_EMOJI = ['🥇', '🥈', '🥉', '⭐', '⭐', '⭐', '⭐', '⭐']
+  const RANK_EMOJI = ['🥇','🥈','🥉','⭐','⭐','⭐','⭐','⭐']
 
   const winners = calcs
     .map(c => ({ ...c, m: c.months[selectedFyMonth] }))
     .filter(c => c.m.incentive > 0 || c.m.manual > 0)
     .sort((a, b) => b.m.pct - a.m.pct)
 
-  const monthLabel = `${MONTH_NAMES[selectedFyMonth]} ${
-    selectedFyMonth <= 8 ? fyStart : fyStart + 1
-  }`
+  const monthLabel = `${MONTH_NAMES[selectedFyMonth]} ${selectedFyMonth <= 8 ? fyStart : fyStart + 1}`
 
   function tierEmoji(pct: number) {
     return pct >= 200 ? '🚀' : pct >= 150 ? '🔥' : pct >= 100 ? '⭐' : ''
@@ -1241,75 +1148,52 @@ function AnnounceWinnersTab({ calcs, fyStart, defaultFyMonth }: {
 
   return (
     <div style={{ marginTop: 24 }}>
-      {/* Month pills */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20 }}>
+      <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:20 }}>
         {MONTH_NAMES.map((mn, i) => (
           <button key={i} onClick={() => setSelectedFyMonth(i)} style={{
-            padding: '6px 14px', borderRadius: 100, cursor: 'pointer',
-            fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
-            border: '1px solid #e5e7eb',
+            padding:'6px 14px', borderRadius:100, cursor:'pointer',
+            fontSize:12, fontWeight:600, fontFamily:'inherit', border:'1px solid #e5e7eb',
             background: selectedFyMonth === i ? '#4f46e5' : '#fff',
-            color: selectedFyMonth === i ? '#fff' : '#6b7280',
+            color:      selectedFyMonth === i ? '#fff'    : '#6b7280',
             transition: 'all 0.15s',
           }}>{mn}</button>
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-        {/* Left: winner cards */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20 }}>
         <div>
-          <div style={{
-            fontSize: 12, fontWeight: 700, color: '#6b7280',
-            textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 10,
-          }}>
+          <div style={{ fontSize:12, fontWeight:700, color:'#6b7280', textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:10 }}>
             {winners.length} winner{winners.length !== 1 ? 's' : ''} · {monthLabel}
           </div>
-
           {winners.length === 0 ? (
-            <div style={{
-              padding: '32px', textAlign: 'center', color: '#94a3b8',
-              background: '#f8fafc', borderRadius: 12, border: '1px dashed #e5e7eb',
-            }}>
+            <div style={{ padding:'32px', textAlign:'center', color:'#94a3b8', background:'#f8fafc', borderRadius:12, border:'1px dashed #e5e7eb' }}>
               No eligible winners this month
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
               {winners.map((w, i) => {
                 const [bg, color] = avatarColor(w.user.full_name)
-                const rb = getRoleColor(w.user.role)
-                const pct = w.m.pct
-                const pctColor = pct >= 200 ? '#15803d' : pct >= 150 ? '#7c3aed' : '#1d4ed8'
+                const rb       = getRoleColor(w.user.role)
+                const pctColor = w.m.pct >= 200 ? '#15803d' : w.m.pct >= 150 ? '#7c3aed' : '#1d4ed8'
                 return (
                   <div key={w.user.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 12,
-                    background: '#fff', border: '1px solid #e5e7eb',
-                    borderRadius: 12, padding: '12px 16px',
+                    display:'flex', alignItems:'center', gap:12,
+                    background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, padding:'12px 16px',
                   }}>
-                    <span style={{ fontSize: 20, flexShrink: 0 }}>{RANK_EMOJI[i] ?? '⭐'}</span>
+                    <span style={{ fontSize:20, flexShrink:0 }}>{RANK_EMOJI[i] ?? '⭐'}</span>
                     <div style={{
-                      width: 38, height: 38, borderRadius: '50%',
-                      background: bg, color,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontWeight: 700, fontSize: 12, flexShrink: 0,
+                      width:38, height:38, borderRadius:'50%', background:bg, color,
+                      display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:12, flexShrink:0,
                     }}>{initials(w.user.full_name)}</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: '#1e293b' }}>
-                        {w.user.full_name}
-                      </div>
-                      <span style={{
-                        fontSize: 10, padding: '2px 7px', borderRadius: 100,
-                        background: rb.bg, color: rb.color, fontWeight: 600,
-                      }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontWeight:700, fontSize:14, color:'#1e293b' }}>{w.user.full_name}</div>
+                      <span style={{ fontSize:10, padding:'2px 7px', borderRadius:100, background:rb.bg, color:rb.color, fontWeight:600 }}>
                         {getRoleLabel(w.user.role)}
                       </span>
                     </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontWeight: 800, fontSize: 16, color: pctColor }}>
-                        {pct}%
-                      </div>
-                      <div style={{ fontSize: 12, color: '#6b7280' }}>
-                        {fmtINR(w.m.incentive + w.m.manual)}
-                      </div>
+                    <div style={{ textAlign:'right', flexShrink:0 }}>
+                      <div style={{ fontWeight:800, fontSize:16, color:pctColor }}>{w.m.pct}%</div>
+                      <div style={{ fontSize:12, color:'#6b7280' }}>{fmtINR(w.m.incentive + w.m.manual)}</div>
                     </div>
                   </div>
                 )
@@ -1318,53 +1202,31 @@ function AnnounceWinnersTab({ calcs, fyStart, defaultFyMonth }: {
           )}
         </div>
 
-        {/* Right: message preview + copy */}
         <div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12 }}>
             <div>
-              <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>Header</div>
-              <input
-                value={headerText}
-                onChange={e => setHeaderText(e.target.value)}
-                style={{
-                  width: '100%', padding: '7px 10px', borderRadius: 8,
-                  border: '1px solid #e5e7eb', fontSize: 12, fontFamily: 'inherit',
-                }}
-              />
+              <div style={{ fontSize:11, color:'#6b7280', marginBottom:4 }}>Header</div>
+              <input value={headerText} onChange={e => setHeaderText(e.target.value)}
+                style={{ width:'100%', padding:'7px 10px', borderRadius:8, border:'1px solid #e5e7eb', fontSize:12, fontFamily:'inherit' }} />
             </div>
             <div>
-              <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>Closing line</div>
-              <input
-                value={footerText}
-                onChange={e => setFooterText(e.target.value)}
-                style={{
-                  width: '100%', padding: '7px 10px', borderRadius: 8,
-                  border: '1px solid #e5e7eb', fontSize: 12, fontFamily: 'inherit',
-                }}
-              />
+              <div style={{ fontSize:11, color:'#6b7280', marginBottom:4 }}>Closing line</div>
+              <input value={footerText} onChange={e => setFooterText(e.target.value)}
+                style={{ width:'100%', padding:'7px 10px', borderRadius:8, border:'1px solid #e5e7eb', fontSize:12, fontFamily:'inherit' }} />
             </div>
           </div>
 
-          <textarea
-            readOnly
-            value={message}
-            rows={16}
-            style={{
-              width: '100%', fontFamily: 'monospace', fontSize: 13,
-              lineHeight: 1.7, padding: 14, borderRadius: 10,
-              border: '1px solid #e5e7eb', background: '#f8fafc',
-              resize: 'none', outline: 'none', color: '#374151',
-              boxSizing: 'border-box',
-            }}
-          />
+          <textarea readOnly value={message} rows={16} style={{
+            width:'100%', fontFamily:'monospace', fontSize:13, lineHeight:1.7,
+            padding:14, borderRadius:10, border:'1px solid #e5e7eb', background:'#f8fafc',
+            resize:'none', outline:'none', color:'#374151', boxSizing:'border-box',
+          }} />
 
           <button onClick={handleCopy} style={{
-            marginTop: 10, display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 20px',
-            background: copied ? '#0f6e56' : '#25d366',
-            color: '#fff', border: 'none', borderRadius: 8,
-            cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
-            transition: 'background 0.2s',
+            marginTop:10, display:'flex', alignItems:'center', gap:8,
+            padding:'10px 20px', background: copied ? '#0f6e56' : '#25d366',
+            color:'#fff', border:'none', borderRadius:8,
+            cursor:'pointer', fontSize:14, fontWeight:600, fontFamily:'inherit', transition:'background 0.2s',
           }}>
             {copied ? '✓ Copied!' : '📋 Copy for WhatsApp'}
           </button>

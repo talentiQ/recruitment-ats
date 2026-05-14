@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import StaleCandidatesBanner from '@/components/StaleCandidatesBanner'
+import RewardsPanel from '@/components/Rewardspanel'
 
 export default function RecruiterDashboard() {
   const router = useRouter()
@@ -30,7 +31,6 @@ export default function RecruiterDashboard() {
     targetAchieved: false,
   })
   const [monthlyTarget, setMonthlyTarget] = useState<any>(null)
-  const [aiPrediction, setAiPrediction] = useState<any>(null)
   const [achievements, setAchievements] = useState<any[]>([])
   const [featuredAchievement, setFeaturedAchievement] = useState<any>(null)
   const [recentCandidates, setRecentCandidates] = useState<any[]>([])
@@ -52,8 +52,7 @@ export default function RecruiterDashboard() {
       await Promise.all([
         loadStats(userId),
         loadRevenueStats(userId, target),
-        loadAIPrediction(userId),
-        loadAchievements(userId),
+          loadAchievements(userId),
         loadRecentCandidates(userId),
       ])
     } catch (error) {
@@ -187,26 +186,7 @@ export default function RecruiterDashboard() {
     return 0
   }
 
-  const loadAIPrediction = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .rpc('generate_ai_prediction', { recruiter_id: userId })
-
-      if (data && !error) {
-        setAiPrediction(data)
-        await supabase.from('ai_predictions').insert([{
-          user_id: userId,
-          predicted_joinings_this_month: data.predicted_joinings,
-          predicted_target_achievement:  (data.predicted_joinings / 2 * 100),
-          confidence_score: data.confidence,
-          factors:          data.factors,
-        }])
-      }
-    } catch (error) {
-      console.error('AI prediction error:', error)
-    }
-  }
-
+  
   const loadAchievements = async (userId: string) => {
     const { data } = await supabase
       .from('recruiter_achievements')
@@ -381,51 +361,11 @@ export default function RecruiterDashboard() {
             </div>
           </div>
 
-          <div className="card bg-gradient-to-br from-purple-50 to-blue-50 border-2 border-purple-200">
-            <h3 className="text-lg font-semibold text-purple-900 mb-4 text-center">🤖 AI-Powered Prediction</h3>
-            {aiPrediction && (
-              <div className="space-y-4">
-                <div className="text-center">
-                  <div className="text-sm text-purple-700 mb-1">Predicted joinings by month-end</div>
-                  <div className="text-5xl font-bold text-purple-900 mb-1">{aiPrediction.predicted_joinings}</div>
-                  <div className="text-xs text-purple-600">Confidence: {(aiPrediction.confidence * 100).toFixed(0)}%</div>
-                </div>
-                <div className="bg-white rounded-lg p-4 space-y-2">
-                  <div className="text-sm font-semibold text-gray-900 mb-2">Based on:</div>
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div className="bg-purple-50 p-2 rounded">
-                      <div className="text-purple-600">Historical Avg</div>
-                      <div className="font-bold text-purple-900">{aiPrediction.factors.historical_avg}</div>
-                    </div>
-                    <div className="bg-blue-50 p-2 rounded">
-                      <div className="text-blue-600">Active Pipeline</div>
-                      <div className="font-bold text-blue-900">{aiPrediction.factors.active_pipeline}</div>
-                    </div>
-                    <div className="bg-green-50 p-2 rounded">
-                      <div className="text-green-600">Month So Far</div>
-                      <div className="font-bold text-green-900">{aiPrediction.factors.current_month_so_far}</div>
-                    </div>
-                    <div className="bg-orange-50 p-2 rounded">
-                      <div className="text-orange-600">Days Left</div>
-                      <div className="font-bold text-orange-900">{aiPrediction.factors.days_remaining}</div>
-                    </div>
-                  </div>
-                </div>
-                {monthlyTarget && aiPrediction.predicted_joinings >= monthlyTarget?.target_joinings && (
-                  <div className="bg-green-100 border border-green-300 rounded-lg p-3 text-center">
-                    <div className="text-sm font-bold text-green-900">🎯 You&apos;re on track to hit your target!</div>
-                  </div>
-                )}
-                {monthlyTarget && aiPrediction.predicted_joinings < monthlyTarget?.target_joinings && (
-                  <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-3 text-center">
-                    <div className="text-sm font-bold text-yellow-900">
-                      ⚡ {monthlyTarget.target_joinings - aiPrediction.predicted_joinings} more needed to hit target!
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          <RewardsPanel
+          userId={user?.id}
+          monthlyTarget={revenueStats.monthlyTarget}
+          monthlyRevenue={revenueStats.monthlyRevenue}
+          />
         </div>
 
         {/* Main Stats */}
