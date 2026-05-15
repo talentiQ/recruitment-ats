@@ -1,4 +1,4 @@
-// app/management/dashboard/page.tsx - COMPLETE FIXED VERSION
+// app/management/dashboard/page.tsx
 'use client'
 export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
@@ -10,6 +10,8 @@ import { PIPELINE_STAGES, getStageLabel } from '@/lib/pipelineStages'
 interface DashboardStats {
   totalRevenueEarned: number
   expectedRevenue: number
+  revenueLost: number
+  renegeCount: number
   totalJoinings: number
   avgTimeToHire: number
   topClient: { name: string; joinings: number; revenue: number } | null
@@ -66,23 +68,24 @@ export default function ManagementDashboard() {
   const [loading, setLoading] = useState(true)
   const [selectedPeriod, setSelectedPeriod] = useState('month')
   const [selectedTeam, setSelectedTeam] = useState('all')
-  
+
   const [stats, setStats] = useState<DashboardStats>({
     totalRevenueEarned: 0,
     expectedRevenue: 0,
+    revenueLost: 0,
+    renegeCount: 0,
     totalJoinings: 0,
     avgTimeToHire: 0,
     topClient: null,
     topRecruiter: null,
     fastestRecruiter: null,
   })
-  
+
   const [teamPerformance, setTeamPerformance] = useState<TeamPerformance[]>([])
   const [clientPerformance, setClientPerformance] = useState<ClientPerformance[]>([])
   const [pipelineData, setPipelineData] = useState<PipelineStage[]>([])
   const [monthlyTrend, setMonthlyTrend] = useState<any[]>([])
-  
-  // Analytics data
+
   const [recruiterData, setRecruiterData] = useState<RecruiterData[]>([])
   const [locationData, setLocationData] = useState<LocationData[]>([])
   const [conversionData, setConversionData] = useState<ConversionData[]>([])
@@ -93,13 +96,13 @@ export default function ManagementDashboard() {
     if (userData) {
       const parsedUser = JSON.parse(userData)
       setUser(parsedUser)
-      
+
       if (!['ceo', 'ops_head', 'finance_head', 'system_admin'].includes(parsedUser.role)) {
         alert('Access denied. Management only.')
         router.push('/')
         return
       }
-      
+
       loadDashboardData(parsedUser)
     }
   }, [selectedPeriod, selectedTeam, router])
@@ -134,7 +137,7 @@ export default function ManagementDashboard() {
       return {
         start: new Date(currentYear, currentMonth, 1).toISOString(),
         end: new Date(currentYear, currentMonth + 1, 0, 23, 59, 59).toISOString(),
-        label: now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        label: now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
       }
     } else if (selectedPeriod === 'quarter') {
       let quarterStart, quarterEnd
@@ -154,14 +157,14 @@ export default function ManagementDashboard() {
       return {
         start: quarterStart.toISOString(),
         end: quarterEnd.toISOString(),
-        label: `Quarter ${Math.floor(currentMonth / 3) + 1}`
+        label: `Quarter ${Math.floor(currentMonth / 3) + 1}`,
       }
     } else {
       const fiscalStartYear = currentMonth >= 3 ? currentYear : currentYear - 1
       return {
         start: new Date(fiscalStartYear, 3, 1).toISOString(),
         end: new Date(fiscalStartYear + 1, 2, 31, 23, 59, 59).toISOString(),
-        label: `FY ${fiscalStartYear}-${fiscalStartYear + 1}`
+        label: `FY ${fiscalStartYear}-${fiscalStartYear + 1}`,
       }
     }
   }
@@ -169,6 +172,7 @@ export default function ManagementDashboard() {
   const loadMainStats = async () => {
     const { start, end } = getDateRange()
 
+    // ── Revenue Earned ────────────────────────────────────────────────────────
     let revenueQuery = supabaseAdmin
       .from('candidates')
       .select('revenue_earned, date_joined, job_id')
@@ -181,10 +185,27 @@ export default function ManagementDashboard() {
     }
 
     const { data: revenueData } = await revenueQuery
-
-    const totalRevenue = revenueData?.reduce((sum, c) => sum + ((parseFloat(c.revenue_earned) || 0)), 0) || 0
+    const totalRevenue = revenueData?.reduce((sum, c) => sum + (parseFloat(c.revenue_earned) || 0), 0) || 0
     const totalJoinings = revenueData?.length || 0
 
+    // ── Revenue Lost (Reneges) ────────────────────────────────────────────────
+    let renegeQuery = supabaseAdmin
+      .from('candidates')
+      .select('revenue_earned, renege_date')
+      .eq('is_renege', true)
+      .not('renege_date', 'is', null)
+      .gte('renege_date', start)
+      .lte('renege_date', end)
+
+    if (selectedTeam !== 'all') {
+      renegeQuery = renegeQuery.eq('team_id', selectedTeam)
+    }
+
+    const { data: renegeData } = await renegeQuery
+    const revenueLost = renegeData?.reduce((sum, c) => sum + (parseFloat(c.revenue_earned) || 0), 0) || 0
+    const renegeCount = renegeData?.length || 0
+
+    // ── Expected Revenue ──────────────────────────────────────────────────────
     let expectedQuery = supabaseAdmin
       .from('offers')
       .select(`
@@ -201,13 +222,14 @@ export default function ManagementDashboard() {
     }
 
     const { data: expectedData } = await expectedQuery
+    const expectedRevenue =
+      expectedData?.reduce((sum, o) => {
+        const revenue = (parseFloat(o.billable_ctc) * parseFloat(o.revenue_percentage)) / 100
+        return sum + revenue
+      }, 0) || 0
 
-    const expectedRevenue = expectedData?.reduce((sum, o) => {
-      const revenue = (parseFloat(o.billable_ctc) * parseFloat(o.revenue_percentage)) / 100
-      return sum + revenue
-    }, 0) || 0
-
-    const avgTimeQuery = supabaseAdmin
+    // ── Avg Time to Hire ──────────────────────────────────────────────────────
+    const { data: timeData } = await supabaseAdmin
       .from('candidates')
       .select('date_sourced, date_joined')
       .eq('current_stage', 'joined')
@@ -216,19 +238,17 @@ export default function ManagementDashboard() {
       .not('date_sourced', 'is', null)
       .not('date_joined', 'is', null)
 
-    const { data: timeData } = await avgTimeQuery
-
     let avgDays = 0
     if (timeData && timeData.length > 0) {
       const totalDays = timeData.reduce((sum, c) => {
         const sourced = new Date(c.date_sourced)
         const joined = new Date(c.date_joined)
-        const days = Math.floor((joined.getTime() - sourced.getTime()) / (1000 * 60 * 60 * 24))
-        return sum + days
+        return sum + Math.floor((joined.getTime() - sourced.getTime()) / (1000 * 60 * 60 * 24))
       }, 0)
       avgDays = Math.round(totalDays / timeData.length)
     }
 
+    // ── Top Client ────────────────────────────────────────────────────────────
     const { data: topClientData } = await supabaseAdmin
       .from('candidates')
       .select(`
@@ -246,12 +266,12 @@ export default function ManagementDashboard() {
       if (!clientRevenue[clientName]) {
         clientRevenue[clientName] = { name: clientName, revenue: 0, count: 0 }
       }
-      clientRevenue[clientName].revenue += (parseFloat(c.revenue_earned) || 0)
+      clientRevenue[clientName].revenue += parseFloat(c.revenue_earned) || 0
       clientRevenue[clientName].count += 1
     })
-
     const topClient = Object.values(clientRevenue).sort((a, b) => b.revenue - a.revenue)[0] || null
 
+    // ── Top Recruiter ─────────────────────────────────────────────────────────
     const { data: topRecruiterData } = await supabaseAdmin
       .from('candidates')
       .select(`
@@ -265,17 +285,16 @@ export default function ManagementDashboard() {
 
     const recruiterRevenue: Record<string, { name: string; revenue: number; count: number }> = {}
     topRecruiterData?.forEach((c: any) => {
-      const recruiterName = c.users.full_name
       const recruiterId = c.assigned_to
       if (!recruiterRevenue[recruiterId]) {
-        recruiterRevenue[recruiterId] = { name: recruiterName, revenue: 0, count: 0 }
+        recruiterRevenue[recruiterId] = { name: c.users.full_name, revenue: 0, count: 0 }
       }
-      recruiterRevenue[recruiterId].revenue += (parseFloat(c.revenue_earned) || 0)
+      recruiterRevenue[recruiterId].revenue += parseFloat(c.revenue_earned) || 0
       recruiterRevenue[recruiterId].count += 1
     })
-
     const topRecruiter = Object.values(recruiterRevenue).sort((a, b) => b.revenue - a.revenue)[0] || null
 
+    // ── Fastest Recruiter ─────────────────────────────────────────────────────
     const { data: recruiterTimeData } = await supabaseAdmin
       .from('candidates')
       .select(`
@@ -293,25 +312,26 @@ export default function ManagementDashboard() {
     const recruiterTimes: Record<string, { name: string; totalDays: number; count: number }> = {}
     recruiterTimeData?.forEach((c: any) => {
       const recruiterId = c.assigned_to
-      const recruiterName = c.users.full_name
-      const sourced = new Date(c.date_sourced)
-      const joined = new Date(c.date_joined)
-      const days = Math.floor((joined.getTime() - sourced.getTime()) / (1000 * 60 * 60 * 24))
-
+      const days = Math.floor(
+        (new Date(c.date_joined).getTime() - new Date(c.date_sourced).getTime()) / (1000 * 60 * 60 * 24)
+      )
       if (!recruiterTimes[recruiterId]) {
-        recruiterTimes[recruiterId] = { name: recruiterName, totalDays: 0, count: 0 }
+        recruiterTimes[recruiterId] = { name: c.users.full_name, totalDays: 0, count: 0 }
       }
       recruiterTimes[recruiterId].totalDays += days
       recruiterTimes[recruiterId].count += 1
     })
 
-    const fastestRecruiter = Object.values(recruiterTimes)
-      .map(r => ({ name: r.name, days: Math.round(r.totalDays / r.count), joinings: r.count }))
-      .sort((a, b) => a.days - b.days)[0] || null
+    const fastestRecruiter =
+      Object.values(recruiterTimes)
+        .map(r => ({ name: r.name, days: Math.round(r.totalDays / r.count), joinings: r.count }))
+        .sort((a, b) => a.days - b.days)[0] || null
 
     setStats({
       totalRevenueEarned: totalRevenue,
       expectedRevenue,
+      revenueLost,
+      renegeCount,
       totalJoinings,
       avgTimeToHire: avgDays,
       topClient: topClient ? { name: topClient.name, joinings: topClient.count, revenue: topClient.revenue } : null,
@@ -341,7 +361,7 @@ export default function ManagementDashboard() {
           .lte('date_joined', end)
 
         const joinings = joinedCandidates?.length || 0
-        const revenue = joinedCandidates?.reduce((sum, c) => sum + ((parseFloat(c.revenue_earned) || 0)), 0) || 0
+        const revenue = joinedCandidates?.reduce((sum, c) => sum + (parseFloat(c.revenue_earned) || 0), 0) || 0
 
         const { data: expectedOffers } = await supabaseAdmin
           .from('offers')
@@ -354,9 +374,10 @@ export default function ManagementDashboard() {
           .eq('status', 'accepted')
           .eq('candidates.team_id', team.id)
 
-        const expectedRev = expectedOffers?.reduce((sum, o) => {
-          return sum + ((parseFloat(o.billable_ctc) * parseFloat(o.revenue_percentage)) / 100)
-        }, 0) || 0
+        const expectedRev =
+          expectedOffers?.reduce((sum, o) => {
+            return sum + (parseFloat(o.billable_ctc) * parseFloat(o.revenue_percentage)) / 100
+          }, 0) || 0
 
         const { count: pipelineCount } = await supabaseAdmin
           .from('candidates')
@@ -377,9 +398,12 @@ export default function ManagementDashboard() {
         if (joinedCandidates && joinedCandidates.length > 0) {
           const totalDays = joinedCandidates.reduce((sum, c) => {
             if (c.date_sourced && c.date_joined) {
-              const sourced = new Date(c.date_sourced)
-              const joined = new Date(c.date_joined)
-              return sum + Math.floor((joined.getTime() - sourced.getTime()) / (1000 * 60 * 60 * 24))
+              return (
+                sum +
+                Math.floor(
+                  (new Date(c.date_joined).getTime() - new Date(c.date_sourced).getTime()) / (1000 * 60 * 60 * 24)
+                )
+              )
             }
             return sum
           }, 0)
@@ -417,26 +441,16 @@ export default function ManagementDashboard() {
       .lte('date_joined', end)
 
     const clientMetrics: Record<string, {
-      name: string
-      revenue: number
-      joinings: number
-      totalCTC: number
-      clientId: string
+      name: string; revenue: number; joinings: number; totalCTC: number; clientId: string
     }> = {}
 
     clientData?.forEach((c: any) => {
       const clientId = c.jobs.clients.id
       const clientName = c.jobs.clients.company_name
       if (!clientMetrics[clientId]) {
-        clientMetrics[clientId] = {
-          name: clientName,
-          revenue: 0,
-          joinings: 0,
-          totalCTC: 0,
-          clientId,
-        }
+        clientMetrics[clientId] = { name: clientName, revenue: 0, joinings: 0, totalCTC: 0, clientId }
       }
-      clientMetrics[clientId].revenue += (parseFloat(c.revenue_earned) || 0)
+      clientMetrics[clientId].revenue += parseFloat(c.revenue_earned) || 0
       clientMetrics[clientId].joinings += 1
       clientMetrics[clientId].totalCTC += parseFloat(c.offered_fixed) || 0
     })
@@ -471,7 +485,7 @@ export default function ManagementDashboard() {
   }
 
   const loadPipelineData = async () => {
-  const stages = PIPELINE_STAGES.map(key => ({ key, label: getStageLabel(key) }))
+    const stages = PIPELINE_STAGES.map(key => ({ key, label: getStageLabel(key) }))
 
     const pipelinePromises = stages.map(async (stage) => {
       const { count } = await supabaseAdmin
@@ -479,22 +493,18 @@ export default function ManagementDashboard() {
         .select('*', { count: 'exact', head: true })
         .eq('current_stage', stage.key)
 
-      return {
-        stage: stage.label,
-        count: count || 0,
-        percentage: 0,
-      }
+      return { stage: stage.label, count: count || 0, percentage: 0 }
     })
 
     const results = await Promise.all(pipelinePromises)
     const total = results.reduce((sum, r) => sum + r.count, 0)
 
-    const pipelineWithPercentage = results.map(r => ({
-      ...r,
-      percentage: total > 0 ? Math.round((r.count / total) * 100) : 0,
-    }))
-
-    setPipelineData(pipelineWithPercentage)
+    setPipelineData(
+      results.map(r => ({
+        ...r,
+        percentage: total > 0 ? Math.round((r.count / total) * 100) : 0,
+      }))
+    )
   }
 
   const loadMonthlyTrend = async () => {
@@ -513,11 +523,9 @@ export default function ManagementDashboard() {
         .gte('date_joined', monthStart)
         .lte('date_joined', monthEnd)
 
-      const revenue = data?.reduce((sum, c) => sum + ((parseFloat(c.revenue_earned) || 0)), 0) || 0
-
       months.push({
         month: date.toLocaleDateString('en-US', { month: 'short' }),
-        revenue: revenue,
+        revenue: data?.reduce((sum, c) => sum + (parseFloat(c.revenue_earned) || 0), 0) || 0,
       })
     }
 
@@ -539,28 +547,25 @@ export default function ManagementDashboard() {
       .lte('date_joined', end)
 
     const recruiterRevenue: Record<string, { name: string; revenue: number }> = {}
-    
     data?.forEach((c: any) => {
       const recruiterId = c.assigned_to
-      const recruiterName = c.users.full_name
       if (!recruiterRevenue[recruiterId]) {
-        recruiterRevenue[recruiterId] = { name: recruiterName, revenue: 0 }
+        recruiterRevenue[recruiterId] = { name: c.users.full_name, revenue: 0 }
       }
-      recruiterRevenue[recruiterId].revenue += (parseFloat(c.revenue_earned) || 0)
+      recruiterRevenue[recruiterId].revenue += parseFloat(c.revenue_earned) || 0
     })
 
     const total = Object.values(recruiterRevenue).reduce((sum, r) => sum + r.revenue, 0)
-    
-    const recruiterArray = Object.values(recruiterRevenue)
-      .map(r => ({
-        name: r.name,
-        revenue: r.revenue,
-        percentage: total > 0 ? Math.round((r.revenue / total) * 100) : 0
-      }))
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 6)
-
-    setRecruiterData(recruiterArray)
+    setRecruiterData(
+      Object.values(recruiterRevenue)
+        .map(r => ({
+          name: r.name,
+          revenue: r.revenue,
+          percentage: total > 0 ? Math.round((r.revenue / total) * 100) : 0,
+        }))
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, 6)
+    )
   }
 
   const loadLocationDistribution = async () => {
@@ -579,12 +584,12 @@ export default function ManagementDashboard() {
       locationCounts[location] = (locationCounts[location] || 0) + 1
     })
 
-    const locationArray = Object.entries(locationCounts)
-      .map(([location, count]) => ({ location, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 6)
-
-    setLocationData(locationArray)
+    setLocationData(
+      Object.entries(locationCounts)
+        .map(([location, count]) => ({ location, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 6)
+    )
   }
 
   const loadConversionRates = async () => {
@@ -609,12 +614,7 @@ export default function ManagementDashboard() {
 
         const rate = fromCount && fromCount > 0 ? Math.round((toCount! / fromCount) * 100) : 0
 
-        return {
-          from: getStageLabel(from),
-          to: getStageLabel(to),
-          rate,
-          count: toCount || 0
-        }
+        return { from: getStageLabel(from), to: getStageLabel(to), rate, count: toCount || 0 }
       })
     )
 
@@ -643,11 +643,9 @@ export default function ManagementDashboard() {
         .gte('created_at', monthStart)
         .lte('created_at', monthEnd)
 
-      const rate = totalOffers && totalOffers > 0 ? Math.round((acceptedOffers! / totalOffers) * 100) : 0
-
       months.push({
         month: date.toLocaleDateString('en-US', { month: 'short' }),
-        rate,
+        rate: totalOffers && totalOffers > 0 ? Math.round((acceptedOffers! / totalOffers) * 100) : 0,
       })
     }
 
@@ -655,14 +653,15 @@ export default function ManagementDashboard() {
   }
 
   const formatCurrency = (amount: number) => {
-    return `Rs. ${amount.toLocaleString('en-IN', { 
-      maximumFractionDigits: 0,
-      minimumFractionDigits: 0 
-    })}`
+    return `Rs. ${amount.toLocaleString('en-IN', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}`
   }
 
   const formatPercentage = (value: number) => {
-    const color = value >= 100 ? 'text-green-600' : value >= 75 ? 'text-blue-600' : value >= 60 ? 'text-yellow-600' : 'text-red-600'
+    const color =
+      value >= 100 ? 'text-green-600'
+      : value >= 75 ? 'text-blue-600'
+      : value >= 60 ? 'text-yellow-600'
+      : 'text-red-600'
     return <span className={`font-bold ${color}`}>{value}%</span>
   }
 
@@ -679,6 +678,7 @@ export default function ManagementDashboard() {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
+
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg p-6 text-white">
           <h1 className="text-3xl font-bold mb-2">Management Dashboard</h1>
@@ -688,63 +688,59 @@ export default function ManagementDashboard() {
         {/* Filter Bar */}
         <div className="bg-white rounded-lg p-4 shadow flex justify-between items-center">
           <div className="flex gap-4">
-            <button
-              onClick={() => setSelectedPeriod('month')}
-              className={`px-4 py-2 rounded-lg font-medium transition ${
-                selectedPeriod === 'month'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              This Month
-            </button>
-            <button
-              onClick={() => setSelectedPeriod('quarter')}
-              className={`px-4 py-2 rounded-lg font-medium transition ${
-                selectedPeriod === 'quarter'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              This Quarter
-            </button>
-            <button
-              onClick={() => setSelectedPeriod('year')}
-              className={`px-4 py-2 rounded-lg font-medium transition ${
-                selectedPeriod === 'year'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              This Year
-            </button>
+            {(['month', 'quarter', 'year'] as const).map((period) => (
+              <button
+                key={period}
+                onClick={() => setSelectedPeriod(period)}
+                className={`px-4 py-2 rounded-lg font-medium transition ${
+                  selectedPeriod === period
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {period === 'month' ? 'This Month' : period === 'quarter' ? 'This Quarter' : 'This Year'}
+              </button>
+            ))}
           </div>
           <button className="px-4 py-2 bg-gray-100 rounded-lg hover:bg-gray-200 font-medium">
             Export Report
           </button>
         </div>
 
-        {/* Key Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-white rounded-lg p-6 shadow">
+        {/* Key Metrics — 5 cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Revenue Earned */}
+          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-green-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Revenue Earned</div>
             <div className="text-3xl font-bold text-gray-900">{formatCurrency(stats.totalRevenueEarned)}</div>
             <div className="text-sm text-green-600 mt-2">From {stats.totalJoinings} joinings</div>
           </div>
 
-          <div className="bg-white rounded-lg p-6 shadow">
+          {/* Expected Revenue */}
+          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-blue-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Expected Revenue</div>
             <div className="text-3xl font-bold text-gray-900">{formatCurrency(stats.expectedRevenue)}</div>
             <div className="text-sm text-blue-600 mt-2">Offers Accepted</div>
           </div>
 
-          <div className="bg-white rounded-lg p-6 shadow">
+          {/* Revenue Lost */}
+          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-red-500">
+            <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Revenue Lost</div>
+            <div className="text-3xl font-bold text-red-600">{formatCurrency(stats.revenueLost)}</div>
+            <div className="text-sm text-red-400 mt-2">
+              {stats.renegeCount} renege{stats.renegeCount !== 1 ? 's' : ''} this period
+            </div>
+          </div>
+
+          {/* Total Joinings */}
+          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-purple-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Total Joinings</div>
             <div className="text-3xl font-bold text-gray-900">{stats.totalJoinings}</div>
             <div className="text-sm text-gray-500 mt-2">Candidates placed</div>
           </div>
 
-          <div className="bg-white rounded-lg p-6 shadow">
+          {/* Avg Time-to-Hire */}
+          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-orange-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Avg Time-to-Hire</div>
             <div className="text-3xl font-bold text-gray-900">{stats.avgTimeToHire} Days</div>
             <div className="text-sm text-gray-500 mt-2">Industry avg: 45 days</div>
@@ -761,7 +757,9 @@ export default function ManagementDashboard() {
                 <div key={idx} className="flex flex-col items-center gap-2">
                   <div
                     className="w-16 bg-gradient-to-t from-blue-600 to-purple-600 rounded-t-lg"
-                    style={{ height: `${(month.revenue / Math.max(...monthlyTrend.map(m => m.revenue), 1)) * 100}%` }}
+                    style={{
+                      height: `${(month.revenue / Math.max(...monthlyTrend.map((m) => m.revenue), 1)) * 100}%`,
+                    }}
                   ></div>
                   <span className="text-xs font-medium text-gray-600">{month.month}</span>
                   <span className="text-xs font-bold">{formatCurrency(month.revenue)}</span>
@@ -779,27 +777,25 @@ export default function ManagementDashboard() {
                   <div className="text-sm text-gray-600">Top Client</div>
                   <div className="font-bold text-lg">{stats.topClient.name}</div>
                   <div className="text-sm text-gray-500">
-                    {stats.topClient.joinings} joinings • {formatCurrency(stats.topClient.revenue)}
+                    {stats.topClient.joinings} joinings · {formatCurrency(stats.topClient.revenue)}
                   </div>
                 </div>
               )}
-
               {stats.topRecruiter && (
                 <div className="border-l-4 border-green-500 pl-4">
                   <div className="text-sm text-gray-600">Top Recruiter</div>
                   <div className="font-bold text-lg">{stats.topRecruiter.name}</div>
                   <div className="text-sm text-gray-500">
-                    {stats.topRecruiter.joinings} joinings • {formatCurrency(stats.topRecruiter.revenue)}
+                    {stats.topRecruiter.joinings} joinings · {formatCurrency(stats.topRecruiter.revenue)}
                   </div>
                 </div>
               )}
-
               {stats.fastestRecruiter && (
                 <div className="border-l-4 border-orange-500 pl-4">
                   <div className="text-sm text-gray-600">Fastest Closure</div>
                   <div className="font-bold text-lg">{stats.fastestRecruiter.name}</div>
                   <div className="text-sm text-gray-500">
-                    {stats.fastestRecruiter.days} days avg • {stats.fastestRecruiter.joinings} joinings
+                    {stats.fastestRecruiter.days} days avg · {stats.fastestRecruiter.joinings} joinings
                   </div>
                 </div>
               )}
@@ -807,7 +803,7 @@ export default function ManagementDashboard() {
           </div>
         </div>
 
-        {/* Analytics Insights Section */}
+        {/* Analytics Insights */}
         <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-6 border-2 border-purple-200">
           <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
             <span className="text-3xl">📊</span>
@@ -815,7 +811,7 @@ export default function ManagementDashboard() {
           </h2>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* 1. Recruiter Contribution */}
+            {/* Recruiter Contribution */}
             <div className="bg-white rounded-lg p-5 shadow">
               <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
                 <span className="text-xl">🏆</span>
@@ -824,7 +820,7 @@ export default function ManagementDashboard() {
               <div className="h-48 flex items-center justify-center">
                 <div className="grid grid-cols-2 gap-4 w-full">
                   {recruiterData.map((recruiter, idx) => {
-                    const colors = ['bg-blue-500', 'bg-green-500', 'bg-purple-500', 'bg-orange-500', 'bg-pink-500', 'bg-cyan-500']
+                    const colors = ['bg-blue-500','bg-green-500','bg-purple-500','bg-orange-500','bg-pink-500','bg-cyan-500']
                     return (
                       <div key={idx} className="flex items-center gap-3">
                         <div className={`w-4 h-4 ${colors[idx % colors.length]} rounded-full flex-shrink-0`}></div>
@@ -841,7 +837,7 @@ export default function ManagementDashboard() {
               </div>
             </div>
 
-            {/* 2. Conversion Rates */}
+            {/* Conversion Rates */}
             <div className="bg-white rounded-lg p-5 shadow">
               <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
                 <span className="text-xl">📈</span>
@@ -851,7 +847,9 @@ export default function ManagementDashboard() {
                 {conversionData.map((conv, idx) => (
                   <div key={idx}>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium text-gray-600 capitalize">{conv.from} → {conv.to}</span>
+                      <span className="text-xs font-medium text-gray-600 capitalize">
+                        {conv.from} → {conv.to}
+                      </span>
                       <span className="text-xs font-bold text-gray-900">{conv.rate}%</span>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2">
@@ -865,7 +863,7 @@ export default function ManagementDashboard() {
               </div>
             </div>
 
-            {/* 3. Location Distribution */}
+            {/* Location Distribution */}
             <div className="bg-white rounded-lg p-5 shadow">
               <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
                 <span className="text-xl">📍</span>
@@ -873,7 +871,7 @@ export default function ManagementDashboard() {
               </h3>
               <div className="space-y-2">
                 {locationData.map((loc, idx) => {
-                  const maxCount = Math.max(...locationData.map(l => l.count), 1)
+                  const maxCount = Math.max(...locationData.map((l) => l.count), 1)
                   return (
                     <div key={idx} className="flex items-center gap-3">
                       <div className="w-24 text-sm font-medium text-gray-700 truncate">{loc.location}</div>
@@ -893,7 +891,7 @@ export default function ManagementDashboard() {
               </div>
             </div>
 
-            {/* 4. Offer Acceptance Trend */}
+            {/* Offer Acceptance Trend */}
             <div className="bg-white rounded-lg p-5 shadow">
               <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
                 <span className="text-xl">✅</span>
@@ -952,7 +950,7 @@ export default function ManagementDashboard() {
           </div>
         </div>
 
-        {/* Client Performance */}
+        {/* Client Performance Table */}
         <div className="bg-white rounded-lg p-6 shadow">
           <h3 className="text-lg font-bold mb-4">Top Clients by Revenue</h3>
           <div className="overflow-x-auto">
@@ -1008,6 +1006,7 @@ export default function ManagementDashboard() {
             ))}
           </div>
         </div>
+
       </div>
     </DashboardLayout>
   )
