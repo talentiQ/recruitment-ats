@@ -189,21 +189,41 @@ export default function ManagementDashboard() {
     const totalJoinings = revenueData?.length || 0
 
     // ── Revenue Lost (Reneges) ────────────────────────────────────────────────
-    let renegeQuery = supabaseAdmin
-      .from('candidates')
-      .select('revenue_earned, renege_date')
-      .eq('is_renege', true)
-      .gte('date_joined', start)          // ← filter by when they originally joined
-      .lte('date_joined', end)
+// ── Revenue Lost (Reneges) ────────────────────────────────────────────────
+// ── Revenue Lost (Reneges) ────────────────────────────────────────────────
+let renegeQuery = supabaseAdmin
+  .from('offers')
+  .select(`
+    fixed_ctc,
+    revenue_percentage,
+    offer_date,
+    actual_joining_date,
+    candidates!inner(team_id)
+  `)
+  .eq('status', 'renege')
 
-    if (selectedTeam !== 'all') {
-      renegeQuery = renegeQuery.eq('team_id', selectedTeam)
-    }
+if (selectedTeam !== 'all') {
+  renegeQuery = renegeQuery.eq('candidates.team_id', selectedTeam)
+}
 
-    const { data: renegeData } = await renegeQuery
-    const revenueLost = renegeData?.reduce((sum, c) => sum + (parseFloat(c.revenue_earned) || 0), 0) || 0
-    const renegeCount = renegeData?.length || 0
+const { data: allRenegeData } = await renegeQuery
 
+const startDate = new Date(start)
+const endDate = new Date(end)
+
+// Mirror offers page date logic: actual_joining_date if present, else offer_date
+const renegeData = (allRenegeData ?? []).filter(o => {
+  const dateStr = o.actual_joining_date ?? o.offer_date
+  if (!dateStr) return false
+  const d = new Date(dateStr)
+  return d >= startDate && d <= endDate
+})
+
+const revenueLost = renegeData.reduce((sum, o) => {
+  const rev = ((parseFloat(o.fixed_ctc) || 0) * (parseFloat(o.revenue_percentage) || 8.33)) / 100
+  return sum + rev
+}, 0)
+const renegeCount = renegeData.length
     // ── Expected Revenue ──────────────────────────────────────────────────────
     let expectedQuery = supabaseAdmin
       .from('offers')
