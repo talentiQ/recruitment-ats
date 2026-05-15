@@ -4,10 +4,10 @@ import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 
 // ── Policy constants (must match incentives page) ─────────────────────────────
-const MONTHLY_RATE            = 0.01
-const MONTHLY_BONUS_THRESHOLD = 150
-const MONTHLY_MIN_PCT         = 50
-const HY_AVG_MIN              = 60
+const MONTHLY_RATE            = 0.01   // 1% flat
+const MONTHLY_BONUS_THRESHOLD = 150    // min % to earn reward
+const MONTHLY_MIN_PCT         = 50     // below this → nil
+const HY_AVG_MIN              = 60     // below this → void
 const HALF_YEARLY_SLABS = [
   { min: 0,   max: 84.99,    rate: 0,    desc: '0–84%',    color: '#6b7280', label: 'Slab I'   },
   { min: 85,  max: 99.99,    rate: 0.03, desc: '85–99%',   color: '#f59e0b', label: 'Slab II'  },
@@ -28,13 +28,16 @@ function fmtINR(n: number) {
 function fmtINRFull(n: number) {
   return new Intl.NumberFormat('en-IN', { style:'currency', currency:'INR', maximumFractionDigits:0 }).format(n)
 }
+
 function getHYSlab(pct: number) {
   return HALF_YEARLY_SLABS.find(s => pct >= s.min && pct <= s.max) ?? HALF_YEARLY_SLABS[0]
 }
+
 function calcMonthlyReward(achieved: number, pct: number) {
   if (pct < MONTHLY_MIN_PCT || pct < MONTHLY_BONUS_THRESHOLD) return 0
   return Math.round(achieved * MONTHLY_RATE)
 }
+
 function calcHYIncentive(achieved: number, pct: number) {
   const slab = getHYSlab(pct)
   return Math.round(achieved * slab.rate)
@@ -63,25 +66,26 @@ interface MonthData {
 interface RewardsPanelProps {
   userId: string
   monthlyTarget: number
-  monthlyRevenue: number
+  monthlyRevenue: number   // already computed in dashboard
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: RewardsPanelProps) {
-  const [tab, setTab]               = useState<'monthly'|'halfyearly'>('monthly')
-  const [viewFyIdx, setViewFyIdx]   = useState<number>(-1)
-  const [monthsData, setMonthsData] = useState<MonthData[]>([])
-  const [reneges, setReneges]       = useState<RenegeCand[]>([])
-  const [loading, setLoading]       = useState(true)
+  const [tab, setTab]                 = useState<'monthly'|'halfyearly'>('monthly')
+  // Browseable month index — starts at current FY month, can nav prev/next within FY
+  const [viewFyIdx, setViewFyIdx]     = useState<number>(-1) // -1 = use curFyIdx (set after load)
+  const [monthsData, setMonthsData]   = useState<MonthData[]>([])
+  const [reneges, setReneges]         = useState<RenegeCand[]>([])
+  const [loading, setLoading]         = useState(true)
   const [annualTarget, setAnnualTarget] = useState(0)
 
-  const now      = new Date()
-  const fyStart  = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
-  const curFyIdx = FY_CAL_MONTHS.indexOf(now.getMonth())
+  const now        = new Date()
+  const fyStart    = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
+  const curFyIdx   = FY_CAL_MONTHS.indexOf(now.getMonth())
   const half: 'H1'|'H2' = curFyIdx <= 5 ? 'H1' : 'H2'
-  const hyIndices = half === 'H1' ? [0,1,2,3,4,5] : [6,7,8,9,10,11]
+  const hyIndices  = half === 'H1' ? [0,1,2,3,4,5] : [6,7,8,9,10,11]
 
-  // ── Load full FY revenue from offers table ─────────────────────────────────
+  // ── Load full FY revenue + reneges ──────────────────────────────────────────
   const load = useCallback(async () => {
     setLoading(true)
 
@@ -92,26 +96,24 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
       .eq('id', userId)
       .single()
 
-    const mTarget = userData?.monthly_target ?? monthlyTarget ?? 0
-    const aTarget = userData?.annual_target  ?? mTarget * 12
+    const mTarget  = userData?.monthly_target  ?? monthlyTarget ?? 0
+    const aTarget  = userData?.annual_target   ?? mTarget * 12
+
     setAnnualTarget(aTarget)
 
-    // 2. Fetch candidates joined this FY — join offers for live revenue calc
+    // 2. Fetch all candidates joined this FY (including reneged)
     const { data: candidates } = await supabase
       .from('candidates')
-      .select(`
-        id, full_name, date_joined, is_renege, renege_date, renege_reason,
-        offers ( fixed_ctc, revenue_percentage )
-      `)
+      .select('revenue_earned, date_joined, is_renege, renege_date, renege_reason, full_name, id')
       .eq('assigned_to', userId)
-      .in('current_stage', ['joined', 'renege'])
+      .in('current_stage', ['joined','renege'])
       .not('date_joined', 'is', null)
       .gte('date_joined', `${fyStart}-04-01`)
       .lte('date_joined', `${fyStart + 1}-03-31`)
 
     // 3. Build per-month revenue and renege maps
-    const revMap:    Record<number, number> = {}
-    const deductMap: Record<number, number> = {}
+    const revMap:    Record<number, number> = {}   // fyIdx → net revenue
+    const deductMap: Record<number, number> = {}   // fyIdx → renege deductions
     const renegeList: RenegeCand[]          = []
 
     for (const c of (candidates ?? [])) {
@@ -120,11 +122,7 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
       const fyIdx    = FY_CAL_MONTHS.indexOf(calMonth)
       if (fyIdx === -1) continue
 
-      // ── Live revenue from offers table ──────────────────────────────────
-      const offer = Array.isArray(c.offers) ? c.offers[0] : c.offers
-      const rev   = offer
-        ? ((parseFloat(offer.fixed_ctc) || 0) * (parseFloat(offer.revenue_percentage) || 8.33)) / 100
-        : 0
+      const rev = c.revenue_earned ?? 0
 
       if (c.is_renege && c.renege_date) {
         const rCalMonth = new Date(c.renege_date).getMonth()
@@ -137,7 +135,7 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
           revMap[fyIdx] = (revMap[fyIdx] ?? 0) + 0
         } else {
           // Credit in joining month, deduct in renege month
-          revMap[fyIdx]     = (revMap[fyIdx]     ?? 0) + rev
+          revMap[fyIdx]    = (revMap[fyIdx]    ?? 0) + rev
           deductMap[rFyIdx] = (deductMap[rFyIdx] ?? 0) + rev
           renegeList.push({
             id:             c.id,
@@ -156,21 +154,21 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
 
     // 4. Build month entries
     const months: MonthData[] = FY_CAL_MONTHS.map((_, fyIdx) => {
-      const calYear     = FY_CAL_MONTHS[fyIdx] >= 3 ? fyStart : fyStart + 1
-      const achieved    = revMap[fyIdx]    ?? 0
-      const deduction   = deductMap[fyIdx] ?? 0
+      const calYear   = FY_CAL_MONTHS[fyIdx] >= 3 ? fyStart : fyStart + 1
+      const achieved  = revMap[fyIdx]    ?? 0
+      const deduction = deductMap[fyIdx] ?? 0
       const netAchieved = Math.max(0, achieved - deduction)
-      const pct         = mTarget > 0 ? Math.round((netAchieved / mTarget) * 100) : 0
-      const reward      = calcMonthlyReward(netAchieved, pct)
+      const pct       = mTarget > 0 ? Math.round((netAchieved / mTarget) * 100) : 0
+      const reward    = calcMonthlyReward(netAchieved, pct)
       return {
         fyIdx,
-        name:            `${MONTH_NAMES[fyIdx]} ${calYear}`,
-        target:          mTarget,
-        achieved:        netAchieved,
+        name:          `${MONTH_NAMES[fyIdx]} ${calYear}`,
+        target:        mTarget,
+        achieved:      netAchieved,
         pct,
         reward,
         renegeDeduction: deduction,
-        netReward:       reward,
+        netReward:     reward,
       }
     })
 
@@ -187,7 +185,7 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
     </div>
   )
 
-  // ── Derived ────────────────────────────────────────────────────────────────
+  // ── Browseable month stats ───────────────────────────────────────────────────
   const activeFyIdx    = viewFyIdx === -1 ? curFyIdx : viewFyIdx
   const isFutureMonth  = activeFyIdx > curFyIdx
   const isCurrentMonth = activeFyIdx === curFyIdx
@@ -198,12 +196,13 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
   const needFor150     = curMonth ? Math.max(0, curMonth.target * 1.5 - curMonth.achieved) : 0
   const needFor200     = curMonth ? Math.max(0, curMonth.target * 2   - curMonth.achieved) : 0
 
+  // Tier (based on viewed month)
   const tier = curPct >= 200 ? { emoji:'👑', label:'Legend',   color:'#15803d', bg:'#f0fdf4', border:'#bbf7d0' }
              : curPct >= 150 ? { emoji:'🚀', label:'Achiever', color:'#6d28d9', bg:'#faf5ff', border:'#ddd6fe' }
              : curPct >= 100 ? { emoji:'⭐', label:'Star',     color:'#92400e', bg:'#fefce8', border:'#fde68a' }
              : null
 
-  // Half-yearly
+  // ── Half-yearly stats ──────────────────────────────────────────────────────
   const hyMonths      = hyIndices.map(i => monthsData[i]).filter(Boolean)
   const hyAchieved    = hyMonths.reduce((s, m) => s + m.achieved, 0)
   const hyTarget      = hyMonths.reduce((s, m) => s + m.target,   0)
@@ -214,6 +213,9 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
   const hySlab        = isVoid ? null : getHYSlab(hyPct)
   const hyIncentive   = isVoid ? 0    : calcHYIncentive(hyAchieved, hyPct)
   const hyPayoutMonth = half === 'H1' ? 'December 2026' : 'July 2027'
+
+  // Months completed in this half
+  const completedInHalf = hyIndices.filter(i => i < curFyIdx).length
   const remainingInHalf = hyIndices.filter(i => i > curFyIdx).length
 
   return (
@@ -277,7 +279,8 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
                   background: activeFyIdx <= 0 ? '#f9fafb' : '#fff',
                   cursor: activeFyIdx <= 0 ? 'not-allowed' : 'pointer',
                   fontSize:18, color: activeFyIdx <= 0 ? '#d1d5db' : '#374151',
-                  display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  flexShrink:0,
                 }}>&#8249;</button>
 
               <div style={{ textAlign:'center', flex:1 }}>
@@ -311,7 +314,8 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
                   background: activeFyIdx >= 11 ? '#f9fafb' : '#fff',
                   cursor: activeFyIdx >= 11 ? 'not-allowed' : 'pointer',
                   fontSize:18, color: activeFyIdx >= 11 ? '#d1d5db' : '#374151',
-                  display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  flexShrink:0,
                 }}>&#8250;</button>
             </div>
 
@@ -343,6 +347,7 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
                   color: curPct >= 150 ? '#6d28d9' : curPct >= 100 ? '#1d4ed8' : curPct >= 50 ? '#b45309' : '#dc2626',
                 }}>{curPct}%</span>
               </div>
+              {/* Progress bar with milestone markers */}
               <div style={{ position:'relative', height:12, background:'#f1f5f9', borderRadius:100, overflow:'visible' }}>
                 <div style={{
                   height:'100%', borderRadius:100,
@@ -353,10 +358,12 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
                     : 'linear-gradient(90deg,#f59e0b,#fbbf24)',
                   transition:'width 0.6s ease',
                 }} />
+                {/* Milestone ticks */}
                 {[{pct:50,label:'50%'},{pct:100,label:'⭐'},{pct:150,label:'🚀'},{pct:200,label:'👑'}].map(m => (
                   <div key={m.pct} style={{
                     position:'absolute', top:-18, left:`${Math.min(m.pct,100)}%`,
-                    transform:'translateX(-50%)', fontSize:10, color:'#94a3b8', whiteSpace:'nowrap',
+                    transform:'translateX(-50%)', fontSize:10, color:'#94a3b8',
+                    whiteSpace:'nowrap',
                   }}>{m.label}</div>
                 ))}
               </div>
@@ -428,7 +435,8 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
                   {reneges.map(r => (
                     <div key={r.id} style={{
                       background:'#fff', border:'1px solid #fecaca',
-                      borderRadius:8, padding:'8px 12px', fontSize:12,
+                      borderRadius:8, padding:'8px 12px',
+                      fontSize:12,
                     }}>
                       <div style={{ fontWeight:600, color:'#7f1d1d' }}>{r.full_name}</div>
                       <div style={{ color:'#6b7280', marginTop:2 }}>
@@ -460,6 +468,7 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
         {/* ── HALF-YEARLY TAB ── */}
         {tab === 'halfyearly' && (
           <div>
+            {/* Big incentive */}
             <div style={{ textAlign:'center', marginBottom:16 }}>
               <div style={{ fontSize:11, color:'#6b7280', letterSpacing:'1px', textTransform:'uppercase' }}>
                 {half} Incentive ({half === 'H1' ? 'Apr–Sep' : 'Oct–Mar'})
@@ -556,7 +565,8 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
             {reneges.length > 0 && (
               <div style={{
                 background:'#fef2f2', border:'1px solid #fecaca',
-                borderRadius:8, padding:'10px 14px', marginBottom:12, fontSize:12,
+                borderRadius:8, padding:'10px 14px', marginBottom:12,
+                fontSize:12,
               }}>
                 <div style={{ fontWeight:700, color:'#dc2626', marginBottom:4 }}>
                   ⚠️ Renege Impact on {half} Incentive
@@ -579,6 +589,7 @@ export default function RewardsPanel({ userId, monthlyTarget, monthlyRevenue }: 
             </div>
           </div>
         )}
+
       </div>
     </div>
   )
