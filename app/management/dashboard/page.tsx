@@ -208,15 +208,14 @@ if (selectedTeam !== 'all') {
 
 const { data: allRenegeData } = await renegeQuery
 
-const startDate = new Date(start)
-const endDate = new Date(end)
+const rangeFrom = start.slice(0, 10)  // 'YYYY-MM-DD'
+const rangeTo   = end.slice(0, 10)
 
-// Mirror offers page date logic: actual_joining_date if present, else offer_date
 const renegeData = (allRenegeData ?? []).filter(o => {
   const dateStr = o.actual_joining_date ?? o.offer_date
   if (!dateStr) return false
-  const d = new Date(dateStr)
-  return d >= startDate && d <= endDate
+  const d = dateStr.slice(0, 10)
+  return d >= rangeFrom && d <= rangeTo
 })
 
 const revenueLost = renegeData.reduce((sum, o) => {
