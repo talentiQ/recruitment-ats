@@ -193,7 +193,6 @@ export default function ManagementDashboard() {
       .from('candidates')
       .select('revenue_earned, renege_date')
       .eq('is_renege', true)
-      .not('renege_date', 'is', null)
       .gte('renege_date', start)
       .lte('renege_date', end)
 
