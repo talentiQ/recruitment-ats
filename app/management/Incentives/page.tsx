@@ -172,44 +172,35 @@ export default function IncentivesPage() {
 
   // ── Load revenue ──────────────────────────────────────────────────────────────
 
- const loadRevenue = useCallback(async () => {
-  const startDate = `${fyStart}-04-01`
-  const endDate = `${fyStart + 1}-03-31`
+  const loadRevenue = useCallback(async () => {
+    const startDate = `${fyStart}-04-01`
+    const endDate   = `${fyStart + 1}-03-31`
 
-  const { data: candidates, error } = await supabase
-    .from('candidates')
-    .select(`
-      assigned_to, date_joined, is_renege, renege_date,
-      offers ( fixed_ctc, revenue_percentage )
-    `)
-    .in('current_stage', ['joined', 'renege'])
-    .not('date_joined', 'is', null)
-    .gte('date_joined', startDate)
-    .lte('date_joined', endDate)
+    const { data: candidates, error } = await supabase
+      .from('candidates')
+      .select('assigned_to, revenue_earned, date_joined, is_renege, renege_date')
+      .in('current_stage', ['joined', 'renege'])
+      .not('date_joined', 'is', null)
+      .gte('date_joined', startDate)
+      .lte('date_joined', endDate)
 
-  if (error) { console.error(error); return }
+    if (error) { console.error('Revenue load error:', error); return }
 
-  const map: Record<string, Record<number, number>> = {}
-  for (const c of (candidates ?? [])) {
-    if (!c.assigned_to || !c.date_joined) continue
-    const calMonth = new Date(c.date_joined).getMonth()
-
-    // Recalculate live from offers table — picks up any revenue_percentage edits
-    const offer = Array.isArray(c.offers) ? c.offers[0] : c.offers
-    const rev = offer
-      ? ((parseFloat(offer.fixed_ctc) || 0) * (parseFloat(offer.revenue_percentage) || 8.33)) / 100
-      : 0
-
-    const isRenegedThisMonth = c.is_renege && c.renege_date &&
-      new Date(c.renege_date).getMonth() === calMonth &&
-      new Date(c.renege_date).getFullYear() === new Date(c.date_joined).getFullYear()
-
-    const net = isRenegedThisMonth ? 0 : rev
-    if (!map[c.assigned_to]) map[c.assigned_to] = {}
-    map[c.assigned_to][calMonth] = (map[c.assigned_to][calMonth] ?? 0) + net
-  }
-  setRevenueData(map)
-}, [fyStart])
+    const map: Record<string, Record<number, number>> = {}
+    for (const c of (candidates ?? [])) {
+      if (!c.assigned_to || !c.date_joined) continue
+      const calMonth = new Date(c.date_joined).getMonth()
+      const rev      = c.revenue_earned ?? 0
+      const isRenegedSameMonth =
+        c.is_renege && c.renege_date &&
+        new Date(c.renege_date).getMonth() === calMonth &&
+        new Date(c.renege_date).getFullYear() === new Date(c.date_joined).getFullYear()
+      const net = isRenegedSameMonth ? 0 : rev
+      if (!map[c.assigned_to]) map[c.assigned_to] = {}
+      map[c.assigned_to][calMonth] = (map[c.assigned_to][calMonth] ?? 0) + net
+    }
+    setRevenueData(map)
+  }, [fyStart, supabase])
 
   useEffect(() => { loadRevenue() }, [loadRevenue])
 
