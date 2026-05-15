@@ -193,8 +193,8 @@ export default function ManagementDashboard() {
       .from('candidates')
       .select('revenue_earned, renege_date')
       .eq('is_renege', true)
-      .gte('renege_date', start)
-      .lte('renege_date', end)
+      .gte('date_joined', start)          // ← filter by when they originally joined
+      .lte('date_joined', end)
 
     if (selectedTeam !== 'all') {
       renegeQuery = renegeQuery.eq('team_id', selectedTeam)
