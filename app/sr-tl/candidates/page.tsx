@@ -1,11 +1,12 @@
-// app/tl/candidates/page.tsx
+// app/sr-tl/candidates/page.tsx
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { Suspense, useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { PIPELINE_STAGES, getStageBadge, getStageLabel } from '@/lib/pipelineStages'
+import { PIPELINE_STAGES, getStageBadge, getStageLabel, isActiveStage } from '@/lib/pipelineStages'
 
 // ── Bulk Stage Modal ──────────────────────────────────────────────────────────
 function BulkStageModal({
@@ -127,68 +128,99 @@ function BulkStageModal({
   )
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
-export default function TLCandidatesPage() {
+// ── Inner Table Component (inside Suspense) ───────────────────────────────────
+function CandidatesTable() {
   const router = useRouter()
-  const [candidates, setCandidates]         = useState<any[]>([])
-  const [loading, setLoading]               = useState(true)
-  const [stageFilter, setStageFilter]       = useState('all')
-  const [searchQuery, setSearchQuery]       = useState('')
-  const [user, setUser]                     = useState<any>(null)
+  const [candidates, setCandidates]           = useState<any[]>([])
+  const [loading, setLoading]                 = useState(true)
+  const [stageFilter, setStageFilter]         = useState('all')
+  const [searchQuery, setSearchQuery]         = useState('')
   const [recruiterFilter, setRecruiterFilter] = useState('all')
-  const [teamMembers, setTeamMembers]       = useState<any[]>([])
+  const [teamFilter, setTeamFilter]           = useState('all')
+  const [user, setUser]                       = useState<any>(null)
+  const [teamMembers, setTeamMembers]         = useState<any[]>([])
+  const [allTeams, setAllTeams]               = useState<any[]>([])
 
   // Bulk state
-  const [selectedIds, setSelectedIds]       = useState<Set<string>>(new Set())
-  const [showBulkModal, setShowBulkModal]   = useState(false)
-  const [bulkSubmitting, setBulkSubmitting] = useState(false)
-  const [bulkSuccess, setBulkSuccess]       = useState('')
+  const [selectedIds, setSelectedIds]         = useState<Set<string>>(new Set())
+  const [showBulkModal, setShowBulkModal]     = useState(false)
+  const [bulkSubmitting, setBulkSubmitting]   = useState(false)
+  const [bulkSuccess, setBulkSuccess]         = useState('')
 
   useEffect(() => {
     const userData = localStorage.getItem('user')
     if (userData) {
       const parsedUser = JSON.parse(userData)
       setUser(parsedUser)
-      loadTeamMembers(parsedUser.team_id)
+      loadTeamMembersUsingReportsTo(parsedUser)
     }
   }, [])
 
   useEffect(() => {
-    if (user) loadCandidates()
-  }, [user, stageFilter, searchQuery, recruiterFilter])
+    if (teamMembers.length > 0) loadCandidates()
+  }, [teamMembers, stageFilter, searchQuery, recruiterFilter, teamFilter])
 
-  const loadTeamMembers = async (teamId: string) => {
+  const loadTeamMembersUsingReportsTo = async (currentUser: any) => {
     try {
-      const { data, error } = await supabase
+      // Step 1: direct reports (TLs + recruiters reporting to this Sr.TL)
+      const { data: directReports, error: directError } = await supabase
         .from('users')
-        .select('id, full_name')
-        .eq('team_id', teamId)
+        .select('id, full_name, role, team_id')
+        .eq('reports_to', currentUser.id)
         .eq('is_active', true)
-        .order('full_name')
-      if (error) throw error
-      setTeamMembers(data || [])
+
+      if (directError) throw directError
+
+      // Step 2: TL IDs among direct reports
+      const tlIds = directReports?.filter(m => m.role === 'team_leader').map(m => m.id) || []
+
+      // Step 3: recruiters who report to those TLs
+      let indirectRecruiters: any[] = []
+      if (tlIds.length > 0) {
+        const { data: recruiterReports, error: recError } = await supabase
+          .from('users')
+          .select('id, full_name, role, team_id')
+          .in('reports_to', tlIds)
+          .eq('role', 'recruiter')
+          .eq('is_active', true)
+        if (!recError) indirectRecruiters = recruiterReports || []
+      }
+
+      // Step 4: combine
+      const allTeamMembers = [...(directReports || []), ...indirectRecruiters]
+      setTeamMembers(allTeamMembers)
+
+      const uniqueTeams = [...new Set(allTeamMembers.map(u => u.team_id).filter(Boolean))]
+      setAllTeams(uniqueTeams)
     } catch (error) {
       console.error('Error loading team members:', error)
+      setTeamMembers([])
     }
   }
 
   const loadCandidates = async () => {
     setLoading(true)
     try {
-      const { data: teamData } = await supabase
-        .from('users')
-        .select('id')
-        .eq('team_id', user.team_id)
-        .eq('is_active', true)
+      let teamMemberIds = teamMembers.map(m => m.id)
 
-      const teamMemberIds = teamData?.map((m: any) => m.id) || []
+      if (teamFilter !== 'all') {
+        teamMemberIds = teamMembers
+          .filter(m => m.team_id === teamFilter)
+          .map(m => m.id)
+      }
+
+      if (teamMemberIds.length === 0) {
+        setCandidates([])
+        setLoading(false)
+        return
+      }
 
       let query = supabase
         .from('candidates')
         .select(`
           *,
           jobs ( job_title, job_code, clients (company_name) ),
-          users:assigned_to ( full_name )
+          users:assigned_to ( full_name, team_id, role )
         `)
         .in('assigned_to', teamMemberIds)
         .order('created_at', { ascending: false })
@@ -206,7 +238,7 @@ export default function TLCandidatesPage() {
       setCandidates(data || [])
       setSelectedIds(new Set())
     } catch (error) {
-      console.error('Error:', error)
+      console.error('Error loading candidates:', error)
     } finally {
       setLoading(false)
     }
@@ -251,112 +283,158 @@ export default function TLCandidatesPage() {
   }
 
   if (!user) return (
-    <DashboardLayout>
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    </DashboardLayout>
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+    </div>
   )
 
+  const candidatesByTeam = allTeams.map(teamId => ({
+    teamId,
+    count: candidates.filter(c => c.users?.team_id === teamId).length,
+  }))
+
   return (
-    <DashboardLayout>
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
 
-        {/* Header */}
-        <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">All Team Candidates</h2>
+          <p className="text-gray-600">
+            Managing {allTeams.length} teams with {teamMembers.length} members
+          </p>
+        </div>
+        <button onClick={() => router.push('/sr-tl/candidates/add')} className="btn-primary">
+          + Add Candidate
+        </button>
+      </div>
+
+      {/* Bulk success toast */}
+      {bulkSuccess && (
+        <div style={{
+          background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10,
+          padding: '12px 18px', fontSize: 14, fontWeight: 600, color: '#15803d',
+        }}>
+          {bulkSuccess}
+        </div>
+      )}
+
+      {/* Quick Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="kpi-card text-center">
+          <div className="kpi-title">Total Teams</div>
+          <div className="kpi-value text-blue-600">{allTeams.length}</div>
+        </div>
+        <div className="kpi-card text-center">
+          <div className="kpi-title">Team Members</div>
+          <div className="kpi-value text-purple-600">{teamMembers.length}</div>
+        </div>
+        <div className="kpi-card text-center">
+          <div className="kpi-title">Total Candidates</div>
+          <div className="kpi-value text-green-600">{candidates.length}</div>
+        </div>
+        <div className="kpi-card kpi-success text-center">
+          <div className="kpi-title">Active Pipelines</div>
+          <div className="kpi-value">
+            {candidates.filter(c => isActiveStage(c.current_stage)).length}
+          </div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="card">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">Team Candidates</h2>
-            <p className="text-gray-600">View and manage your team's pipeline</p>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
+            <input
+              type="text" value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Name, phone, email..." className="input"
+            />
           </div>
-          <button onClick={() => router.push('/tl/candidates/add')} className="btn-primary">
-            + Add Candidate
-          </button>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Team</label>
+            <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)} className="input">
+              <option value="all">All Teams ({allTeams.length})</option>
+              {allTeams.map(teamId => {
+                const teamCount = candidatesByTeam.find(t => t.teamId === teamId)?.count || 0
+                return (
+                  <option key={teamId} value={teamId}>
+                    Team {teamId.slice(0, 20)}... ({teamCount})
+                  </option>
+                )
+              })}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Stage</label>
+            <select value={stageFilter} onChange={e => setStageFilter(e.target.value)} className="input">
+              <option value="all">All Stages</option>
+              {PIPELINE_STAGES.map(stage => (
+                <option key={stage} value={stage}>{getStageLabel(stage)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Member</label>
+            <select value={recruiterFilter} onChange={e => setRecruiterFilter(e.target.value)} className="input">
+              <option value="all">All Members</option>
+              {teamMembers.map(member => (
+                <option key={member.id} value={member.id}>
+                  {member.full_name} ({member.role})
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        {/* Bulk success toast */}
-        {bulkSuccess && (
-          <div style={{
-            background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10,
-            padding: '12px 18px', fontSize: 14, fontWeight: 600, color: '#15803d',
-          }}>
-            {bulkSuccess}
+        {(stageFilter !== 'all' || searchQuery || recruiterFilter !== 'all' || teamFilter !== 'all') && (
+          <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+            <p className="text-sm text-gray-500">
+              Showing <strong className="text-gray-700">{candidates.length}</strong> candidates
+            </p>
+            <button
+              onClick={() => {
+                setStageFilter('all'); setSearchQuery('')
+                setRecruiterFilter('all'); setTeamFilter('all')
+              }}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Clear all filters
+            </button>
           </div>
         )}
+      </div>
 
-        {/* Filters */}
-        <div className="card">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
-              <input
-                type="text" value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Name, phone, email..." className="input"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Stage</label>
-              <select value={stageFilter} onChange={e => setStageFilter(e.target.value)} className="input">
-                <option value="all">All Stages</option>
-                {PIPELINE_STAGES.map(stage => (
-                  <option key={stage} value={stage}>{getStageLabel(stage)}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Recruiter</label>
-              <select value={recruiterFilter} onChange={e => setRecruiterFilter(e.target.value)} className="input">
-                <option value="all">All Recruiters</option>
-                {teamMembers.map(member => (
-                  <option key={member.id} value={member.id}>{member.full_name}</option>
-                ))}
-              </select>
-            </div>
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div style={{
+          position: 'sticky', top: 16, zIndex: 100,
+          background: 'linear-gradient(135deg,#4f46e5,#7c3aed)',
+          borderRadius: 12, padding: '12px 20px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          boxShadow: '0 8px 24px rgba(79,70,229,0.35)',
+        }}>
+          <div style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>
+            ✓ {selectedIds.size} candidate{selectedIds.size !== 1 ? 's' : ''} selected
           </div>
-
-          {(stageFilter !== 'all' || searchQuery || recruiterFilter !== 'all') && (
-            <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-              <p className="text-sm text-gray-500">
-                Showing <strong className="text-gray-700">{candidates.length}</strong> candidates
-              </p>
-              <button
-                onClick={() => { setStageFilter('all'); setSearchQuery(''); setRecruiterFilter('all') }}
-                className="text-xs text-blue-600 hover:underline"
-              >
-                Clear all filters
-              </button>
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={() => setSelectedIds(new Set())} style={{
+              padding: '7px 16px', borderRadius: 8,
+              background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',
+              color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+            }}>Clear</button>
+            <button onClick={() => setShowBulkModal(true)} style={{
+              padding: '7px 20px', borderRadius: 8, background: '#fff', border: 'none',
+              color: '#4f46e5', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit',
+            }}>📋 Update CV Feedback</button>
+          </div>
         </div>
+      )}
 
-        {/* Bulk action bar */}
-        {selectedIds.size > 0 && (
-          <div style={{
-            position: 'sticky', top: 16, zIndex: 100,
-            background: 'linear-gradient(135deg,#4f46e5,#7c3aed)',
-            borderRadius: 12, padding: '12px 20px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            boxShadow: '0 8px 24px rgba(79,70,229,0.35)',
-          }}>
-            <div style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>
-              ✓ {selectedIds.size} candidate{selectedIds.size !== 1 ? 's' : ''} selected
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setSelectedIds(new Set())} style={{
-                padding: '7px 16px', borderRadius: 8,
-                background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',
-                color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
-              }}>Clear</button>
-              <button onClick={() => setShowBulkModal(true)} style={{
-                padding: '7px 20px', borderRadius: 8, background: '#fff', border: 'none',
-                color: '#4f46e5', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit',
-              }}>📋 Update CV Feedback</button>
-            </div>
-          </div>
-        )}
-
-        {/* Count row */}
-        <div className="text-sm text-gray-600">
+      {/* Count row */}
+      <div className="flex items-center justify-between text-sm text-gray-600">
+        <div>
           Showing <strong>{candidates.length}</strong> candidates
           {selectedIds.size > 0 && (
             <span className="ml-2 text-indigo-600 font-semibold">
@@ -364,114 +442,140 @@ export default function TLCandidatesPage() {
             </span>
           )}
         </div>
-
-        {/* Table */}
-        {loading ? (
-          <div className="card text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          </div>
-        ) : candidates.length === 0 ? (
-          <div className="card text-center py-12">
-            <p className="text-gray-600">No candidates found</p>
-            {(stageFilter !== 'all' || searchQuery || recruiterFilter !== 'all') && (
-              <button
-                onClick={() => { setStageFilter('all'); setSearchQuery(''); setRecruiterFilter('all') }}
-                className="mt-4 text-blue-600 hover:text-blue-800 text-sm font-medium"
-              >
-                Clear all filters
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="card overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th style={{ width: 40 }}>
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      ref={el => { if (el) el.indeterminate = someSelected }}
-                      onChange={toggleAll}
-                      style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#4f46e5' }}
-                      title="Select all"
-                    />
-                  </th>
-                  <th>Candidate</th>
-                  <th>Job / Client</th>
-                  <th>Stage</th>
-                  <th>Expected CTC</th>
-                  <th>Sourced By</th>
-                  <th>Days in Pipeline</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {candidates.map(candidate => {
-                  const isSelected = selectedIds.has(candidate.id)
-                  return (
-                    <tr
-                      key={candidate.id}
-                      style={{ background: isSelected ? '#eef2ff' : undefined }}
-                    >
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleOne(candidate.id)}
-                          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#4f46e5' }}
-                        />
-                      </td>
-                      <td>
-                        <div className="font-medium text-gray-900">{candidate.full_name}</div>
-                        <div className="text-sm text-gray-500">{candidate.phone}</div>
-                        {candidate.email && (
-                          <div className="text-xs text-gray-400">{candidate.email}</div>
-                        )}
-                      </td>
-                      <td>
-                        <div className="text-sm font-medium">{candidate.jobs?.job_title || 'N/A'}</div>
-                        <div className="text-xs text-gray-500">{candidate.jobs?.clients?.company_name || 'N/A'}</div>
-                      </td>
-                      <td>
-                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStageBadge(candidate.current_stage)}`}>
-                          {getStageLabel(candidate.current_stage)}
-                        </span>
-                      </td>
-                      <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}</td>
-                      <td className="text-sm">{candidate.users?.full_name || 'Unknown'}</td>
-                      <td className="text-sm">
-                        {Math.floor(
-                          (new Date().getTime() - new Date(candidate.created_at).getTime()) /
-                          (1000 * 60 * 60 * 24)
-                        )} days
-                      </td>
-                      <td>
-                        <button
-                          onClick={() => router.push(`/tl/candidates/${candidate.id}`)}
-                          className="text-blue-600 hover:text-blue-900 font-medium text-sm"
-                        >
-                          View Details →
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Bulk modal */}
-        {showBulkModal && (
-          <BulkStageModal
-            selectedCount={selectedIds.size}
-            onClose={() => setShowBulkModal(false)}
-            onSubmit={handleBulkUpdate}
-            submitting={bulkSubmitting}
-          />
+        {(stageFilter !== 'all' || searchQuery || recruiterFilter !== 'all' || teamFilter !== 'all') && (
+          <button
+            onClick={() => {
+              setStageFilter('all'); setSearchQuery('')
+              setRecruiterFilter('all'); setTeamFilter('all')
+            }}
+            className="text-blue-600 hover:text-blue-800 font-medium"
+          >
+            Clear all filters
+          </button>
         )}
       </div>
+
+      {/* Table */}
+      {loading ? (
+        <div className="card text-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+        </div>
+      ) : candidates.length === 0 ? (
+        <div className="card text-center py-12">
+          <p className="text-gray-600">No candidates found</p>
+          <div className="text-sm text-gray-500 mt-2">Team members: {teamMembers.length}</div>
+        </div>
+      ) : (
+        <div className="card overflow-x-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: 40 }}>
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={el => { if (el) el.indeterminate = someSelected }}
+                    onChange={toggleAll}
+                    style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#4f46e5' }}
+                    title="Select all"
+                  />
+                </th>
+                <th>Candidate</th>
+                <th>Job / Client</th>
+                <th>Stage</th>
+                <th>Expected CTC</th>
+                <th>Assigned To</th>
+                <th>Days in Pipeline</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {candidates.map(candidate => {
+                const isSelected = selectedIds.has(candidate.id)
+                return (
+                  <tr
+                    key={candidate.id}
+                    style={{ background: isSelected ? '#eef2ff' : undefined }}
+                  >
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleOne(candidate.id)}
+                        style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#4f46e5' }}
+                      />
+                    </td>
+                    <td>
+                      <div className="font-medium text-gray-900">{candidate.full_name}</div>
+                      <div className="text-sm text-gray-500">{candidate.phone}</div>
+                      {candidate.email && (
+                        <div className="text-xs text-gray-400">{candidate.email}</div>
+                      )}
+                    </td>
+                    <td>
+                      <div className="text-sm font-medium">{candidate.jobs?.job_title || 'N/A'}</div>
+                      <div className="text-xs text-gray-500">
+                        {candidate.jobs?.clients?.company_name || 'N/A'}
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStageBadge(candidate.current_stage)}`}>
+                        {getStageLabel(candidate.current_stage)}
+                      </span>
+                    </td>
+                    <td className="text-sm font-medium">₹{candidate.expected_ctc || 0}</td>
+                    <td>
+                      <div className="text-sm font-medium">
+                        {candidate.users?.full_name || 'Unknown'}
+                      </div>
+                      <div className="text-xs text-gray-500">{candidate.users?.role}</div>
+                    </td>
+                    <td className="text-sm">
+                      {Math.floor(
+                        (new Date().getTime() - new Date(candidate.created_at).getTime()) /
+                        (1000 * 60 * 60 * 24)
+                      )} days
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => router.push(`/sr-tl/candidates/${candidate.id}`)}
+                        className="text-blue-600 hover:text-blue-900 font-medium text-sm"
+                      >
+                        View Details →
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Bulk modal */}
+      {showBulkModal && (
+        <BulkStageModal
+          selectedCount={selectedIds.size}
+          onClose={() => setShowBulkModal(false)}
+          onSubmit={handleBulkUpdate}
+          submitting={bulkSubmitting}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Page wrapper with Suspense ────────────────────────────────────────────────
+export default function SrTLCandidatesPage() {
+  return (
+    <DashboardLayout>
+      <Suspense fallback={
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        </div>
+      }>
+        <CandidatesTable />
+      </Suspense>
     </DashboardLayout>
   )
 }
