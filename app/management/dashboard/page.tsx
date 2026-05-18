@@ -174,7 +174,7 @@ export default function ManagementDashboard() {
 
     // ── Revenue Earned ────────────────────────────────────────────────────────
     let revenueQuery = supabaseAdmin
-      .from('candidates')
+      .from('offers')
       .select('revenue_earned, date_joined, job_id')
       .eq('current_stage', 'joined')
       .gte('date_joined', start)
