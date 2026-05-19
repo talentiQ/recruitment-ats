@@ -4,9 +4,12 @@ export const dynamic = 'force-dynamic'
 
 import DashboardLayout from '@/components/DashboardLayout'
 import MatchScorePanel from '@/components/MatchScorePanel'
+import AITalentAgent from '@/components/AITalentAgent'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { parseRecruitmentQuery } from '@/lib/talentQueryParser'
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -245,6 +248,7 @@ export default function TalentPoolSearchPage() {
   const [myJobs, setMyJobs]   = useState<any[]>([])
 
   const [quickSearch, setQuickSearch]         = useState('')
+  const [aiQuery, setAiQuery] = useState('')
   const [showAdvanced, setShowAdvanced]       = useState(true)
   const [reqKeywords, setReqKeywords]         = useState<string[]>([])
   const [reqKeywordInput, setReqKeywordInput] = useState('')
@@ -302,6 +306,78 @@ export default function TalentPoolSearchPage() {
     if (!t || reqKeywords.includes(t)) return
     setReqKeywords(p => [...p, t]); setReqKeywordInput('')
   }
+
+  function handleAISearch() {
+
+  const parsed =parseRecruitmentQuery(aiQuery)
+  setQuickSearch(aiQuery)
+  console.log('AI Parsed Query:', parsed)
+
+  // Skills
+  if (parsed.skills?.length) {
+    setSelectedSkills(parsed.skills)
+
+    if (!parsed.excludedSkills?.length) {
+      setSkillMode(parsed.skillMode || 'any')
+    }
+  }
+
+  // Excluded Skills → BOOLEAN MODE
+  if (parsed.excludedSkills?.length) {
+    const positiveSkills = parsed.skills || []
+
+    const booleanParts = [
+      ...positiveSkills,
+      ...parsed.excludedSkills.map((s: string) => `NOT ${s}`),
+    ]
+
+    setBooleanQuery(booleanParts.join(' AND '))
+    setSkillMode('boolean')
+  }
+
+  // Location
+  if (parsed.locations?.length) {
+    setLocation(parsed.locations[0])
+  }
+
+  // Experience
+  if (parsed.experience?.min != null) {
+    setExpMin(String(parsed.experience.min))
+  }
+
+  if (parsed.experience?.max != null) {
+    setExpMax(String(parsed.experience.max))
+  }
+
+  // CTC
+  if (parsed.ctc?.min != null) {
+    setCtcMin(String(parsed.ctc.min))
+  }
+
+  if (parsed.ctc?.max != null) {
+    setCtcMax(String(parsed.ctc.max))
+  }
+
+  // Notice Period
+  if (parsed.noticePeriod) {
+    setNoticePeriod(parsed.noticePeriod)
+  }
+
+  // Industry / Domain
+  if (parsed.domains?.length) {
+    setIndustry(parsed.domains[0])
+  }
+
+  // Requirement Keywords
+  if (parsed.requirementKeywords?.length) {
+    setReqKeywords(parsed.requirementKeywords)
+  }
+
+  // Trigger search
+  setTimeout(() => {
+    handleSearch()
+  }, 150)
+}
 
   // ── Main search ─────────────────────────────────────────────────────────────
   async function handleSearch() {
@@ -497,8 +573,21 @@ export default function TalentPoolSearchPage() {
     }
   }
 
+  function handleAIFilters(filters: any) {
+  if (filters.skills?.length)   setSelectedSkills(filters.skills)
+  if (filters.location)         setLocation(filters.location)
+  if (filters.expMin != null)   setExpMin(String(filters.expMin))
+  if (filters.expMax != null)   setExpMax(String(filters.expMax))
+  if (filters.ctcMin != null)   setCtcMin(String(filters.ctcMin))
+  if (filters.ctcMax != null)   setCtcMax(String(filters.ctcMax))
+  if (filters.noticePeriod)     setNoticePeriod(filters.noticePeriod)
+  if (filters.industry)         setIndustry(filters.industry)
+  if (filters.skillMode)        setSkillMode(filters.skillMode)
+  setTimeout(() => handleSearch(), 100) // trigger search after state settles
+}
+
   function handleClearAll() {
-    setQuickSearch(''); setReqKeywords([]); setReqKeywordInput('')
+    setQuickSearch(''); setAiQuery(''); setReqKeywords([]); setReqKeywordInput('')
     setSelectedSkills([]); setSkillInput(''); setBooleanQuery('')
     setSkillMode('any'); setIndustry(''); setLocation('')
     setExpMin(''); setExpMax(''); setCtcMin(''); setCtcMax('')
@@ -565,7 +654,7 @@ export default function TalentPoolSearchPage() {
 
           {showAdvanced && (
             <div className="px-5 py-5 space-y-5">
-
+ 
               {/* Requirement Keywords */}
               <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4">
                 <div className="flex items-center gap-2 mb-1">
@@ -889,6 +978,7 @@ export default function TalentPoolSearchPage() {
           </div>
         </div>
       )}
+<AITalentAgent onApplyFilters={handleAIFilters} userRole={user?.role} />
     </DashboardLayout>
   )
 }

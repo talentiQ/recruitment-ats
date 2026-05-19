@@ -5,7 +5,6 @@ const nextConfig = {
 
   // Prevent Next.js from bundling these — must run as native Node modules
   serverExternalPackages: ['pdf-parse', 'mammoth'],
-
   typescript: {
     ignoreBuildErrors: true, // TODO: remove once TS errors are fixed
   },
