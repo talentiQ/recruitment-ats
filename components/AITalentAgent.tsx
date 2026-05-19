@@ -211,7 +211,7 @@ export default function AITalentAgent({ onApplyFilters, userRole }: Props) {
     setLoading(true)
 
     try {
-      // Step 1: Parse locally — instant, no API
+      // Step 1: Parse locally — instant, 
       const filters = parseQuery(q)
 
       // Step 2: Supabase client-side — browser session handles RLS
@@ -310,7 +310,7 @@ export default function AITalentAgent({ onApplyFilters, userRole }: Props) {
             {/* Header */}
             <div className="bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-4 flex items-center justify-between flex-shrink-0">
               <div>
-                <div className="text-white font-bold">🤖 AI Talent Agent</div>
+                <div className="text-white font-bold">🤖TalentIQ AI Agent</div>
                 <div className="text-violet-200 text-xs mt-0.5">Ask in plain English — instant results</div>
               </div>
               <div className="flex items-center gap-2">
@@ -331,7 +331,7 @@ export default function AITalentAgent({ onApplyFilters, userRole }: Props) {
                 <div className="space-y-4">
                   <div className="bg-white rounded-xl border border-gray-200 p-4">
                     <p className="text-sm text-gray-600 font-medium mb-1">👋 Search your talent pool in plain English.</p>
-                    <p className="text-xs text-gray-400">I extract skills, location, experience, CTC and notice period — then show matches instantly with no AI costs.</p>
+                    <p className="text-xs text-gray-400">I extract skills, location, experience, CTC and notice period — then show matches instantly with Smart Search.</p>
                   </div>
                   <div>
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 px-1">Try asking</p>
