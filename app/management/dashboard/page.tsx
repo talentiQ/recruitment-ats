@@ -725,8 +725,8 @@ const renegeCount = renegeData.length
           </button>
         </div>
 
-        {/* Key Metrics — 5 cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Key Metrics — 6 cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           {/* Revenue Earned */}
           <div className="bg-white rounded-lg p-6 shadow border-l-4 border-green-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Revenue Earned</div>
@@ -755,6 +755,15 @@ const renegeCount = renegeData.length
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Total Joinings</div>
             <div className="text-3xl font-bold text-gray-900">{stats.totalJoinings}</div>
             <div className="text-sm text-gray-500 mt-2">Candidates placed</div>
+          </div>
+          
+          {/* Avg Value per Joining */}
+          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-teal-500">
+            <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Avg Value / Joining</div>
+            <div className="text-3xl font-bold text-gray-900">
+              {formatCurrency(stats.totalJoinings > 0 ? stats.totalRevenueEarned / stats.totalJoinings : 0)}
+            </div>
+            <div className="text-sm text-gray-500 mt-2">Revenue ÷ Joinings</div>
           </div>
 
           {/* Avg Time-to-Hire */}
