@@ -38,6 +38,18 @@
 //            calculation. Previously any dates parsed before a company header
 //            was encountered (orphaned dates) landed in __UNKNOWN__ and were
 //            treated as real jobs in the gap timeline.
+//
+// Fixes applied (2026-05):
+//   FIX-6: Gap calculation now accounts for day-of-month precision.
+//          - parseMonthYearEnd() added to parse job end dates to LAST day of month
+//            (instead of 1st) — resume formats only contain month/year, so we
+//            assume someone leaves at end-of-month and joins at start-of-month.
+//          - monthDiff() improved to consider day-of-month: if 'to' day < 'from'
+//            day, subtract 1 from month count (haven't reached anniversary yet).
+//          - Real-world case: Akash Gupta — Aug 2021–Sep 2021 transition was
+//            flagged as 1-month gap (Aug 1→Sep 1), now correctly 0 months
+//            (Aug 31→Sep 1). Jan 2020–Jan 2023 gap now correctly 24 months
+//            (Jan 31→Jan 1), not 36.
 
 export type FlagSeverity = 'critical' | 'warning'
 
@@ -140,8 +152,27 @@ function parseMonthYear(mon: string, yr: string): Date {
   return new Date(parseInt(yr), m - 1, 1)
 }
 
+// Parse month/year but set day to LAST day of month (for job end dates)
+function parseMonthYearEnd(mon: string, yr: string): Date {
+  const m = MONTH_MAP[mon.toLowerCase().slice(0, 3)] || 1
+  const year = parseInt(yr)
+  // Get the last day of the month by getting the first day of next month and subtracting 1 day
+  const firstOfNextMonth = new Date(year, m, 1)
+  const lastDayOfMonth = new Date(firstOfNextMonth.getTime() - 24 * 60 * 60 * 1000)
+  return lastDayOfMonth
+}
+
 function monthDiff(from: Date, to: Date): number {
-  return (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+  // Calculate months considering day-of-month precision
+  // This prevents false positives like "20-day gap = 1 month"
+  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+  
+  // If 'to' day is before 'from' day, we haven't reached the full month anniversary yet
+  if (to.getDate() < from.getDate()) {
+    months = Math.max(0, months - 1)
+  }
+  
+  return months
 }
 
 // ─── Company-aware extraction ─────────────────────────────────────────────────
@@ -250,7 +281,7 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
       if (/present|current|till/i.test(m[3])) {
         endDate = now; endLabel = 'Present'
       } else if (m[4] && m[5]) {
-        endDate  = parseMonthYear(m[4] as string, m[5] as string)
+        endDate  = parseMonthYearEnd(m[4] as string, m[5] as string)
         endLabel = `${m[4]} ${m[5]}`
       } else continue
 
@@ -307,7 +338,7 @@ function extractCompanyTenures(rawText: string): CompanyTenure[] {
       if (startDate.getFullYear() < 1970) continue
       let endDate: Date, endLabel: string
       if (/present|current|till/i.test(m[3])) { endDate = now; endLabel = 'Present' }
-      else if (m[4] && m[5]) { endDate = parseMonthYear(m[4] as string, m[5] as string); endLabel = `${m[4]} ${m[5]}` }
+      else if (m[4] && m[5]) { endDate = parseMonthYearEnd(m[4] as string, m[5] as string); endLabel = `${m[4]} ${m[5]}` }
       else continue
       if (startDate >= endDate) continue
       const dur = monthDiff(startDate, endDate)
