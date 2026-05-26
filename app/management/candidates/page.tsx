@@ -2,17 +2,18 @@
 'use client'
 export const dynamic = 'force-dynamic'
 
-import { Suspense, useState, useEffect } from 'react'
+import { Suspense, useState, useEffect, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useRouter } from 'next/navigation'
 import { supabase as supabaseAdmin } from '@/lib/supabase'
 import {
   PIPELINE_STAGES,
-  getStageBadge,
   getStageLabel,
   isActiveStage,
   isRejectedStage,
 } from '@/lib/pipelineStages'
+
+const PAGE_SIZE = 50
 
 // ── Bulk Stage Modal ──────────────────────────────────────────────────────────
 function BulkStageModal({
@@ -35,7 +36,6 @@ function BulkStageModal({
         background: '#fff', borderRadius: 16, width: '100%', maxWidth: 460,
         boxShadow: '0 20px 60px rgba(0,0,0,0.2)', overflow: 'hidden',
       }}>
-        {/* Header */}
         <div style={{
           background: 'linear-gradient(135deg,#4f46e5,#7c3aed)',
           padding: '18px 24px', color: '#fff',
@@ -53,8 +53,6 @@ function BulkStageModal({
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>✕</button>
         </div>
-
-        {/* Stage list */}
         <div style={{ padding: '20px 24px 0' }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 10 }}>
             Select Stage <span style={{ color: '#dc2626' }}>*</span>
@@ -87,8 +85,6 @@ function BulkStageModal({
             ))}
           </div>
         </div>
-
-        {/* Footer */}
         <div style={{ padding: '16px 24px 24px' }}>
           <div style={{
             background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8,
@@ -137,18 +133,30 @@ function BulkStageModal({
 // ── Inner Table Component ─────────────────────────────────────────────────────
 function CandidatesTable() {
   const router = useRouter()
+
+  // Table data
   const [candidates, setCandidates]           = useState<any[]>([])
   const [loading, setLoading]                 = useState(true)
+  const [page, setPage]                       = useState(0)       // 0-indexed
+  const [totalRows, setTotalRows]             = useState(0)
+
+  // Filters
   const [stageFilter, setStageFilter]         = useState('all')
   const [searchQuery, setSearchQuery]         = useState('')
   const [recruiterFilter, setRecruiterFilter] = useState('all')
   const [teamFilter, setTeamFilter]           = useState('all')
   const [daysFilter, setDaysFilter]           = useState('all')
+
+  // User / team
   const [user, setUser]                       = useState<any>(null)
   const [teamMembers, setTeamMembers]         = useState<any[]>([])
   const [teams, setTeams]                     = useState<{ id: string; name: string }[]>([])
 
-  // Bulk state
+  // True KPI counts (from DB, not filtered slice)
+  const [kpiCounts, setKpiCounts]             = useState({ total: 0, active: 0, joined: 0, rejected: 0 })
+  const [kpiLoading, setKpiLoading]           = useState(true)
+
+  // Bulk
   const [selectedIds, setSelectedIds]         = useState<Set<string>>(new Set())
   const [showBulkModal, setShowBulkModal]     = useState(false)
   const [bulkSubmitting, setBulkSubmitting]   = useState(false)
@@ -165,9 +173,15 @@ function CandidatesTable() {
     loadTeamMembers()
   }, [])
 
+  // Reset page when filters change
+  useEffect(() => { setPage(0) }, [stageFilter, searchQuery, recruiterFilter, teamFilter, daysFilter])
+
   useEffect(() => {
-    if (teamMembers.length > 0) loadCandidates()
-  }, [teamMembers, stageFilter, searchQuery, recruiterFilter, teamFilter, daysFilter])
+    if (teamMembers.length > 0) {
+      loadCandidates()
+      loadKpiCounts()
+    }
+  }, [teamMembers, stageFilter, searchQuery, recruiterFilter, teamFilter, daysFilter, page])
 
   const loadTeamMembers = async () => {
     try {
@@ -192,10 +206,8 @@ function CandidatesTable() {
       }
 
       const members = (allUsers || []).map((u: any) => ({
-        ...u,
-        _teamHead: resolveTeamHead(u.id),
+        ...u, _teamHead: resolveTeamHead(u.id),
       }))
-
       setTeamMembers(members)
 
       const uniqueTeams = [...new Map(
@@ -208,17 +220,61 @@ function CandidatesTable() {
     }
   }
 
+  // Build scoped IDs and base query conditions (shared between KPI + table queries)
+  const buildScopedIds = useCallback(() => {
+    let scopedIds = teamMembers.map((m: any) => m.id)
+    if (teamFilter !== 'all') {
+      scopedIds = teamMembers.filter((m: any) => m._teamHead === teamFilter).map((m: any) => m.id)
+    }
+    if (recruiterFilter !== 'all') {
+      scopedIds = [recruiterFilter]
+    }
+    return scopedIds
+  }, [teamMembers, teamFilter, recruiterFilter])
+
+  // ── TRUE KPI COUNTS via separate count queries ───────────────────────────
+  const loadKpiCounts = async () => {
+    setKpiLoading(true)
+    try {
+      const scopedIds = buildScopedIds()
+      if (scopedIds.length === 0) {
+        setKpiCounts({ total: 0, active: 0, joined: 0, rejected: 0 })
+        setKpiLoading(false)
+        return
+      }
+
+      const activeStages   = ['sourced','screening','interview_scheduled','interview_completed','documentation','offer_extended','offer_accepted']
+      const rejectedStages = ['screening_rejected','interview_rejected','offer_rejected','renege']
+
+      const [totalRes, activeRes, joinedRes, rejectedRes] = await Promise.all([
+        supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds),
+        supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).in('current_stage', activeStages),
+        supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).eq('current_stage', 'joined'),
+        supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).in('current_stage', rejectedStages),
+      ])
+
+      setKpiCounts({
+        total:    totalRes.count    ?? 0,
+        active:   activeRes.count   ?? 0,
+        joined:   joinedRes.count   ?? 0,
+        rejected: rejectedRes.count ?? 0,
+      })
+    } catch (err) {
+      console.error('KPI count error:', err)
+    } finally {
+      setKpiLoading(false)
+    }
+  }
+
+  // ── PAGINATED TABLE DATA ─────────────────────────────────────────────────
   const loadCandidates = async () => {
     setLoading(true)
     try {
-      let scopedIds = teamMembers.map((m: any) => m.id)
-      if (teamFilter !== 'all') {
-        scopedIds = teamMembers.filter((m: any) => m._teamHead === teamFilter).map((m: any) => m.id)
-      }
-      if (recruiterFilter !== 'all') {
-        scopedIds = [recruiterFilter]
-      }
-      if (scopedIds.length === 0) { setCandidates([]); setLoading(false); return }
+      const scopedIds = buildScopedIds()
+      if (scopedIds.length === 0) { setCandidates([]); setTotalRows(0); setLoading(false); return }
+
+      const from = page * PAGE_SIZE
+      const to   = from + PAGE_SIZE - 1
 
       let query = supabaseAdmin
         .from('candidates')
@@ -226,15 +282,14 @@ function CandidatesTable() {
           *,
           jobs ( job_title, job_code, clients ( company_name ) ),
           users:assigned_to ( full_name, role )
-        `)
+        `, { count: 'exact' })
         .in('assigned_to', scopedIds)
         .order('created_at', { ascending: false })
+        .range(from, to)
 
       if (stageFilter !== 'all') query = query.eq('current_stage', stageFilter)
       if (searchQuery) {
-        query = query.or(
-          `full_name.ilike.%${searchQuery}%,phone.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`
-        )
+        query = query.or(`full_name.ilike.%${searchQuery}%,phone.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`)
       }
       if (daysFilter !== 'all') {
         const cutoff = new Date()
@@ -242,9 +297,10 @@ function CandidatesTable() {
         query = query.lte('created_at', cutoff.toISOString())
       }
 
-      const { data, error } = await query
+      const { data, error, count } = await query
       if (error) throw error
       setCandidates(data || [])
+      setTotalRows(count ?? 0)
       setSelectedIds(new Set())
     } catch (err) {
       console.error('Error loading candidates:', err)
@@ -282,7 +338,7 @@ function CandidatesTable() {
       setShowBulkModal(false)
       setSelectedIds(new Set())
       setTimeout(() => setBulkSuccess(''), 4000)
-      await loadCandidates()
+      await Promise.all([loadCandidates(), loadKpiCounts()])
     } catch (err) {
       console.error(err)
       alert('Failed to update. Please try again.')
@@ -291,22 +347,21 @@ function CandidatesTable() {
     }
   }
 
-  // Stage badge — keep management's local style map
   const getStageBadgeLocal = (stage: string) => {
     const map: Record<string, string> = {
-      sourced:             'bg-gray-100 text-gray-800',
-      screening:           'bg-yellow-100 text-yellow-800',
-      interview_scheduled: 'bg-blue-100 text-blue-800',
-      interview_completed: 'bg-purple-100 text-purple-800',
-      interview_rejected:  'bg-red-200 text-red-800',
-      offer_extended:      'bg-orange-100 text-orange-800',
-      offer_accepted:      'bg-green-100 text-green-800',
-      negotiation:         'bg-amber-100 text-amber-800',
-      joined:              'bg-green-600 text-white',
-      rejected:            'bg-red-100 text-red-800',
-      dropped:             'bg-gray-200 text-gray-600',
-      on_hold:             'bg-gray-100 text-gray-700',
-      renege:              'bg-orange-100 text-orange-700',
+      sourced:              'bg-gray-100 text-gray-800',
+      screening:            'bg-yellow-100 text-yellow-800',
+      screening_rejected:   'bg-orange-100 text-orange-800',
+      interview_scheduled:  'bg-blue-100 text-blue-800',
+      interview_completed:  'bg-purple-100 text-purple-800',
+      interview_rejected:   'bg-red-200 text-red-800',
+      documentation:        'bg-cyan-100 text-cyan-800',
+      offer_extended:       'bg-orange-100 text-orange-800',
+      offer_accepted:       'bg-green-100 text-green-800',
+      offer_rejected:       'bg-rose-100 text-rose-800',
+      joined:               'bg-green-600 text-white',
+      renege:               'bg-orange-100 text-orange-700',
+      on_hold:              'bg-gray-100 text-gray-700',
     }
     return map[stage] || 'bg-gray-100 text-gray-700'
   }
@@ -319,6 +374,7 @@ function CandidatesTable() {
     { value: '30',  label: '30+ Days Old' },
   ]
 
+  const totalPages    = Math.ceil(totalRows / PAGE_SIZE)
   const hasActiveFilter = teamFilter !== 'all' || stageFilter !== 'all' ||
     searchQuery || recruiterFilter !== 'all' || daysFilter !== 'all'
 
@@ -327,10 +383,6 @@ function CandidatesTable() {
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
     </div>
   )
-
-  const activeCount   = candidates.filter(c => isActiveStage(c.current_stage)).length
-  const joinedCount   = candidates.filter(c => c.current_stage === 'joined').length
-  const rejectedCount = candidates.filter(c => isRejectedStage(c.current_stage)).length
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -361,17 +413,21 @@ function CandidatesTable() {
         </div>
       )}
 
-      {/* KPI Strip */}
+      {/* KPI Strip — counts from DB, not from current page */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: 'Total',    value: candidates.length, color: 'text-gray-900'  },
-          { label: 'Active',   value: activeCount,       color: 'text-blue-700'  },
-          { label: 'Joined',   value: joinedCount,       color: 'text-green-700' },
-          { label: 'Rejected', value: rejectedCount,     color: 'text-red-600'   },
+          { label: 'Total',    value: kpiCounts.total,    color: 'text-gray-900'  },
+          { label: 'Active',   value: kpiCounts.active,   color: 'text-blue-700'  },
+          { label: 'Joined',   value: kpiCounts.joined,   color: 'text-green-700' },
+          { label: 'Rejected', value: kpiCounts.rejected, color: 'text-red-600'   },
         ].map(({ label, value, color }) => (
           <div key={label} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 text-center">
             <div className="text-xs text-gray-500 mb-1">{label}</div>
-            <div className={`text-2xl font-bold ${color}`}>{value}</div>
+            <div className={`text-2xl font-bold ${color}`}>
+              {kpiLoading ? (
+                <span className="inline-block w-8 h-6 bg-gray-100 rounded animate-pulse" />
+              ) : value.toLocaleString()}
+            </div>
           </div>
         ))}
       </div>
@@ -379,7 +435,6 @@ function CandidatesTable() {
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Search</label>
             <input
@@ -389,7 +444,6 @@ function CandidatesTable() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
           </div>
-
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Team</label>
             <select
@@ -402,7 +456,6 @@ function CandidatesTable() {
               ))}
             </select>
           </div>
-
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Stage</label>
             <select
@@ -415,7 +468,6 @@ function CandidatesTable() {
               ))}
             </select>
           </div>
-
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Recruiter</label>
             <select
@@ -430,11 +482,8 @@ function CandidatesTable() {
                 ))}
             </select>
           </div>
-
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-              Days in Pipeline
-            </label>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Days in Pipeline</label>
             <select
               value={daysFilter} onChange={e => setDaysFilter(e.target.value)}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
@@ -448,16 +497,9 @@ function CandidatesTable() {
 
         <div className="flex items-center justify-between mt-3">
           <span className="text-sm text-gray-500">
-            Showing <strong>{candidates.length}</strong> candidates
+            Showing <strong>{((page * PAGE_SIZE) + 1).toLocaleString()}–{Math.min((page + 1) * PAGE_SIZE, totalRows).toLocaleString()}</strong> of <strong>{totalRows.toLocaleString()}</strong> candidates
             {selectedIds.size > 0 && (
-              <span className="ml-2 text-indigo-600 font-semibold">
-                · {selectedIds.size} selected
-              </span>
-            )}
-            {daysFilter !== 'all' && (
-              <span className="ml-2 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-semibold">
-                {daysFilter}+ days old
-              </span>
+              <span className="ml-2 text-indigo-600 font-semibold">· {selectedIds.size} selected</span>
             )}
           </span>
           {hasActiveFilter && (
@@ -474,7 +516,7 @@ function CandidatesTable() {
         </div>
       </div>
 
-      {/* Bulk action bar — sticky */}
+      {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <div style={{
           position: 'sticky', top: 16, zIndex: 100,
@@ -517,7 +559,6 @@ function CandidatesTable() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                {/* Checkbox header */}
                 <th className="px-4 py-3 w-10">
                   <input
                     type="checkbox"
@@ -549,7 +590,6 @@ function CandidatesTable() {
                     className="hover:bg-gray-50 transition"
                     style={{ background: isSelected ? '#eef2ff' : undefined }}
                   >
-                    {/* Checkbox cell — stopPropagation so row click still works elsewhere */}
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                       <input
                         type="checkbox"
@@ -558,59 +598,32 @@ function CandidatesTable() {
                         style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#4f46e5' }}
                       />
                     </td>
-                    <td
-                      className="px-4 py-3 cursor-pointer"
-                      onClick={() => router.push(`/management/candidates/${c.id}`)}
-                    >
+                    <td className="px-4 py-3 cursor-pointer" onClick={() => router.push(`/management/candidates/${c.id}`)}>
                       <div className="font-semibold text-gray-900">{c.full_name}</div>
                       <div className="text-xs text-gray-500">{c.phone}</div>
-                      {c.email && (
-                        <div className="text-xs text-gray-400 truncate max-w-[160px]">{c.email}</div>
-                      )}
+                      {c.email && <div className="text-xs text-gray-400 truncate max-w-[160px]">{c.email}</div>}
                     </td>
-                    <td
-                      className="px-4 py-3 cursor-pointer"
-                      onClick={() => router.push(`/management/candidates/${c.id}`)}
-                    >
+                    <td className="px-4 py-3 cursor-pointer" onClick={() => router.push(`/management/candidates/${c.id}`)}>
                       <div className="font-medium text-gray-800">{c.jobs?.job_title || '—'}</div>
                       <div className="text-xs text-gray-500">{c.jobs?.clients?.company_name || '—'}</div>
-                      {c.jobs?.job_code && (
-                        <div className="text-xs text-gray-400">{c.jobs.job_code}</div>
-                      )}
+                      {c.jobs?.job_code && <div className="text-xs text-gray-400">{c.jobs.job_code}</div>}
                     </td>
-                    <td
-                      className="px-4 py-3 cursor-pointer"
-                      onClick={() => router.push(`/management/candidates/${c.id}`)}
-                    >
+                    <td className="px-4 py-3 cursor-pointer" onClick={() => router.push(`/management/candidates/${c.id}`)}>
                       <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${getStageBadgeLocal(c.current_stage)}`}>
-                        {c.current_stage?.replace(/_/g, ' ').toUpperCase() || '—'}
+                        {getStageLabel(c.current_stage)}
                       </span>
                     </td>
-                    <td
-                      className="px-4 py-3 font-medium text-gray-800 cursor-pointer"
-                      onClick={() => router.push(`/management/candidates/${c.id}`)}
-                    >
+                    <td className="px-4 py-3 font-medium text-gray-800 cursor-pointer" onClick={() => router.push(`/management/candidates/${c.id}`)}>
                       {c.expected_ctc ? `₹${c.expected_ctc}` : '—'}
                     </td>
-                    <td
-                      className="px-4 py-3 cursor-pointer"
-                      onClick={() => router.push(`/management/candidates/${c.id}`)}
-                    >
+                    <td className="px-4 py-3 cursor-pointer" onClick={() => router.push(`/management/candidates/${c.id}`)}>
                       <div className="font-medium text-gray-800">{c.users?.full_name || '—'}</div>
-                      <div className="text-xs text-gray-500 capitalize">
-                        {c.users?.role?.replace(/_/g, ' ')}
-                      </div>
+                      <div className="text-xs text-gray-500 capitalize">{c.users?.role?.replace(/_/g, ' ')}</div>
                     </td>
-                    <td
-                      className="px-4 py-3 text-xs text-gray-600 cursor-pointer"
-                      onClick={() => router.push(`/management/candidates/${c.id}`)}
-                    >
+                    <td className="px-4 py-3 text-xs text-gray-600 cursor-pointer" onClick={() => router.push(`/management/candidates/${c.id}`)}>
                       {teamHead}&apos;s Team
                     </td>
-                    <td
-                      className="px-4 py-3 cursor-pointer"
-                      onClick={() => router.push(`/management/candidates/${c.id}`)}
-                    >
+                    <td className="px-4 py-3 cursor-pointer" onClick={() => router.push(`/management/candidates/${c.id}`)}>
                       <span className={`font-semibold ${daysColor}`}>{days}d</span>
                     </td>
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
@@ -626,6 +639,62 @@ function CandidatesTable() {
               })}
             </tbody>
           </table>
+
+          {/* ── Pagination ── */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
+              <span className="text-sm text-gray-500">
+                Page <strong>{page + 1}</strong> of <strong>{totalPages}</strong>
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPage(0)}
+                  disabled={page === 0}
+                  className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition"
+                >
+                  «
+                </button>
+                <button
+                  onClick={() => setPage(p => p - 1)}
+                  disabled={page === 0}
+                  className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition"
+                >
+                  ‹ Prev
+                </button>
+                {/* Page number pills */}
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  const pageNum = Math.max(0, Math.min(page - 2, totalPages - 5)) + i
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setPage(pageNum)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition ${
+                        pageNum === page
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'border-gray-200 hover:bg-white'
+                      }`}
+                    >
+                      {pageNum + 1}
+                    </button>
+                  )
+                })}
+                <button
+                  onClick={() => setPage(p => p + 1)}
+                  disabled={page >= totalPages - 1}
+                  className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition"
+                >
+                  Next ›
+                </button>
+                <button
+                  onClick={() => setPage(totalPages - 1)}
+                  disabled={page >= totalPages - 1}
+                  className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition"
+                >
+                  »
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
