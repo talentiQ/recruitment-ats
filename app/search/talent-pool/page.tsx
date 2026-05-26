@@ -51,10 +51,106 @@ type SkillMode = 'any' | 'all' | 'boolean'
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const INDUSTRIES = [
-  'HR / Recruitment','IT / Technology','Finance / Accounting',
-  'Sales / Marketing','Operations / Supply Chain','Healthcare / Pharma',
-  'Manufacturing / Engineering','Banking / Financial Services',
-  'Education / Training','Legal / Compliance','Consulting',
+  // Technology & Digital
+  'IT / Software Services',
+  'Product & SaaS',
+  'IT Consulting / Outsourcing',
+  'Cloud & Infrastructure',
+  'Cybersecurity',
+  'Data Science & Analytics',
+  'AI / Machine Learning',
+  'Semiconductors & Hardware',
+  'Telecom & Networking',
+  'Gaming & Interactive Media',
+
+  // Finance & Professional Services
+  'Banking / Financial Services',
+  'Investment Banking & Capital Markets',
+  'FinTech & Payments',
+  'Insurance',
+  'Accounting / Audit',
+  'Wealth Management & Private Equity',
+  'NBFCs & Microfinance',
+  'Management Consulting',
+  'Legal & Compliance',
+  'Tax & Advisory',
+
+  // Sales, Marketing & Media
+  'Sales / Business Development',
+  'Digital Marketing & AdTech',
+  'Brand & Communications',
+  'E-commerce & Retail Tech',
+  'Media / Publishing / Broadcasting',
+  'PR & Events',
+  'Market Research',
+
+  // Manufacturing & Industrial
+  'Manufacturing / General',
+  'Automobile & Auto Components',
+  'Electric Vehicles (EV)',
+  'Aerospace & Defence',
+  'Chemicals & Petrochemicals',
+  'Oil & Gas / Energy',
+  'Renewable Energy / Solar',
+  'Metals & Mining',
+  'Textile & Apparel',
+  'Packaging & Printing',
+  'Plastics & Polymers',
+
+  // Infrastructure & Construction
+  'Construction & Real Estate',
+  'Infrastructure / EPC',
+  'Airports & Ports',
+  'Railways & Metro',
+  'Urban Development & Smart Cities',
+  'Facility Management',
+  'Interior Design & Architecture',
+
+  // Healthcare & Life Sciences
+  'Hospitals & Healthcare Services',
+  'Pharmaceuticals',
+  'Medical Devices & Diagnostics',
+  'Biotech & Life Sciences',
+  'Clinical Research & CRO',
+  'HealthTech & Telemedicine',
+  'Wellness & Nutraceuticals',
+
+  // Consumer & Retail
+  'Retail / FMCG',
+  'Food & Beverages',
+  'Quick Service Restaurants (QSR)',
+  'Fashion & Luxury',
+  'Consumer Electronics',
+  'Home & Building Materials',
+  'Agriculture & Agri-Tech',
+  'Gems & Jewellery',
+
+  // Logistics, Supply Chain & Travel
+  'Logistics & Supply Chain',
+  'Warehousing & 3PL',
+  'Shipping & Freight',
+  'Aviation & Airlines',
+  'Travel, Tourism & Hospitality',
+
+  // HR & Staffing
+  'HR / Recruitment',
+  'Staffing & Workforce Solutions',
+  'Payroll & Compliance Services',
+  'HR Tech & HRMS',
+
+  // Education & Non-profit
+  'Education / Training',
+  'EdTech',
+  'Research & Think Tanks',
+  'NGO / Social Sector',
+  'Government & Public Sector',
+
+  // Shared Services & Operations
+  'BPO / KPO / ITES',
+  'Global Capability Centre (GCC)',
+  'Operations / General Management',
+  'Quality & Compliance',
+  'Customer Success & Support',
 ]
 
 // ─── Skills matching helpers ──────────────────────────────────────────────────
