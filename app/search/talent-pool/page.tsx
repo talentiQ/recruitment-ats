@@ -1,15 +1,15 @@
-// app/search/talent-pool/page.tsx — v6: unified client-side skills filtering
+// app/search/talent-pool/page.tsx — v7: + TopContributors leaderboard
 'use client'
 export const dynamic = 'force-dynamic'
 
 import DashboardLayout from '@/components/DashboardLayout'
 import MatchScorePanel from '@/components/MatchScorePanel'
 import AITalentAgent from '@/components/AITalentAgent'
+import TopContributors from '@/components/TopContributors'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { parseRecruitmentQuery } from '@/lib/talentQueryParser'
-
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,19 +57,9 @@ const INDUSTRIES = [
   'Education / Training','Legal / Compliance','Consulting',
 ]
 
-// ─── Skills matching — all client-side, all case-insensitive partial match ────
-//
-// Root cause of ANY/ALL returning 0:
-//   PostgREST `overlaps` / `contains` is EXACT case-sensitive array element matching.
-//   "sales" does NOT match "Sales Executive" in the DB array.
-//   BOOLEAN worked because it skipped the DB filter and used .includes() client-side.
-//
-// Fix: remove DB-level skills filter for all modes. Fetch all rows, filter client-side.
-// This makes ANY / ALL / BOOLEAN consistent and correct.
+// ─── Skills matching helpers ──────────────────────────────────────────────────
 
 function skillMatchesQuery(skillsInProfile: string[], querySkill: string): boolean {
-  // Partial case-insensitive match in both directions
-  // "sales" matches "Sales Executive", "B2B Sales", "Sales Manager"
   const ql = querySkill.toLowerCase()
   return skillsInProfile.some(s => {
     const sl = s.toLowerCase()
@@ -98,9 +88,9 @@ function parseBooleanQuery(query: string) {
     if (t === 'OR')  { op = 'should'; continue }
     if (t === 'NOT') { op = 'not'; continue }
     if (!token.trim()) continue
-    if (op === 'must')      must.push(token.trim())
-    else if (op === 'not')  not.push(token.trim())
-    else                    should.push(token.trim())
+    if (op === 'must')     must.push(token.trim())
+    else if (op === 'not') not.push(token.trim())
+    else                   should.push(token.trim())
   }
   return { must, should, not }
 }
@@ -108,30 +98,20 @@ function parseBooleanQuery(query: string) {
 function matchesBoolean(skills: string[], query: string): boolean {
   if (!query.trim()) return true
   const { must, should, not } = parseBooleanQuery(query)
-  // NOT: if any NOT term matches, exclude
   if (not.some(n => skillMatchesQuery(skills, n))) return false
-  // MUST: all must terms must match
   if (must.length > 0 && !must.every(m => skillMatchesQuery(skills, m))) return false
-  // SHOULD: at least one should match (when no must terms present)
   if (should.length > 0 && must.length === 0) return should.some(s => skillMatchesQuery(skills, s))
   return true
 }
 
-// ─── reqKeywords match for candidates ────────────────────────────────────────
-// Candidates have no requirement_keywords column.
-// Match against designation + skills (partial, case-insensitive).
-
 function candidateMatchesReqKeywords(
-  keySkills: string[],
-  designation: string,
-  reqKeywords: string[]
+  keySkills: string[], designation: string, reqKeywords: string[]
 ): boolean {
   if (reqKeywords.length === 0) return true
   const designationLower = (designation || '').toLowerCase()
   return reqKeywords.some(kw => {
     const kwLower = kw.toLowerCase()
-    return designationLower.includes(kwLower)
-        || skillMatchesQuery(keySkills, kw)
+    return designationLower.includes(kwLower) || skillMatchesQuery(keySkills, kw)
   })
 }
 
@@ -151,26 +131,13 @@ function roleToBasePath(role: string): string {
 }
 
 // ─── Match score calculator ───────────────────────────────────────────────────
-// Max 100 pts:
-//   Skills match:          40 pts
-//   Req keywords match:    10 pts
-//   Experience range:      20 pts
-//   Location:              15 pts
-//   CTC range:             10 pts
-//   Notice period:          5 pts
 
 function calcScore(
   c: any,
   opts: {
-    skillMode: SkillMode
-    selectedSkills: string[]
-    booleanQuery: string
-    reqKeywords: string[]
-    expMin: string
-    expMax: string
-    location: string
-    ctcMin: string
-    ctcMax: string
+    skillMode: SkillMode; selectedSkills: string[]; booleanQuery: string
+    reqKeywords: string[]; expMin: string; expMax: string
+    location: string; ctcMin: string; ctcMax: string
   }
 ): number {
   let score = 0
@@ -178,59 +145,49 @@ function calcScore(
   const { skillMode, selectedSkills, booleanQuery, reqKeywords,
           expMin, expMax, location, ctcMin, ctcMax } = opts
 
-  // ── Skills (40 pts) ──
+  // Skills (40 pts)
   if (selectedSkills.length > 0 || (skillMode === 'boolean' && booleanQuery.trim())) {
     if (skillMode === 'boolean') {
       score += matchesBoolean(skills, booleanQuery) ? 40 : 0
-    } else if (skillMode === 'all') {
-      const matchedCount = selectedSkills.filter(q => skillMatchesQuery(skills, q)).length
-      score += Math.round((matchedCount / selectedSkills.length) * 40)
     } else {
-      // ANY — partial credit per matched skill
       const matchedCount = selectedSkills.filter(q => skillMatchesQuery(skills, q)).length
       score += Math.round((matchedCount / selectedSkills.length) * 40)
     }
-  } else {
-    score += 40  // no skill filter = full credit
-  }
+  } else { score += 40 }
 
-  // ── Requirement keywords (10 pts) ──
+  // Req keywords (10 pts)
   if (reqKeywords.length > 0) {
     let matchedCount = 0
     if (c.requirement_keywords && c.requirement_keywords.length > 0) {
-      // resume_bank: exact match against requirement_keywords column
       const rk = (c.requirement_keywords as string[]).map(s => s.toLowerCase())
       matchedCount = reqKeywords.filter(k => rk.includes(k.toLowerCase())).length
     } else {
-      // candidates: partial match on skills + designation
       matchedCount = reqKeywords.filter(k =>
         (c.current_designation || '').toLowerCase().includes(k.toLowerCase())
         || skillMatchesQuery(skills, k)
       ).length
     }
     score += Math.round((matchedCount / reqKeywords.length) * 10)
-  } else {
-    score += 10
-  }
+  } else { score += 10 }
 
-  // ── Experience (20 pts) ──
+  // Experience (20 pts)
   if (expMin || expMax) {
     const exp = c.total_experience ?? 0
     if (exp >= (parseFloat(expMin) || 0) && exp <= (parseFloat(expMax) || 100)) score += 20
   } else { score += 20 }
 
-  // ── Location (15 pts) ──
+  // Location (15 pts)
   if (location) {
     if ((c.current_location || '').toLowerCase().includes(location.toLowerCase())) score += 15
   } else { score += 15 }
 
-  // ── CTC (10 pts) ──
+  // CTC (10 pts)
   if (ctcMin || ctcMax) {
     const ctc = c.expected_ctc ?? 0
     if (ctc >= (parseFloat(ctcMin) || 0) && ctc <= (parseFloat(ctcMax) || 9999)) score += 10
   } else { score += 10 }
 
-  // ── Notice period (5 pts) ──
+  // Notice period (5 pts)
   const notice = c.notice_period || 0
   if (notice <= 30) score += 5
   else if (notice <= 60) score += 2
@@ -248,7 +205,7 @@ export default function TalentPoolSearchPage() {
   const [myJobs, setMyJobs]   = useState<any[]>([])
 
   const [quickSearch, setQuickSearch]         = useState('')
-  const [aiQuery, setAiQuery] = useState('')
+  const [aiQuery, setAiQuery]                 = useState('')
   const [showAdvanced, setShowAdvanced]       = useState(true)
   const [reqKeywords, setReqKeywords]         = useState<string[]>([])
   const [reqKeywordInput, setReqKeywordInput] = useState('')
@@ -290,9 +247,7 @@ export default function TalentPoolSearchPage() {
       .eq('recruiter_id', u.id)
       .eq('is_active', true)
     if (data) {
-      setMyJobs(
-        data.map((a: any) => a.jobs).filter((j: any) => j && j.status === 'open')
-      )
+      setMyJobs(data.map((a: any) => a.jobs).filter((j: any) => j && j.status === 'open'))
     }
   }
 
@@ -308,96 +263,43 @@ export default function TalentPoolSearchPage() {
   }
 
   function handleAISearch() {
+    const parsed = parseRecruitmentQuery(aiQuery)
+    setQuickSearch(aiQuery)
 
-  const parsed =parseRecruitmentQuery(aiQuery)
-  setQuickSearch(aiQuery)
-  console.log('AI Parsed Query:', parsed)
-
-  // Skills
-  if (parsed.skills?.length) {
-    setSelectedSkills(parsed.skills)
-
-    if (!parsed.excludedSkills?.length) {
-      setSkillMode(parsed.skillMode || 'any')
+    if (parsed.skills?.length) {
+      setSelectedSkills(parsed.skills)
+      if (!parsed.excludedSkills?.length) setSkillMode(parsed.skillMode || 'any')
     }
+    if (parsed.excludedSkills?.length) {
+      const booleanParts = [
+        ...(parsed.skills || []),
+        ...parsed.excludedSkills.map((s: string) => `NOT ${s}`),
+      ]
+      setBooleanQuery(booleanParts.join(' AND '))
+      setSkillMode('boolean')
+    }
+    if (parsed.locations?.length)          setLocation(parsed.locations[0])
+    if (parsed.experience?.min != null)    setExpMin(String(parsed.experience.min))
+    if (parsed.experience?.max != null)    setExpMax(String(parsed.experience.max))
+    if (parsed.ctc?.min != null)           setCtcMin(String(parsed.ctc.min))
+    if (parsed.ctc?.max != null)           setCtcMax(String(parsed.ctc.max))
+    if (parsed.noticePeriod)               setNoticePeriod(parsed.noticePeriod)
+    if (parsed.domains?.length)            setIndustry(parsed.domains[0])
+    if (parsed.requirementKeywords?.length) setReqKeywords(parsed.requirementKeywords)
+
+    setTimeout(() => handleSearch(), 150)
   }
 
-  // Excluded Skills → BOOLEAN MODE
-  if (parsed.excludedSkills?.length) {
-    const positiveSkills = parsed.skills || []
-
-    const booleanParts = [
-      ...positiveSkills,
-      ...parsed.excludedSkills.map((s: string) => `NOT ${s}`),
-    ]
-
-    setBooleanQuery(booleanParts.join(' AND '))
-    setSkillMode('boolean')
-  }
-
-  // Location
-  if (parsed.locations?.length) {
-    setLocation(parsed.locations[0])
-  }
-
-  // Experience
-  if (parsed.experience?.min != null) {
-    setExpMin(String(parsed.experience.min))
-  }
-
-  if (parsed.experience?.max != null) {
-    setExpMax(String(parsed.experience.max))
-  }
-
-  // CTC
-  if (parsed.ctc?.min != null) {
-    setCtcMin(String(parsed.ctc.min))
-  }
-
-  if (parsed.ctc?.max != null) {
-    setCtcMax(String(parsed.ctc.max))
-  }
-
-  // Notice Period
-  if (parsed.noticePeriod) {
-    setNoticePeriod(parsed.noticePeriod)
-  }
-
-  // Industry / Domain
-  if (parsed.domains?.length) {
-    setIndustry(parsed.domains[0])
-  }
-
-  // Requirement Keywords
-  if (parsed.requirementKeywords?.length) {
-    setReqKeywords(parsed.requirementKeywords)
-  }
-
-  // Trigger search
-  setTimeout(() => {
-    handleSearch()
-  }, 150)
-}
-
-  // ── Main search ─────────────────────────────────────────────────────────────
+  // ── Main search ──────────────────────────────────────────────────────────────
   async function handleSearch() {
     setLoading(true)
     try {
       let allResults: SearchResult[] = []
       const now = new Date()
+      const scoreOpts = { skillMode, selectedSkills, booleanQuery, reqKeywords,
+                          expMin, expMax, location, ctcMin, ctcMax }
 
-      // Score options passed to calcScore
-      const scoreOpts = {
-        skillMode, selectedSkills, booleanQuery, reqKeywords,
-        expMin, expMax, location, ctcMin, ctcMax,
-      }
-
-      // ── Candidates ──────────────────────────────────────────────────────────
-      // NOTE: Skills filtering is done CLIENT-SIDE for all modes.
-      // We do NOT apply skills filter at DB level because PostgREST `overlaps`/`contains`
-      // is exact-match only — "sales" would not match "Sales Executive".
-      // We fetch all rows matching the other DB-level filters, then filter skills here.
-
+      // Candidates
       if (showValidated) {
         let q = supabase.from('candidates').select(`
           id, full_name, phone, email, current_company, current_designation,
@@ -407,16 +309,13 @@ export default function TalentPoolSearchPage() {
           assigned_user:assigned_to(full_name)`)
           .neq('current_stage', 'joined')
 
-        // Quick search — DB level (exact field match)
         if (quickSearch.trim())
           q = q.or(`full_name.ilike.%${quickSearch}%,phone.ilike.%${quickSearch}%,email.ilike.%${quickSearch}%`)
-
-        // Non-skills DB filters (these are exact/range — safe to do at DB level)
-        if (location)    q = q.ilike('current_location', `%${location}%`)
-        if (expMin)      q = q.gte('total_experience', parseFloat(expMin))
-        if (expMax)      q = q.lte('total_experience', parseFloat(expMax))
-        if (ctcMin)      q = q.gte('expected_ctc', parseFloat(ctcMin))
-        if (ctcMax)      q = q.lte('expected_ctc', parseFloat(ctcMax))
+        if (location)           q = q.ilike('current_location', `%${location}%`)
+        if (expMin)             q = q.gte('total_experience', parseFloat(expMin))
+        if (expMax)             q = q.lte('total_experience', parseFloat(expMax))
+        if (ctcMin)             q = q.gte('expected_ctc', parseFloat(ctcMin))
+        if (ctcMax)             q = q.lte('expected_ctc', parseFloat(ctcMax))
         if (noticePeriod !== 'all') {
           const [mn, mx] = noticePeriod.split('-').map(Number)
           if (mx) q = q.gte('notice_period', mn).lte('notice_period', mx)
@@ -424,67 +323,43 @@ export default function TalentPoolSearchPage() {
         }
 
         const { data: candidates } = await q
-
         if (candidates) {
           let rows = candidates.map((c: any) => {
             const la   = c.last_activity_date ? new Date(c.last_activity_date) : new Date(c.created_at)
             const days = Math.floor((now.getTime() - la.getTime()) / 86400000)
             return {
-              source_type:          'candidate' as const,
-              id:                   c.id,
-              full_name:            c.full_name,
-              phone:                c.phone,
-              email:                c.email,
-              current_company:      c.current_company,
-              current_designation:  c.current_designation,
-              total_experience:     c.total_experience,
-              current_location:     c.current_location,
-              expected_ctc:         c.expected_ctc,
-              notice_period:        c.notice_period || 0,
-              key_skills:           c.key_skills || [],
-              requirement_keywords: [],
-              industry:             '',
-              current_stage:        c.current_stage,
-              job_id:               c.job_id,
-              job_title:            c.jobs?.job_title,
-              assigned_to:          c.assigned_to,
-              assigned_to_name:     c.assigned_user?.full_name,
-              last_activity_date:   c.last_activity_date,
-              resume_url:           c.resume_url,
-              days_since_activity:  days,
-              is_owned:             days <= 90,
-              is_available:         days > 90,
-              match_score:          calcScore(c, scoreOpts),
+              source_type: 'candidate' as const, id: c.id,
+              full_name: c.full_name, phone: c.phone, email: c.email,
+              current_company: c.current_company, current_designation: c.current_designation,
+              total_experience: c.total_experience, current_location: c.current_location,
+              expected_ctc: c.expected_ctc, notice_period: c.notice_period || 0,
+              key_skills: c.key_skills || [], requirement_keywords: [],
+              industry: '', current_stage: c.current_stage,
+              job_id: c.job_id, job_title: c.jobs?.job_title,
+              assigned_to: c.assigned_to, assigned_to_name: c.assigned_user?.full_name,
+              last_activity_date: c.last_activity_date, resume_url: c.resume_url,
+              days_since_activity: days, is_owned: days <= 90, is_available: days > 90,
+              match_score: calcScore(c, scoreOpts),
             } as SearchResult
           })
-
-          // ── CLIENT-SIDE skills filter (ALL modes) ──
-          if (skillMode === 'boolean' && booleanQuery.trim()) {
+          if (skillMode === 'boolean' && booleanQuery.trim())
             rows = rows.filter(r => matchesBoolean(r.key_skills, booleanQuery))
-          } else if (skillMode === 'all' && selectedSkills.length > 0) {
+          else if (skillMode === 'all' && selectedSkills.length > 0)
             rows = rows.filter(r => matchesSkillsAll(r.key_skills, selectedSkills))
-          } else if (skillMode === 'any' && selectedSkills.length > 0) {
+          else if (skillMode === 'any' && selectedSkills.length > 0)
             rows = rows.filter(r => matchesSkillsAny(r.key_skills, selectedSkills))
-          }
 
-          // reqKeywords filter — client-side for candidates
           if (reqKeywords.length > 0)
             rows = rows.filter(r =>
-              candidateMatchesReqKeywords(r.key_skills, r.current_designation || '', reqKeywords)
-            )
+              candidateMatchesReqKeywords(r.key_skills, r.current_designation || '', reqKeywords))
 
-          // Ownership filter
           if (ownershipFilter === 'owned')     rows = rows.filter(r => r.is_owned)
           if (ownershipFilter === 'available') rows = rows.filter(r => r.is_available)
-
           allResults = allResults.concat(rows)
         }
       }
 
-      // ── Resume Bank ──────────────────────────────────────────────────────────
-      // Skills also filtered client-side here for consistency.
-      // reqKeywords: resume_bank HAS a requirement_keywords column so we filter DB-level too.
-
+      // Resume Bank
       if (showResumeBank) {
         let q = supabase.from('resume_bank').select(`
           id, full_name, phone, email, current_company, current_designation,
@@ -495,10 +370,7 @@ export default function TalentPoolSearchPage() {
 
         if (quickSearch.trim())
           q = q.or(`full_name.ilike.%${quickSearch}%,phone.ilike.%${quickSearch}%,email.ilike.%${quickSearch}%`)
-
-        // reqKeywords on resume_bank: DB-level exact match (these tags are normalized on upload)
         if (reqKeywords.length > 0) q = q.overlaps('requirement_keywords', reqKeywords)
-
         if (industry) q = q.ilike('industry', `%${industry}%`)
         if (location) q = q.ilike('current_location', `%${location}%`)
         if (expMin)   q = q.gte('total_experience', parseFloat(expMin))
@@ -512,42 +384,27 @@ export default function TalentPoolSearchPage() {
         }
 
         const { data: resumes } = await q
-
         if (resumes) {
           let rows = resumes.map((r: any) => ({
-            source_type:          'resume_bank' as const,
-            id:                   r.id,
-            full_name:            r.full_name,
-            phone:                r.phone,
-            email:                r.email,
-            current_company:      r.current_company,
-            current_designation:  r.current_designation,
-            total_experience:     r.total_experience,
-            current_location:     r.current_location,
-            expected_ctc:         r.expected_ctc,
-            notice_period:        r.notice_period || 0,
-            key_skills:           r.key_skills || [],
-            requirement_keywords: r.requirement_keywords || [],
-            industry:             r.industry || '',
-            resume_bank_status:   r.status,
-            uploaded_by:          r.uploaded_by,
-            uploaded_by_name:     r.uploader?.full_name,
-            uploaded_at:          r.uploaded_at,
-            resume_url:           r.resume_url,
-            days_since_activity:  0,
-            is_owned:             false,
-            is_available:         true,
-            match_score:          calcScore(r, scoreOpts),
+            source_type: 'resume_bank' as const, id: r.id,
+            full_name: r.full_name, phone: r.phone, email: r.email,
+            current_company: r.current_company, current_designation: r.current_designation,
+            total_experience: r.total_experience, current_location: r.current_location,
+            expected_ctc: r.expected_ctc, notice_period: r.notice_period || 0,
+            key_skills: r.key_skills || [], requirement_keywords: r.requirement_keywords || [],
+            industry: r.industry || '', resume_bank_status: r.status,
+            uploaded_by: r.uploaded_by, uploaded_by_name: r.uploader?.full_name,
+            uploaded_at: r.uploaded_at, resume_url: r.resume_url,
+            days_since_activity: 0, is_owned: false, is_available: true,
+            match_score: calcScore(r, scoreOpts),
           })) as SearchResult[]
 
-          // Skills filter client-side
-          if (skillMode === 'boolean' && booleanQuery.trim()) {
+          if (skillMode === 'boolean' && booleanQuery.trim())
             rows = rows.filter(r => matchesBoolean(r.key_skills, booleanQuery))
-          } else if (skillMode === 'all' && selectedSkills.length > 0) {
+          else if (skillMode === 'all' && selectedSkills.length > 0)
             rows = rows.filter(r => matchesSkillsAll(r.key_skills, selectedSkills))
-          } else if (skillMode === 'any' && selectedSkills.length > 0) {
+          else if (skillMode === 'any' && selectedSkills.length > 0)
             rows = rows.filter(r => matchesSkillsAny(r.key_skills, selectedSkills))
-          }
 
           if (ownershipFilter !== 'owned') allResults = allResults.concat(rows)
         }
@@ -574,17 +431,17 @@ export default function TalentPoolSearchPage() {
   }
 
   function handleAIFilters(filters: any) {
-  if (filters.skills?.length)   setSelectedSkills(filters.skills)
-  if (filters.location)         setLocation(filters.location)
-  if (filters.expMin != null)   setExpMin(String(filters.expMin))
-  if (filters.expMax != null)   setExpMax(String(filters.expMax))
-  if (filters.ctcMin != null)   setCtcMin(String(filters.ctcMin))
-  if (filters.ctcMax != null)   setCtcMax(String(filters.ctcMax))
-  if (filters.noticePeriod)     setNoticePeriod(filters.noticePeriod)
-  if (filters.industry)         setIndustry(filters.industry)
-  if (filters.skillMode)        setSkillMode(filters.skillMode)
-  setTimeout(() => handleSearch(), 100) // trigger search after state settles
-}
+    if (filters.skills?.length)   setSelectedSkills(filters.skills)
+    if (filters.location)         setLocation(filters.location)
+    if (filters.expMin != null)   setExpMin(String(filters.expMin))
+    if (filters.expMax != null)   setExpMax(String(filters.expMax))
+    if (filters.ctcMin != null)   setCtcMin(String(filters.ctcMin))
+    if (filters.ctcMax != null)   setCtcMax(String(filters.ctcMax))
+    if (filters.noticePeriod)     setNoticePeriod(filters.noticePeriod)
+    if (filters.industry)         setIndustry(filters.industry)
+    if (filters.skillMode)        setSkillMode(filters.skillMode)
+    setTimeout(() => handleSearch(), 100)
+  }
 
   function handleClearAll() {
     setQuickSearch(''); setAiQuery(''); setReqKeywords([]); setReqKeywordInput('')
@@ -637,6 +494,9 @@ export default function TalentPoolSearchPage() {
           </p>
         </div>
 
+        {/* ── Top Contributors Leaderboard ── */}
+        <TopContributors />
+
         {/* ── Search Panel ── */}
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
@@ -654,7 +514,7 @@ export default function TalentPoolSearchPage() {
 
           {showAdvanced && (
             <div className="px-5 py-5 space-y-5">
- 
+
               {/* Requirement Keywords */}
               <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4">
                 <div className="flex items-center gap-2 mb-1">
@@ -702,9 +562,9 @@ export default function TalentPoolSearchPage() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-400 mb-3">
-                  {skillMode === 'any'     && 'ANY — returns profiles matching at least one skill. Partial match: "sales" finds "Sales Executive", "B2B Sales" etc.'}
-                  {skillMode === 'all'     && 'ALL — returns only profiles that have ALL skills listed. Partial match: "java" finds "Java Developer", "Core Java" etc.'}
-                  {skillMode === 'boolean' && 'BOOLEAN — use AND, OR, NOT. e.g: Sales AND CRM NOT Retail. Partial match applies to each term.'}
+                  {skillMode === 'any'     && 'ANY — returns profiles matching at least one skill.'}
+                  {skillMode === 'all'     && 'ALL — returns only profiles that have ALL skills listed.'}
+                  {skillMode === 'boolean' && 'BOOLEAN — use AND, OR, NOT. e.g: Sales AND CRM NOT Retail.'}
                 </p>
                 {skillMode === 'boolean' ? (
                   <input className={fi} placeholder="e.g. Sales AND CRM NOT Retail"
@@ -765,32 +625,27 @@ export default function TalentPoolSearchPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 mb-1">Min Exp (yrs)</label>
-                      <input type="number" className={fi} placeholder="0" value={expMin}
-                        onChange={e => setExpMin(e.target.value)}/>
+                      <input type="number" className={fi} placeholder="0" value={expMin} onChange={e => setExpMin(e.target.value)}/>
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 mb-1">Max Exp (yrs)</label>
-                      <input type="number" className={fi} placeholder="30" value={expMax}
-                        onChange={e => setExpMax(e.target.value)}/>
+                      <input type="number" className={fi} placeholder="30" value={expMax} onChange={e => setExpMax(e.target.value)}/>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Min CTC </label>
-                      <input type="number" className={fi} placeholder="0" value={ctcMin}
-                        onChange={e => setCtcMin(e.target.value)}/>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1">Min CTC</label>
+                      <input type="number" className={fi} placeholder="0" value={ctcMin} onChange={e => setCtcMin(e.target.value)}/>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Max CTC </label>
-                      <input type="number" className={fi} placeholder="50" value={ctcMax}
-                        onChange={e => setCtcMax(e.target.value)}/>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1">Max CTC</label>
+                      <input type="number" className={fi} placeholder="50" value={ctcMax} onChange={e => setCtcMax(e.target.value)}/>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 mb-1">Ownership</label>
-                      <select className={fi} value={ownershipFilter}
-                        onChange={e => setOwnershipFilter(e.target.value)}>
+                      <select className={fi} value={ownershipFilter} onChange={e => setOwnershipFilter(e.target.value)}>
                         <option value="all">All</option>
                         <option value="owned">🔒 Owned only</option>
                         <option value="available">✅ Available only</option>
@@ -978,7 +833,8 @@ export default function TalentPoolSearchPage() {
           </div>
         </div>
       )}
-<AITalentAgent onApplyFilters={handleAIFilters} userRole={user?.role} />
+
+      <AITalentAgent onApplyFilters={handleAIFilters} userRole={user?.role} />
     </DashboardLayout>
   )
 }
@@ -986,16 +842,10 @@ export default function TalentPoolSearchPage() {
 // ─── ResultCard ───────────────────────────────────────────────────────────────
 
 interface ResultCardProps {
-  result: SearchResult
-  index: number
-  user: any
-  selectedSkills: string[]
-  reqKeywords: string[]
-  expanded: boolean
-  onToggleExpand: () => void
-  onViewDetail: () => void
-  onAddToJob: () => void
-  onDeepScore: () => void
+  result: SearchResult; index: number; user: any
+  selectedSkills: string[]; reqKeywords: string[]
+  expanded: boolean; onToggleExpand: () => void
+  onViewDetail: () => void; onAddToJob: () => void; onDeepScore: () => void
 }
 
 function ResultCard({
@@ -1032,15 +882,14 @@ function ResultCard({
           const ext = filePath.split('.').pop() || 'pdf'
           const url = URL.createObjectURL(data)
           const a   = document.createElement('a')
-          a.href = url
-          a.download = `${result.full_name.replace(/\s+/g, '_')}_Resume.${ext}`
+          a.href = url; a.download = `${result.full_name.replace(/\s+/g, '_')}_Resume.${ext}`
           document.body.appendChild(a); a.click()
           document.body.removeChild(a); URL.revokeObjectURL(url)
           return
         }
       }
       window.open(result.resume_url, '_blank')
-    } catch { window.open(result.resume_url, '_blank') }
+    } catch { window.open(result.resume_url!, '_blank') }
   }
 
   return (
@@ -1049,15 +898,10 @@ function ResultCard({
       ${expanded ? 'shadow-md ring-1 ring-blue-100' : 'hover:shadow-md hover:border-blue-200'}`}>
 
       <div className="flex items-stretch gap-0">
-
         {/* Score column */}
         <div className={`w-[72px] flex-shrink-0 flex flex-col items-center justify-center py-5 gap-1 border-r ${scoreTheme.track}`}>
-          <span className={`text-[22px] font-black leading-none ${scoreTheme.numCls}`}>
-            {result.match_score}
-          </span>
-          <span className={`text-[10px] font-bold uppercase tracking-wide ${scoreTheme.lblCls}`}>
-            {scoreTheme.label}
-          </span>
+          <span className={`text-[22px] font-black leading-none ${scoreTheme.numCls}`}>{result.match_score}</span>
+          <span className={`text-[10px] font-bold uppercase tracking-wide ${scoreTheme.lblCls}`}>{scoreTheme.label}</span>
           <div className="w-9 h-1 bg-gray-200 rounded-full mt-1 overflow-hidden">
             <div className={`h-full rounded-full ${scoreTheme.bar}`} style={{ width:`${result.match_score}%` }}/>
           </div>
@@ -1065,17 +909,13 @@ function ResultCard({
 
         {/* Main content */}
         <div className="flex-1 min-w-0 p-4">
-
-          {/* Row A: name + badges + CV buttons */}
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2 flex-wrap min-w-0">
               <span className="text-[11px] font-bold text-gray-300">#{index}</span>
               <h3 className="font-bold text-gray-900 text-[15px] leading-snug">{result.full_name}</h3>
               {sourceBadge}
               {result.industry && (
-                <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[11px] font-medium">
-                  {result.industry}
-                </span>
+                <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[11px] font-medium">{result.industry}</span>
               )}
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -1107,7 +947,6 @@ function ResultCard({
             </div>
           </div>
 
-          {/* Row B: role details */}
           <div className="flex items-center gap-1.5 mt-2 text-sm flex-wrap text-gray-500">
             {result.current_designation && <span className="font-semibold text-gray-800">{result.current_designation}</span>}
             {result.current_company && <><span className="text-gray-300">@</span><span className="text-gray-600">{result.current_company}</span></>}
@@ -1119,27 +958,21 @@ function ResultCard({
             {result.notice_period ? <><span className="text-gray-200 mx-0.5">|</span><span className="text-amber-600 text-xs font-medium">{result.notice_period}d notice</span></> : null}
           </div>
 
-          {/* Row C: pills */}
           <div className="flex flex-wrap gap-1.5 mt-3">
             {result.requirement_keywords
               .filter(k => reqKeywords.some(rk => rk.toLowerCase() === k.toLowerCase()))
               .map(k => (
-                <span key={`rk-m-${k}`} className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-violet-600 text-white rounded-full text-xs font-semibold">
-                  🎯 {k}
-                </span>
+                <span key={`rk-m-${k}`} className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-violet-600 text-white rounded-full text-xs font-semibold">🎯 {k}</span>
               ))}
             {result.requirement_keywords
               .filter(k => !reqKeywords.some(rk => rk.toLowerCase() === k.toLowerCase()))
               .map(k => (
-                <span key={`rk-u-${k}`} className="px-2.5 py-0.5 bg-violet-100 text-violet-600 border border-violet-200 rounded-full text-xs">
-                  {k}
-                </span>
+                <span key={`rk-u-${k}`} className="px-2.5 py-0.5 bg-violet-100 text-violet-600 border border-violet-200 rounded-full text-xs">{k}</span>
               ))}
             {result.key_skills.slice(0, 9).map(s => (
               <span key={s} className={`px-2 py-0.5 rounded text-xs font-medium ${
                 selectedSkills.some(sk => sk.toLowerCase() === s.toLowerCase())
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-600'
+                  ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
               }`}>{s}</span>
             ))}
             {result.key_skills.length > 9 && (
@@ -1150,7 +983,6 @@ function ResultCard({
             )}
           </div>
 
-          {/* Row D: footer */}
           <div className="flex items-center gap-4 mt-3 pt-3 border-t border-gray-50 flex-wrap">
             <div className="text-xs text-gray-400 flex flex-wrap items-center gap-3">
               {isCandidate ? (
@@ -1194,7 +1026,6 @@ function ResultCard({
         </div>
       </div>
 
-      {/* Expanded panel */}
       {expanded && (
         <div className="border-t border-gray-100 bg-gray-50/60 px-5 py-4 space-y-4">
           <div className="grid grid-cols-4 gap-4">
@@ -1232,20 +1063,6 @@ function ResultCard({
               </>
             )}
           </div>
-          {result.requirement_keywords.length > 0 && (
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Requirement Keywords</div>
-              <div className="flex flex-wrap gap-1.5">
-                {result.requirement_keywords.map(k => (
-                  <span key={k} className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                    reqKeywords.some(rk => rk.toLowerCase() === k.toLowerCase())
-                      ? 'bg-violet-600 text-white'
-                      : 'bg-violet-100 text-violet-700 border border-violet-200'
-                  }`}>{k}</span>
-                ))}
-              </div>
-            </div>
-          )}
           {result.key_skills.length > 0 && (
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">
@@ -1255,8 +1072,7 @@ function ResultCard({
                 {result.key_skills.map(s => (
                   <span key={s} className={`px-2 py-0.5 rounded text-xs font-medium ${
                     selectedSkills.some(sk => sk.toLowerCase() === s.toLowerCase())
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white border border-gray-200 text-gray-700'
+                      ? 'bg-blue-600 text-white' : 'bg-white border border-gray-200 text-gray-700'
                   }`}>{s}</span>
                 ))}
               </div>
