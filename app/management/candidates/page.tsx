@@ -152,6 +152,10 @@ function CandidatesTable() {
   const [teamMembers, setTeamMembers]         = useState<any[]>([])
   const [teams, setTeams]                     = useState<{ id: string; name: string }[]>([])
 
+  // Client filter
+  const [clientFilter, setClientFilter]       = useState('all')
+  const [clients, setClients]                 = useState<{ id: string; name: string }[]>([])
+
   // True KPI counts (from DB, not filtered slice)
   const [kpiCounts, setKpiCounts]             = useState({ total: 0, active: 0, joined: 0, rejected: 0 })
   const [kpiLoading, setKpiLoading]           = useState(true)
@@ -171,17 +175,30 @@ function CandidatesTable() {
     }
     setUser(parsedUser)
     loadTeamMembers()
+    loadClients()
   }, [])
 
   // Reset page when filters change
-  useEffect(() => { setPage(0) }, [stageFilter, searchQuery, recruiterFilter, teamFilter, daysFilter])
+  useEffect(() => { setPage(0) }, [stageFilter, searchQuery, recruiterFilter, teamFilter, daysFilter, clientFilter])
 
   useEffect(() => {
     if (teamMembers.length > 0) {
       loadCandidates()
       loadKpiCounts()
     }
-  }, [teamMembers, stageFilter, searchQuery, recruiterFilter, teamFilter, daysFilter, page])
+  }, [teamMembers, stageFilter, searchQuery, recruiterFilter, teamFilter, daysFilter, clientFilter, page])
+
+  const loadClients = async () => {
+    try {
+      const { data } = await supabaseAdmin
+        .from('clients')
+        .select('id, company_name')
+        .order('company_name', { ascending: true })
+      setClients((data || []).map((c: any) => ({ id: c.id, name: c.company_name })))
+    } catch (err) {
+      console.error('Error loading clients:', err)
+    }
+  }
 
   const loadTeamMembers = async () => {
     try {
@@ -232,6 +249,16 @@ function CandidatesTable() {
     return scopedIds
   }, [teamMembers, teamFilter, recruiterFilter])
 
+  // Returns job IDs for the selected client (null = no filter)
+  const getClientJobIds = useCallback(async (): Promise<string[] | null> => {
+    if (clientFilter === 'all') return null
+    const { data } = await supabaseAdmin
+      .from('jobs')
+      .select('id')
+      .eq('client_id', clientFilter)
+    return (data || []).map((j: any) => j.id)
+  }, [clientFilter])
+
   // ── TRUE KPI COUNTS via separate count queries ───────────────────────────
   const loadKpiCounts = async () => {
     setKpiLoading(true)
@@ -243,14 +270,19 @@ function CandidatesTable() {
         return
       }
 
+      const clientJobIds = await getClientJobIds()
+
       const activeStages   = ['sourced','screening','interview_scheduled','interview_completed','documentation','offer_extended','offer_accepted']
       const rejectedStages = ['screening_rejected','interview_rejected','offer_rejected','renege']
 
+      const applyClientFilter = (q: any) =>
+        clientJobIds ? q.in('job_id', clientJobIds.length > 0 ? clientJobIds : ['__none__']) : q
+
       const [totalRes, activeRes, joinedRes, rejectedRes] = await Promise.all([
-        supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds),
-        supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).in('current_stage', activeStages),
-        supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).eq('current_stage', 'joined'),
-        supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).in('current_stage', rejectedStages),
+        applyClientFilter(supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds)),
+        applyClientFilter(supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).in('current_stage', activeStages)),
+        applyClientFilter(supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).eq('current_stage', 'joined')),
+        applyClientFilter(supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).in('current_stage', rejectedStages)),
       ])
 
       setKpiCounts({
@@ -273,6 +305,12 @@ function CandidatesTable() {
       const scopedIds = buildScopedIds()
       if (scopedIds.length === 0) { setCandidates([]); setTotalRows(0); setLoading(false); return }
 
+      const clientJobIds = await getClientJobIds()
+      // If client selected but has no jobs, return empty immediately
+      if (clientJobIds !== null && clientJobIds.length === 0) {
+        setCandidates([]); setTotalRows(0); setLoading(false); return
+      }
+
       const from = page * PAGE_SIZE
       const to   = from + PAGE_SIZE - 1
 
@@ -287,6 +325,7 @@ function CandidatesTable() {
         .order('created_at', { ascending: false })
         .range(from, to)
 
+      if (clientJobIds !== null) query = query.in('job_id', clientJobIds)
       if (stageFilter !== 'all') query = query.eq('current_stage', stageFilter)
       if (searchQuery) {
         query = query.or(`full_name.ilike.%${searchQuery}%,phone.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`)
@@ -376,7 +415,7 @@ function CandidatesTable() {
 
   const totalPages    = Math.ceil(totalRows / PAGE_SIZE)
   const hasActiveFilter = teamFilter !== 'all' || stageFilter !== 'all' ||
-    searchQuery || recruiterFilter !== 'all' || daysFilter !== 'all'
+    searchQuery || recruiterFilter !== 'all' || daysFilter !== 'all' || clientFilter !== 'all'
 
   if (!user) return (
     <div className="flex items-center justify-center h-64">
@@ -434,7 +473,7 @@ function CandidatesTable() {
 
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Search</label>
             <input
@@ -443,6 +482,18 @@ function CandidatesTable() {
               placeholder="Name, phone, email…"
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Client</label>
+            <select
+              value={clientFilter} onChange={e => setClientFilter(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+            >
+              <option value="all">All Clients ({clients.length})</option>
+              {clients.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Team</label>
@@ -506,7 +557,8 @@ function CandidatesTable() {
             <button
               onClick={() => {
                 setTeamFilter('all'); setStageFilter('all')
-                setSearchQuery(''); setRecruiterFilter('all'); setDaysFilter('all')
+                setSearchQuery(''); setRecruiterFilter('all')
+                setDaysFilter('all'); setClientFilter('all')
               }}
               className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
             >
