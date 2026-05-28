@@ -13,6 +13,7 @@ interface AchieverRow {
   target: number
   achieved: number
   pct: number
+  isAlumni?: boolean
 }
 
 type Period = 'monthly' | 'quarterly' | 'annual'
@@ -37,7 +38,10 @@ interface UserRow {
   monthly_target: number
   quarterly_target: number
   annual_target: number
+  is_active?: boolean
+  last_working_date?: string | null
 }
+
 
 interface CandidateRow {
   assigned_to: string
@@ -191,11 +195,13 @@ async function fetchAchievers(
 
   const { startDate, endDate } = buildDateWindow(period, month, year)
 
-  const { data: users, error: uErr } = await supabase
-    .from('users')
-    .select('id, full_name, role, monthly_target, quarterly_target, annual_target')
-    .in('role', ['recruiter', 'team_leader', 'sr_team_leader'])
-    .eq('is_active', true)
+  const fyStart = month >= 3 ? year : year - 1
+
+const { data: users, error: uErr } = await supabase
+  .from('users')
+  .select('id, full_name, role, monthly_target, quarterly_target, annual_target, is_active, last_working_date')
+  .in('role', ['recruiter', 'team_leader', 'sr_team_leader'])
+  .or(`is_active.eq.true,last_working_date.gte.${fyStart}-04-01`)
 
   if (uErr || !users || users.length === 0) {
     console.error('[fetchAchievers] users error:', uErr)
@@ -235,11 +241,22 @@ async function fetchAchievers(
   const rows: AchieverRow[] = (users as UserRow[])
     .filter(u => (u[targetKey] as number ?? 0) > 0)
     .map(u => {
-      const target   = (u[targetKey] as number) ?? 0
-      const achieved = revenueMap[u.id] ?? 0
-      const pct      = target > 0 ? Math.round((achieved / target) * 100) : 0
-      return { id: u.id, full_name: u.full_name, role: u.role, target, achieved, pct }
-    })
+  const target   = (u[targetKey] as number) ?? 0
+  const achieved = revenueMap[u.id] ?? 0
+  const pct      = target > 0 ? Math.round((achieved / target) * 100) : 0
+
+  const isAlumni = !u.is_active && u.last_working_date
+
+  return {
+    id: u.id,
+    full_name: u.full_name,
+    role: u.role,
+    target,
+    achieved,
+    pct,
+    isAlumni: Boolean(isAlumni),
+  }
+})
 
   return rows.sort((a, b) => b.pct - a.pct)
 }
@@ -435,12 +452,36 @@ function LeaderboardRow({ person, rank }: { person: AchieverRow; rank: number })
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <Avatar name={person.full_name} size={34} />
         <div style={{ minWidth: 0 }}>
-          <div style={{
-            fontWeight: 700, fontSize: 14, color: '#1e293b',
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          }}>
-            {person.full_name}
-          </div>
+         <div style={{
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  minWidth: 0,
+}}>
+  <div style={{
+    fontWeight: 700,
+    fontSize: 14,
+    color: '#1e293b',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  }}>
+    {person.full_name}
+  </div>
+
+  {person.isAlumni && (
+    <span style={{
+      fontSize: 10,
+      color: '#6b7280',
+      background: '#f1f5f9',
+      padding: '1px 7px',
+      borderRadius: 100,
+      flexShrink: 0,
+    }}>
+      Alumni
+    </span>
+  )}
+</div>
           <span style={{
             fontSize: 10, padding: '2px 7px', borderRadius: 100,
             background: roleBadge.bg, color: roleBadge.color, fontWeight: 600,

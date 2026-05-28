@@ -85,7 +85,7 @@ interface DashboardStats {
   
   // Recruiter details
   recruiterDetails: RecruiterDetail[]
-  
+  exitedRecruiterDetails?: RecruiterDetail[]
   // Client stats
   clientStats: Array<{
     clientName: string
@@ -434,9 +434,12 @@ export default function TLDashboard() {
         {/* Rewards & Incentives */}
         
         <TLRewardsSection
-        tlUserId={user?.id}
-        recruiterDetails={stats.recruiterDetails}
-        />
+  tlUserId={user?.id}
+  recruiterDetails={[
+    ...stats.recruiterDetails,
+    ...(stats.exitedRecruiterDetails || []),
+  ]}
+/>
         
         {/* Detailed Team Member Performance */}
         <div>

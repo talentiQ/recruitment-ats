@@ -6,6 +6,41 @@ import { useRouter } from 'next/navigation'
 import { supabase as supabaseAdmin } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
 
+// ─── Pro-rated target helpers (mirrors management dashboard) ─────────────────
+
+function getActiveMonths(
+  periodStart: string, periodEnd: string,
+  lwd: string | null, targetEnd: string | null,
+  totalMonths: number,
+): number {
+  if (!lwd && !targetEnd) return totalMonths
+  const cutoffs = [lwd, targetEnd].filter(Boolean) as string[]
+  if (cutoffs.length === 0) return totalMonths
+  const effectiveCutoff = cutoffs.sort()[0]
+  if (effectiveCutoff < periodStart) return 0
+  if (effectiveCutoff >= periodEnd) return totalMonths
+  const pStart  = new Date(periodStart)
+  const cutDate = new Date(effectiveCutoff)
+  const monthsActive = (cutDate.getFullYear() - pStart.getFullYear()) * 12
+    + (cutDate.getMonth() - pStart.getMonth()) + 1
+  return Math.max(0, Math.min(monthsActive, totalMonths))
+}
+
+function getProRatedTarget(
+  monthlyTarget: number,
+  periodStart: string, periodEnd: string,
+  lwd: string | null, targetEnd: string | null,
+  totalMonths: number,
+): number {
+  if (monthlyTarget <= 0) return 0
+  return monthlyTarget * getActiveMonths(periodStart, periodEnd, lwd, targetEnd, totalMonths)
+}
+
+function calcAchievementPct(achieved: number, target: number): number {
+  if (target <= 0) return 0
+  return Math.round((achieved / target) * 100)
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 type DateFilter = 'current_month' | 'prev_month' | 'current_quarter' | 'prev_quarter' | 'custom'
 
@@ -28,6 +63,7 @@ interface MemberPerformance {
   monthly_achievement: number
   quarterly_achievement: number
   annual_achievement: number
+  is_exited: boolean
 }
 
 interface SrTLTeam {
@@ -52,7 +88,6 @@ interface SrTLTeam {
   annual_achievement: number
 }
 
-// ── NEW: Team-wise interface ──────────────────────────────────────────────────
 interface TeamWiseData {
   team_id: string
   team_name: string
@@ -89,7 +124,7 @@ export default function ManagementTeams() {
 
   const [teams, setTeams]           = useState<SrTLTeam[]>([])
   const [allMembers, setAllMembers] = useState<MemberPerformance[]>([])
-  const [teamsWise, setTeamsWise]   = useState<TeamWiseData[]>([])  // NEW
+  const [teamsWise, setTeamsWise]   = useState<TeamWiseData[]>([])
 
   const [orgStats, setOrgStats] = useState({
     total_sr_tls: 0, total_tls: 0, total_recruiters: 0,
@@ -122,6 +157,13 @@ export default function ManagementTeams() {
     }
   }, [activeFilter, customFrom, customTo])
 
+  // ── FY start helper ─────────────────────────────────────────────────────────
+  const getFyStartDate = () => {
+    const now = new Date(); const m = now.getMonth() + 1
+    const fyYear = m >= 4 ? now.getFullYear() : now.getFullYear() - 1
+    return `${fyYear}-04-01`
+  }
+
   // ── Date range helpers ─────────────────────────────────────────────────────
   const getDateRanges = (filter: DateFilter, cfrom = '', cto = '') => {
     const now          = new Date()
@@ -148,7 +190,7 @@ export default function ManagementTeams() {
       monthEnd   = new Date(now.getFullYear(), now.getMonth(),     1).toISOString().slice(0, 10)
     } else {
       monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
-      monthEnd   = null
+      monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString().slice(0, 10)
     }
 
     const currentBQ = getCurrentBQ(currentMonth)
@@ -171,7 +213,7 @@ export default function ManagementTeams() {
     let primaryEnd:   string | null
     if (filter === 'custom')              { primaryStart = cfrom;        primaryEnd = cto || null }
     else if (filter === 'prev_month')     { primaryStart = monthStart;   primaryEnd = monthEnd }
-    else if (filter === 'current_month')  { primaryStart = monthStart;   primaryEnd = null }
+    else if (filter === 'current_month')  { primaryStart = monthStart;   primaryEnd = monthEnd }
     else if (filter === 'prev_quarter')   { primaryStart = quarterStart; primaryEnd = quarterEnd }
     else                                  { primaryStart = quarterStart; primaryEnd = null }
 
@@ -197,9 +239,12 @@ export default function ManagementTeams() {
     const { monthStart, monthEnd, quarterStart, quarterEnd, annualStart, annualEnd, primaryStart, primaryEnd } =
       getDateRanges(filter, cfrom, cto)
 
+    // Revenue credit: include candidates where this member is original_assigned_to (post-exit reassignment)
+    const revenueFilter = `assigned_to.eq.${memberId},original_assigned_to.eq.${memberId}`
+
     const buildRevQ = (start: string, end: string | null) => {
       let q = supabaseAdmin.from('candidates').select('revenue_earned')
-        .eq('assigned_to', memberId).eq('current_stage', 'joined').gte('date_joined', start)
+        .or(revenueFilter).eq('current_stage', 'joined').gte('date_joined', start)
       if (end) q = q.lt('date_joined', end)
       return q
     }
@@ -215,7 +260,7 @@ export default function ManagementTeams() {
 
     let joiningsQ = supabaseAdmin.from('candidates')
       .select('*', { count: 'exact', head: true })
-      .eq('assigned_to', memberId).eq('current_stage', 'joined').gte('date_joined', primaryStart)
+      .or(revenueFilter).eq('current_stage', 'joined').gte('date_joined', primaryStart)
     if (primaryEnd) joiningsQ = joiningsQ.lt('date_joined', primaryEnd)
 
     let pipelineQ = supabaseAdmin.from('candidates')
@@ -232,9 +277,23 @@ export default function ManagementTeams() {
     const quarterly_revenue = quarterlyRevData.data?.reduce((s, c) => s + (c.revenue_earned || 0), 0) || 0
     const annual_revenue    = annualRevData.data?.reduce((s, c) => s + (c.revenue_earned || 0), 0) || 0
 
-    const monthly_target   = memberData.monthly_target   ? Number(memberData.monthly_target)   : (memberData.role === 'team_leader' ? 5 : 2)
-    const quarterly_target = memberData.quarterly_target ? Number(memberData.quarterly_target) : monthly_target * 3
-    const annual_target    = memberData.annual_target    ? Number(memberData.annual_target)    : monthly_target * 12
+    // ── Pro-rated targets ─────────────────────────────────────────────────────
+    const base      = memberData.monthly_target ? Number(memberData.monthly_target) : (memberData.role === 'team_leader' ? 5 : 2)
+    const lwd       = memberData.last_working_date  ?? null
+    const targetEnd = memberData.target_end_date    ?? null
+
+    // For custom filter, treat primary period as the "month" bucket (1 month equivalent)
+    const monthly_target = filter === 'custom'
+      ? getProRatedTarget(base, primaryStart, primaryEnd || new Date().toISOString().slice(0, 10), lwd, targetEnd, 1)
+      : getProRatedTarget(base, monthStart, monthEnd!, lwd, targetEnd, 1)
+
+    const quarterly_target = filter === 'custom'
+      ? getProRatedTarget(base, primaryStart, primaryEnd || new Date().toISOString().slice(0, 10), lwd, targetEnd, 3)
+      : getProRatedTarget(base, quarterStart, quarterEnd, lwd, targetEnd, 3)
+
+    const annual_target = getProRatedTarget(base, annualStart, annualEnd, lwd, targetEnd, 12)
+
+    const is_exited = !(memberData.is_active ?? true)
 
     return {
       candidates_count:    candidatesCount.count || 0,
@@ -242,9 +301,10 @@ export default function ManagementTeams() {
       pipeline_count:      pipelineCount.count   || 0,
       monthly_revenue, quarterly_revenue, annual_revenue,
       monthly_target, quarterly_target, annual_target,
-      monthly_achievement:   monthly_target   > 0 ? Math.round((monthly_revenue   / monthly_target)   * 100) : 0,
-      quarterly_achievement: quarterly_target > 0 ? Math.round((quarterly_revenue / quarterly_target) * 100) : 0,
-      annual_achievement:    annual_target    > 0 ? Math.round((annual_revenue    / annual_target)    * 100) : 0,
+      is_exited,
+      monthly_achievement:   calcAchievementPct(monthly_revenue,   monthly_target),
+      quarterly_achievement: calcAchievementPct(quarterly_revenue, quarterly_target),
+      annual_achievement:    calcAchievementPct(annual_revenue,    annual_target),
     }
   }
 
@@ -253,26 +313,31 @@ export default function ManagementTeams() {
     setLoading(true)
     try {
       const { primaryStart, primaryEnd } = getDateRanges(filter, cfrom, cto)
+      const fyStartDate = getFyStartDate()
 
-      // ── Sr-TL view (existing) ──────────────────────────────────────────────
+      // ── Sr-TL view ────────────────────────────────────────────────────────
       const { data: srTLs } = await supabaseAdmin
-        .from('users').select('id, full_name, team_id, monthly_target, quarterly_target, annual_target')
+        .from('users').select('id, full_name, team_id, monthly_target, quarterly_target, annual_target, last_working_date, target_end_date, is_active')
         .eq('role', 'sr_team_leader').eq('is_active', true).order('full_name')
 
       if (!srTLs || srTLs.length === 0) { setLoading(false); return }
 
       const teamsData = await Promise.all(srTLs.map(async (srTL: any) => {
+        // Direct reports — active OR left this FY
         const { data: directReports } = await supabaseAdmin
-          .from('users').select('id, full_name, role, reports_to, team_id, monthly_target, quarterly_target, annual_target')
-          .eq('reports_to', srTL.id).eq('is_active', true)
+          .from('users').select('id, full_name, role, reports_to, team_id, monthly_target, quarterly_target, annual_target, last_working_date, target_end_date, is_active')
+          .eq('reports_to', srTL.id)
+          .or(`is_active.eq.true,last_working_date.gte.${fyStartDate}`)
 
         const tlIds = (directReports || []).filter((m: any) => m.role === 'team_leader').map((m: any) => m.id)
 
+        // Indirect recruiters — active OR left this FY
         let indirectRecruiters: any[] = []
         if (tlIds.length > 0) {
           const { data: recs } = await supabaseAdmin
-            .from('users').select('id, full_name, role, reports_to, team_id, monthly_target, quarterly_target, annual_target')
-            .in('reports_to', tlIds).eq('role', 'recruiter').eq('is_active', true)
+            .from('users').select('id, full_name, role, reports_to, team_id, monthly_target, quarterly_target, annual_target, last_working_date, target_end_date, is_active')
+            .in('reports_to', tlIds).eq('role', 'recruiter')
+            .or(`is_active.eq.true,last_working_date.gte.${fyStartDate}`)
           indirectRecruiters = recs || []
         }
 
@@ -324,9 +389,9 @@ export default function ManagementTeams() {
           members: memberPerf.sort((a, b) => a.role === b.role ? b.monthly_revenue - a.monthly_revenue : a.role === 'team_leader' ? -1 : 1),
           monthly_revenue, quarterly_revenue, annual_revenue,
           monthly_target, quarterly_target, annual_target,
-          monthly_achievement:   monthly_target   > 0 ? Math.round((monthly_revenue   / monthly_target)   * 100) : 0,
-          quarterly_achievement: quarterly_target > 0 ? Math.round((quarterly_revenue / quarterly_target) * 100) : 0,
-          annual_achievement:    annual_target    > 0 ? Math.round((annual_revenue    / annual_target)    * 100) : 0,
+          monthly_achievement:   calcAchievementPct(monthly_revenue,   monthly_target),
+          quarterly_achievement: calcAchievementPct(quarterly_revenue, quarterly_target),
+          annual_achievement:    calcAchievementPct(annual_revenue,    annual_target),
         } as SrTLTeam
       }))
 
@@ -337,48 +402,37 @@ export default function ManagementTeams() {
       const flat = sortedTeams.flatMap(t => t.members)
       setAllMembers(flat)
 
-      // ── NEW: Team-wise view ────────────────────────────────────────────────
+      // ── Team-wise view ────────────────────────────────────────────────────
       const { data: allTeams } = await supabaseAdmin
         .from('teams').select('id, name').eq('is_active', true).order('name')
 
       if (allTeams && allTeams.length > 0) {
         const teamWiseData = await Promise.all(allTeams.map(async (team: any) => {
-          // All active users in this team (any role)
           const { data: teamUsers } = await supabaseAdmin
             .from('users')
-            .select('id, full_name, role, reports_to, team_id, monthly_target, quarterly_target, annual_target')
+            .select('id, full_name, role, reports_to, team_id, monthly_target, quarterly_target, annual_target, last_working_date, target_end_date, is_active')
             .eq('team_id', team.id)
-            .eq('is_active', true)
+            .or(`is_active.eq.true,last_working_date.gte.${fyStartDate}`)
             .order('role')
 
           const members = teamUsers || []
-
-          // Build name map for reports_to resolution
           const nameMap: Record<string, string> = {}
           members.forEach((m: any) => { nameMap[m.id] = m.full_name })
 
-          // Find Sr. TL name
-          const srTL = members.find((m: any) => m.role === 'sr_team_leader')
+          const srTL       = members.find((m: any) => m.role === 'sr_team_leader')
           const sr_tl_name = srTL?.full_name || '—'
-
-          // Only TLs and Recruiters as members (Sr. TL shown in header)
           const memberUsers = members.filter((m: any) => m.role !== 'sr_team_leader')
           const allMemberIds = members.map((m: any) => m.id)
 
           const memberPerf = await Promise.all(memberUsers.map(async (member: any) => {
             const rev = await getMemberRevenue(member.id, member, filter, cfrom, cto)
             return {
-              user_id: member.id,
-              user_name: member.full_name,
-              role: member.role,
-              reports_to_id: member.reports_to,
-              reports_to_name: nameMap[member.reports_to] || '—',
-              team_name: team.name,
-              ...rev,
+              user_id: member.id, user_name: member.full_name, role: member.role,
+              reports_to_id: member.reports_to, reports_to_name: nameMap[member.reports_to] || '—',
+              team_name: team.name, ...rev,
             }
           }))
 
-          // Team-level candidate/joining counts
           let teamCandQ = supabaseAdmin.from('candidates')
             .select('*', { count: 'exact', head: true })
             .in('assigned_to', allMemberIds.length > 0 ? allMemberIds : ['none'])
@@ -404,21 +458,18 @@ export default function ManagementTeams() {
           const annual_target     = memberPerf.reduce((s, m) => s + m.annual_target,     0)
 
           return {
-            team_id: team.id,
-            team_name: team.name,
-            sr_tl_name,
+            team_id: team.id, team_name: team.name, sr_tl_name,
             tl_count:        memberUsers.filter((m: any) => m.role === 'team_leader').length,
             recruiter_count: memberUsers.filter((m: any) => m.role === 'recruiter').length,
             total_candidates: totalCandidates || 0,
             month_joinings:   monthJoinings   || 0,
-            active_jobs: activeJobs || 0,
-            total_jobs:  totalJobs  || 0,
+            active_jobs: activeJobs || 0, total_jobs: totalJobs || 0,
             members: memberPerf.sort((a, b) => a.role === b.role ? b.monthly_revenue - a.monthly_revenue : a.role === 'team_leader' ? -1 : 1),
             monthly_revenue, quarterly_revenue, annual_revenue,
             monthly_target, quarterly_target, annual_target,
-            monthly_achievement:   monthly_target   > 0 ? Math.round((monthly_revenue   / monthly_target)   * 100) : 0,
-            quarterly_achievement: quarterly_target > 0 ? Math.round((quarterly_revenue / quarterly_target) * 100) : 0,
-            annual_achievement:    annual_target    > 0 ? Math.round((annual_revenue    / annual_target)    * 100) : 0,
+            monthly_achievement:   calcAchievementPct(monthly_revenue,   monthly_target),
+            quarterly_achievement: calcAchievementPct(quarterly_revenue, quarterly_target),
+            annual_achievement:    calcAchievementPct(annual_revenue,    annual_target),
           } as TeamWiseData
         }))
 
@@ -445,9 +496,9 @@ export default function ManagementTeams() {
         total_jobs:       sortedTeams.reduce((s, t) => s + t.total_jobs,       0),
         org_monthly_revenue, org_quarterly_revenue, org_annual_revenue,
         org_monthly_target, org_quarterly_target, org_annual_target,
-        org_monthly_achievement:   org_monthly_target   > 0 ? Math.round((org_monthly_revenue   / org_monthly_target)   * 100) : 0,
-        org_quarterly_achievement: org_quarterly_target > 0 ? Math.round((org_quarterly_revenue / org_quarterly_target) * 100) : 0,
-        org_annual_achievement:    org_annual_target    > 0 ? Math.round((org_annual_revenue    / org_annual_target)    * 100) : 0,
+        org_monthly_achievement:   calcAchievementPct(org_monthly_revenue,   org_monthly_target),
+        org_quarterly_achievement: calcAchievementPct(org_quarterly_revenue, org_quarterly_target),
+        org_annual_achievement:    calcAchievementPct(org_annual_revenue,    org_annual_target),
       })
     } catch (err) {
       console.error('Error loading teams:', err)
@@ -469,6 +520,7 @@ export default function ManagementTeams() {
       wsSummary.addRows([
         ['Organisation Team Performance Report'],
         [`Generated: ${new Date().toLocaleString()} | Filter: ${getFilterLabel(activeFilter)}`],
+        ['Note: Targets are pro-rated — exited members counted only for active months'],
         [],
         ['Metric', 'Value'],
         ['Sr. Team Leaders', orgStats.total_sr_tls],
@@ -478,7 +530,7 @@ export default function ManagementTeams() {
         ['Joinings (period)', orgStats.month_joinings],
         ['Active Jobs', orgStats.active_jobs],
         [],
-        ['Period', 'Target (₹)', 'Revenue (₹)', 'Achievement %'],
+        ['Period', 'Pro-rated Target (₹)', 'Revenue (₹)', 'Achievement %'],
         [cl.monthly,        orgStats.org_monthly_target,   orgStats.org_monthly_revenue,   `${orgStats.org_monthly_achievement}%`],
         [cl.quarterly,      orgStats.org_quarterly_target, orgStats.org_quarterly_revenue, `${orgStats.org_quarterly_achievement}%`],
         ['Annual (Fiscal)',  orgStats.org_annual_target,    orgStats.org_annual_revenue,    `${orgStats.org_annual_achievement}%`],
@@ -487,22 +539,21 @@ export default function ManagementTeams() {
       const wsTeams = wb.addWorksheet('Sr-TL Performance')
       wsTeams.columns = [{ width: 24 }, ...Array(14).fill({ width: 20 })]
       wsTeams.addRow(['Team (Sr-TL)', 'TL Count', 'Recruiter Count', 'Candidates (Period)', 'Joinings (Period)', 'Active Jobs',
-        `${cl.monthly} Target (₹)`, `${cl.monthly} Revenue (₹)`, 'M %',
-        `${cl.quarterly} Target (₹)`, `${cl.quarterly} Revenue (₹)`, 'Q %',
-        'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %'])
+        `${cl.monthly} Pro-rated Target (₹)`, `${cl.monthly} Revenue (₹)`, 'M %',
+        `${cl.quarterly} Pro-rated Target (₹)`, `${cl.quarterly} Revenue (₹)`, 'Q %',
+        'Annual Pro-rated Target (₹)', 'Annual Revenue (₹)', 'Annual %'])
       teams.forEach(t => wsTeams.addRow([
         t.sr_tl_name, t.tl_count, t.recruiter_count, t.total_candidates, t.month_joinings, t.active_jobs,
         t.monthly_target, t.monthly_revenue, `${t.monthly_achievement}%`,
         t.quarterly_target, t.quarterly_revenue, `${t.quarterly_achievement}%`,
         t.annual_target, t.annual_revenue, `${t.annual_achievement}%`]))
 
-      // NEW: Team-wise sheet
       const wsTeamWise = wb.addWorksheet('Team-wise Performance')
       wsTeamWise.columns = [{ width: 24 }, { width: 24 }, ...Array(13).fill({ width: 20 })]
       wsTeamWise.addRow(['Team', 'Sr. TL', 'TL Count', 'Recruiter Count', 'Candidates', 'Joinings', 'Active Jobs',
-        `${cl.monthly} Target (₹)`, `${cl.monthly} Revenue (₹)`, 'M %',
-        `${cl.quarterly} Target (₹)`, `${cl.quarterly} Revenue (₹)`, 'Q %',
-        'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %'])
+        `${cl.monthly} Pro-rated Target (₹)`, `${cl.monthly} Revenue (₹)`, 'M %',
+        `${cl.quarterly} Pro-rated Target (₹)`, `${cl.quarterly} Revenue (₹)`, 'Q %',
+        'Annual Pro-rated Target (₹)', 'Annual Revenue (₹)', 'Annual %'])
       teamsWise.forEach(t => wsTeamWise.addRow([
         t.team_name, t.sr_tl_name, t.tl_count, t.recruiter_count, t.total_candidates, t.month_joinings, t.active_jobs,
         t.monthly_target, t.monthly_revenue, `${t.monthly_achievement}%`,
@@ -511,12 +562,13 @@ export default function ManagementTeams() {
 
       const wsMembers = wb.addWorksheet('All Members')
       wsMembers.columns = [{ width: 22 }, { width: 14 }, { width: 22 }, { width: 20 }, ...Array(12).fill({ width: 20 })]
-      wsMembers.addRow(['Name', 'Role', 'Team (Sr-TL)', 'Reports To', 'Candidates (Period)', 'Joinings (Period)', 'Pipeline (Period)',
-        `${cl.monthly} Target (₹)`, `${cl.monthly} Revenue (₹)`, 'M %',
-        `${cl.quarterly} Target (₹)`, `${cl.quarterly} Revenue (₹)`, 'Q %',
-        'Annual Target (₹)', 'Annual Revenue (₹)', 'Annual %'])
+      wsMembers.addRow(['Name', 'Role', 'Team (Sr-TL)', 'Reports To', 'Status', 'Candidates (Period)', 'Joinings (Period)', 'Pipeline (Period)',
+        `${cl.monthly} Pro-rated Target (₹)`, `${cl.monthly} Revenue (₹)`, 'M %',
+        `${cl.quarterly} Pro-rated Target (₹)`, `${cl.quarterly} Revenue (₹)`, 'Q %',
+        'Annual Pro-rated Target (₹)', 'Annual Revenue (₹)', 'Annual %'])
       allMembers.forEach(m => wsMembers.addRow([
         m.user_name, m.role === 'team_leader' ? 'Team Leader' : 'Recruiter', m.team_name, m.reports_to_name,
+        m.is_exited ? 'Alumni' : 'Active',
         m.candidates_count, m.this_month_joinings, m.pipeline_count,
         m.monthly_target, m.monthly_revenue, `${m.monthly_achievement}%`,
         m.quarterly_target, m.quarterly_revenue, `${m.quarterly_achievement}%`,
@@ -545,12 +597,9 @@ export default function ManagementTeams() {
     <span className={`px-3 py-1 rounded-full font-bold text-sm text-white ${pct >= 100 ? 'bg-green-600' : pct >= 75 ? 'bg-yellow-600' : 'bg-red-600'}`}>{pct}%</span>
   )
 
-  const toggleTeam = (id: string) => {
-    setExpandedTeams(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
-  }
-  const toggleTeamWise = (id: string) => {
-    setExpandedTeamsWise(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
-  }
+  const toggleTeam     = (id: string) => setExpandedTeams(prev     => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleTeamWise = (id: string) => setExpandedTeamsWise(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
   const getPerformanceBadge = (j: number) => {
     if (j >= 5) return { text: 'Top',    color: 'bg-green-100 text-green-800' }
     if (j >= 2) return { text: 'Good',   color: 'bg-blue-100 text-blue-800' }
@@ -569,6 +618,71 @@ export default function ManagementTeams() {
     : activeFilter === 'custom' ? 'Period Joinings'
     : 'Month Joinings'
 
+  // Shared member row renderer (used in both teams & team_wise expanded views)
+  const MemberRow = ({ m, teamColor }: { m: MemberPerformance; teamColor: string }) => {
+    const badge = getPerformanceBadge(m.this_month_joinings)
+    return (
+      <tr className={`hover:bg-gray-50 ${m.role === 'team_leader' ? 'bg-purple-50' : ''} ${m.is_exited ? 'opacity-75' : ''}`}>
+        <td className={`px-4 py-3 font-medium ${m.role === 'team_leader' ? 'text-purple-900' : 'text-gray-800'}`}>
+          {m.role === 'recruiter' && <span className="text-gray-300 mr-1">└</span>}
+          {m.user_name}
+          {m.is_exited && <span className="ml-2 px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-[10px] font-semibold align-middle">Alumni</span>}
+        </td>
+        <td className="px-4 py-3 text-center">
+          <span className={`px-2 py-1 rounded-full text-xs font-medium ${m.role === 'team_leader' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
+            {m.role === 'team_leader' ? 'TL' : 'Rec.'}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-center text-xs text-gray-500">{m.reports_to_name}</td>
+        <td className="px-4 py-3 text-center font-semibold">{m.candidates_count}</td>
+        <td className="px-4 py-3 text-center"><span className="px-2 py-1 bg-green-100 text-green-800 rounded font-semibold text-xs">{m.this_month_joinings}</span></td>
+        <td className="px-4 py-3 text-center">{m.pipeline_count}</td>
+        <td className="px-4 py-3 text-center text-xs">
+          <div className="font-medium text-gray-700">{formatRevenue(m.monthly_target)}</div>
+          {m.is_exited && <div className="text-[10px] text-amber-600">pro-rated</div>}
+        </td>
+        <td className={`px-4 py-3 text-center text-xs font-semibold ${teamColor}`}>{formatRevenue(m.monthly_revenue)}</td>
+        <td className="px-4 py-3 text-center"><AchievementBadge pct={m.monthly_achievement} /></td>
+        <td className="px-4 py-3 text-center text-xs">
+          <div className="font-medium text-gray-700">{formatRevenue(m.quarterly_target)}</div>
+          {m.is_exited && <div className="text-[10px] text-amber-600">pro-rated</div>}
+        </td>
+        <td className={`px-4 py-3 text-center text-xs font-semibold ${teamColor}`}>{formatRevenue(m.quarterly_revenue)}</td>
+        <td className="px-4 py-3 text-center"><AchievementBadge pct={m.quarterly_achievement} /></td>
+        <td className="px-4 py-3 text-center text-xs">
+          <div className="font-medium text-gray-700">{formatRevenue(m.annual_target)}</div>
+          {m.is_exited && <div className="text-[10px] text-amber-600">pro-rated</div>}
+        </td>
+        <td className={`px-4 py-3 text-center text-xs font-semibold ${teamColor}`}>{formatRevenue(m.annual_revenue)}</td>
+        <td className="px-4 py-3 text-center"><AchievementBadge pct={m.annual_achievement} /></td>
+        <td className="px-4 py-3 text-center"><span className={`px-2 py-1 rounded text-xs font-medium ${badge.color}`}>{badge.text}</span></td>
+      </tr>
+    )
+  }
+
+  const MemberTableHeader = () => (
+    <thead className="bg-gray-50">
+      <tr>
+        <th className="px-4 py-3 text-left font-semibold text-gray-700">Member</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700">Role</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700">Reports To</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700">Candidates</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700">Joinings</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700">Pipeline</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">M. Target</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">M. Revenue</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700">M. %</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Q. Target</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Q. Revenue</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700">Q. %</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">A. Target</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">A. Revenue</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700">A. %</th>
+        <th className="px-4 py-3 text-center font-semibold text-gray-700">Perf.</th>
+      </tr>
+    </thead>
+  )
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -584,11 +698,11 @@ export default function ManagementTeams() {
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6 pb-8">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="bg-gradient-to-r from-blue-700 to-indigo-700 rounded-lg p-6 text-white flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold mb-1">🏆 All Teams Performance</h1>
-            <p className="text-blue-200">Organisation-wide target vs achievement · Fiscal year view</p>
+            <p className="text-blue-200">Organisation-wide · Pro-rated targets · Revenue credit via original sourcing</p>
           </div>
           <button onClick={exportToExcel} disabled={exporting}
             className="px-4 py-2 bg-white text-blue-700 hover:bg-blue-50 rounded-lg font-semibold flex items-center gap-2 transition disabled:opacity-60 text-sm">
@@ -596,7 +710,7 @@ export default function ManagementTeams() {
           </button>
         </div>
 
-        {/* ── Date Filter Bar ── */}
+        {/* Date Filter Bar */}
         <div className="bg-white rounded-lg shadow px-5 py-4 space-y-3">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-sm font-semibold text-gray-600">📅 View Period:</span>
@@ -609,15 +723,12 @@ export default function ManagementTeams() {
             ] as { key: DateFilter; label: string }[]).map(({ key, label }) => (
               <button key={key} onClick={() => setActiveFilter(key)}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition border ${
-                  activeFilter === key
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                    : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                  activeFilter === key ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
                 }`}>
                 {label}
               </button>
             ))}
           </div>
-
           {activeFilter === 'custom' && (
             <div className="flex items-center gap-3 flex-wrap pt-2 border-t border-gray-100">
               <span className="text-sm text-gray-500 font-medium">From:</span>
@@ -627,23 +738,16 @@ export default function ManagementTeams() {
               <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} min={customFrom || undefined}
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               {customFrom && customTo && customFrom <= customTo && (
-                <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1 rounded-full font-medium">
-                  {customFrom} → {customTo}
-                </span>
+                <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1 rounded-full font-medium">{customFrom} → {customTo}</span>
               )}
               {customFrom && customTo && customFrom > customTo && (
-                <span className="text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-1 rounded-full">
-                  ⚠️ From date must be before To date
-                </span>
-              )}
-              {(!customFrom || !customTo) && (
-                <span className="text-xs text-gray-400 italic">Select both dates to load data</span>
+                <span className="text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-1 rounded-full">⚠️ From must be before To</span>
               )}
             </div>
           )}
         </div>
 
-        {/* ── Org Stats ── */}
+        {/* Org Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
           {[
             { label: 'Sr. Team Leaders',  value: orgStats.total_sr_tls,     color: 'text-blue-700' },
@@ -661,9 +765,13 @@ export default function ManagementTeams() {
           ))}
         </div>
 
-        {/* ── Org Revenue Summary ── */}
+        {/* Org Revenue Summary */}
         <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-bold text-gray-900 mb-4">💰 Organisation Revenue vs Target</h2>
+          <h2 className="text-lg font-bold text-gray-900 mb-1">💰 Organisation Revenue vs Pro-rated Target</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            ⚡ Targets are pro-rated — exited members only count for months they were active.
+            Revenue credit follows <code className="bg-gray-100 px-1 rounded">original_assigned_to</code> even after candidate reassignment.
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
               { label: cl.monthly,          target: orgStats.org_monthly_target,   revenue: orgStats.org_monthly_revenue,   pct: orgStats.org_monthly_achievement },
@@ -676,7 +784,7 @@ export default function ManagementTeams() {
                   <AchievementBadgeFilled pct={pct} />
                 </div>
                 <div className="space-y-1 text-sm">
-                  <div className="flex justify-between"><span className="text-gray-500">Target</span><span className="font-semibold text-gray-800">{formatRevenue(target)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Pro-rated Target</span><span className="font-semibold text-gray-800">{formatRevenue(target)}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Achieved</span><span className="font-semibold text-blue-700">{formatRevenue(revenue)}</span></div>
                 </div>
                 <div className="mt-3 bg-gray-200 rounded-full h-2">
@@ -688,7 +796,7 @@ export default function ManagementTeams() {
           </div>
         </div>
 
-        {/* ── View Toggle ── */}
+        {/* View Toggle */}
         <div className="bg-white rounded-lg shadow">
           <div className="border-b border-gray-200">
             <div className="flex">
@@ -779,7 +887,7 @@ export default function ManagementTeams() {
                     <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4 flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-bold text-white">{team.sr_tl_name}'s Team</h3>
-                        <p className="text-blue-200 text-sm">{team.tl_count} TL{team.tl_count !== 1 ? 's' : ''} · {team.recruiter_count} Recruiter{team.recruiter_count !== 1 ? 's' : ''} · {team.total_candidates} candidates · {team.active_jobs} active jobs</p>
+                        <p className="text-blue-200 text-sm">{team.tl_count} TL{team.tl_count !== 1 ? 's' : ''} · {team.recruiter_count} Recruiter{team.recruiter_count !== 1 ? 's' : ''} · {team.total_candidates} candidates</p>
                       </div>
                       <div className="flex gap-3">
                         {[{ label: cl.monthly, pct: team.monthly_achievement }, { label: cl.quarterly, pct: team.quarterly_achievement }, { label: 'Annual', pct: team.annual_achievement }]
@@ -796,59 +904,11 @@ export default function ManagementTeams() {
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
-                          <thead className="bg-gray-50">
-                            <tr>
-                              <th className="px-4 py-3 text-left font-semibold text-gray-700">Member</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Role</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Reports To</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Candidates</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Joinings</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Pipeline</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">M. Target</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">M. Revenue</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">M. %</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Q. Target</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Q. Revenue</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Q. %</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">A. Target</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">A. Revenue</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">A. %</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Perf.</th>
-                            </tr>
-                          </thead>
+                          <MemberTableHeader />
                           <tbody className="divide-y divide-gray-200">
-                            {team.members.map(m => {
-                              const badge = getPerformanceBadge(m.this_month_joinings)
-                              return (
-                                <tr key={m.user_id} className={`hover:bg-gray-50 ${m.role === 'team_leader' ? 'bg-purple-50' : ''}`}>
-                                  <td className={`px-4 py-3 font-medium ${m.role === 'team_leader' ? 'text-purple-900' : 'text-gray-800'}`}>
-                                    {m.role === 'recruiter' && <span className="text-gray-300 mr-1">└</span>}{m.user_name}
-                                  </td>
-                                  <td className="px-4 py-3 text-center">
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${m.role === 'team_leader' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
-                                      {m.role === 'team_leader' ? 'TL' : 'Rec.'}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3 text-center text-xs text-gray-500">{m.reports_to_name}</td>
-                                  <td className="px-4 py-3 text-center font-semibold">{m.candidates_count}</td>
-                                  <td className="px-4 py-3 text-center"><span className="px-2 py-1 bg-green-100 text-green-800 rounded font-semibold text-xs">{m.this_month_joinings}</span></td>
-                                  <td className="px-4 py-3 text-center">{m.pipeline_count}</td>
-                                  <td className="px-4 py-3 text-center text-xs font-medium">{formatRevenue(m.monthly_target)}</td>
-                                  <td className="px-4 py-3 text-center text-xs font-semibold text-blue-700">{formatRevenue(m.monthly_revenue)}</td>
-                                  <td className="px-4 py-3 text-center"><AchievementBadge pct={m.monthly_achievement} /></td>
-                                  <td className="px-4 py-3 text-center text-xs font-medium">{formatRevenue(m.quarterly_target)}</td>
-                                  <td className="px-4 py-3 text-center text-xs font-semibold text-blue-700">{formatRevenue(m.quarterly_revenue)}</td>
-                                  <td className="px-4 py-3 text-center"><AchievementBadge pct={m.quarterly_achievement} /></td>
-                                  <td className="px-4 py-3 text-center text-xs font-medium">{formatRevenue(m.annual_target)}</td>
-                                  <td className="px-4 py-3 text-center text-xs font-semibold text-blue-700">{formatRevenue(m.annual_revenue)}</td>
-                                  <td className="px-4 py-3 text-center"><AchievementBadge pct={m.annual_achievement} /></td>
-                                  <td className="px-4 py-3 text-center"><span className={`px-2 py-1 rounded text-xs font-medium ${badge.color}`}>{badge.text}</span></td>
-                                </tr>
-                              )
-                            })}
+                            {team.members.map(m => <MemberRow key={m.user_id} m={m} teamColor="text-blue-700" />)}
                             <tr className="bg-blue-50 font-bold border-t-2 border-blue-200">
-                              <td className="px-4 py-3 text-blue-900">Team Total</td>
-                              <td /><td />
+                              <td className="px-4 py-3 text-blue-900">Team Total</td><td /><td />
                               <td className="px-4 py-3 text-center">{team.members.reduce((s, m) => s + m.candidates_count, 0)}</td>
                               <td className="px-4 py-3 text-center"><span className="px-2 py-1 bg-green-600 text-white rounded font-bold text-xs">{team.members.reduce((s, m) => s + m.this_month_joinings, 0)}</span></td>
                               <td className="px-4 py-3 text-center">{team.members.reduce((s, m) => s + m.pipeline_count, 0)}</td>
@@ -872,10 +932,9 @@ export default function ManagementTeams() {
               </div>
             )}
 
-            {/* ── TEAM WISE VIEW (NEW) ── */}
+            {/* ── TEAM WISE VIEW ── */}
             {activeView === 'team_wise' && (
               <div className="space-y-4">
-                {/* Summary table */}
                 <div className="overflow-x-auto mb-6">
                   <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
                     <thead className="bg-gray-50">
@@ -925,15 +984,12 @@ export default function ManagementTeams() {
                   </table>
                 </div>
 
-                {/* Expanded team cards */}
                 {teamsWise.map(team => expandedTeamsWise.has(team.team_id) && (
                   <div key={team.team_id} className="border-2 border-green-200 rounded-lg overflow-hidden">
                     <div className="bg-gradient-to-r from-green-600 to-teal-600 px-6 py-4 flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-bold text-white">🗂️ {team.team_name}</h3>
-                        <p className="text-green-200 text-sm">
-                          Sr. TL: {team.sr_tl_name} · {team.tl_count} TL{team.tl_count !== 1 ? 's' : ''} · {team.recruiter_count} Recruiter{team.recruiter_count !== 1 ? 's' : ''} · {team.active_jobs} active jobs
-                        </p>
+                        <p className="text-green-200 text-sm">Sr. TL: {team.sr_tl_name} · {team.tl_count} TL{team.tl_count !== 1 ? 's' : ''} · {team.recruiter_count} Recruiter{team.recruiter_count !== 1 ? 's' : ''}</p>
                       </div>
                       <div className="flex gap-3">
                         {[{ label: cl.monthly, pct: team.monthly_achievement }, { label: cl.quarterly, pct: team.quarterly_achievement }, { label: 'Annual', pct: team.annual_achievement }]
@@ -945,65 +1001,16 @@ export default function ManagementTeams() {
                           ))}
                       </div>
                     </div>
-
                     {team.members.length === 0 ? (
                       <div className="p-6 text-center text-gray-500">No TLs or Recruiters in this team</div>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
-                          <thead className="bg-gray-50">
-                            <tr>
-                              <th className="px-4 py-3 text-left font-semibold text-gray-700">Member</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Role</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Reports To</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Candidates</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Joinings</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Pipeline</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">M. Target</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">M. Revenue</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">M. %</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Q. Target</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">Q. Revenue</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Q. %</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">A. Target</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700 whitespace-nowrap">A. Revenue</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">A. %</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-700">Perf.</th>
-                            </tr>
-                          </thead>
+                          <MemberTableHeader />
                           <tbody className="divide-y divide-gray-200">
-                            {team.members.map(m => {
-                              const badge = getPerformanceBadge(m.this_month_joinings)
-                              return (
-                                <tr key={m.user_id} className={`hover:bg-gray-50 ${m.role === 'team_leader' ? 'bg-purple-50' : ''}`}>
-                                  <td className={`px-4 py-3 font-medium ${m.role === 'team_leader' ? 'text-purple-900' : 'text-gray-800'}`}>
-                                    {m.role === 'recruiter' && <span className="text-gray-300 mr-1">└</span>}{m.user_name}
-                                  </td>
-                                  <td className="px-4 py-3 text-center">
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${m.role === 'team_leader' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
-                                      {m.role === 'team_leader' ? 'TL' : 'Rec.'}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3 text-center text-xs text-gray-500">{m.reports_to_name}</td>
-                                  <td className="px-4 py-3 text-center font-semibold">{m.candidates_count}</td>
-                                  <td className="px-4 py-3 text-center"><span className="px-2 py-1 bg-green-100 text-green-800 rounded font-semibold text-xs">{m.this_month_joinings}</span></td>
-                                  <td className="px-4 py-3 text-center">{m.pipeline_count}</td>
-                                  <td className="px-4 py-3 text-center text-xs font-medium">{formatRevenue(m.monthly_target)}</td>
-                                  <td className="px-4 py-3 text-center text-xs font-semibold text-green-700">{formatRevenue(m.monthly_revenue)}</td>
-                                  <td className="px-4 py-3 text-center"><AchievementBadge pct={m.monthly_achievement} /></td>
-                                  <td className="px-4 py-3 text-center text-xs font-medium">{formatRevenue(m.quarterly_target)}</td>
-                                  <td className="px-4 py-3 text-center text-xs font-semibold text-green-700">{formatRevenue(m.quarterly_revenue)}</td>
-                                  <td className="px-4 py-3 text-center"><AchievementBadge pct={m.quarterly_achievement} /></td>
-                                  <td className="px-4 py-3 text-center text-xs font-medium">{formatRevenue(m.annual_target)}</td>
-                                  <td className="px-4 py-3 text-center text-xs font-semibold text-green-700">{formatRevenue(m.annual_revenue)}</td>
-                                  <td className="px-4 py-3 text-center"><AchievementBadge pct={m.annual_achievement} /></td>
-                                  <td className="px-4 py-3 text-center"><span className={`px-2 py-1 rounded text-xs font-medium ${badge.color}`}>{badge.text}</span></td>
-                                </tr>
-                              )
-                            })}
+                            {team.members.map(m => <MemberRow key={m.user_id} m={m} teamColor="text-green-700" />)}
                             <tr className="bg-green-50 font-bold border-t-2 border-green-200">
-                              <td className="px-4 py-3 text-green-900">Team Total</td>
-                              <td /><td />
+                              <td className="px-4 py-3 text-green-900">Team Total</td><td /><td />
                               <td className="px-4 py-3 text-center">{team.members.reduce((s, m) => s + m.candidates_count, 0)}</td>
                               <td className="px-4 py-3 text-center"><span className="px-2 py-1 bg-green-600 text-white rounded font-bold text-xs">{team.members.reduce((s, m) => s + m.this_month_joinings, 0)}</span></td>
                               <td className="px-4 py-3 text-center">{team.members.reduce((s, m) => s + m.pipeline_count, 0)}</td>
@@ -1056,9 +1063,11 @@ export default function ManagementTeams() {
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                       {allMembers.map((m) => (
-                        <tr key={m.user_id} className={`hover:bg-gray-50 ${m.role === 'team_leader' ? 'bg-purple-50' : ''}`}>
+                        <tr key={m.user_id} className={`hover:bg-gray-50 ${m.role === 'team_leader' ? 'bg-purple-50' : ''} ${m.is_exited ? 'opacity-75' : ''}`}>
                           <td className={`px-4 py-3 font-medium sticky left-0 ${m.role === 'team_leader' ? 'bg-purple-50 text-purple-900' : 'bg-white text-gray-800'}`}>
-                            {m.role === 'recruiter' && <span className="text-gray-300 mr-1">└</span>}{m.user_name}
+                            {m.role === 'recruiter' && <span className="text-gray-300 mr-1">└</span>}
+                            {m.user_name}
+                            {m.is_exited && <span className="ml-2 px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-[10px] font-semibold align-middle">Alumni</span>}
                           </td>
                           <td className="px-4 py-3 text-center">
                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${m.role === 'team_leader' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
@@ -1070,13 +1079,22 @@ export default function ManagementTeams() {
                           <td className="px-4 py-3 text-center font-semibold">{m.candidates_count}</td>
                           <td className="px-4 py-3 text-center"><span className="px-2 py-1 bg-green-100 text-green-800 rounded font-semibold text-xs">{m.this_month_joinings}</span></td>
                           <td className="px-4 py-3 text-center">{m.pipeline_count}</td>
-                          <td className="px-4 py-3 text-center text-xs font-medium">{formatRevenue(m.monthly_target)}</td>
+                          <td className="px-4 py-3 text-center text-xs">
+                            <div className="font-medium text-gray-700">{formatRevenue(m.monthly_target)}</div>
+                            {m.is_exited && <div className="text-[10px] text-amber-600">pro-rated</div>}
+                          </td>
                           <td className="px-4 py-3 text-center text-xs font-semibold text-blue-700">{formatRevenue(m.monthly_revenue)}</td>
                           <td className="px-4 py-3 text-center"><AchievementBadge pct={m.monthly_achievement} /></td>
-                          <td className="px-4 py-3 text-center text-xs font-medium">{formatRevenue(m.quarterly_target)}</td>
+                          <td className="px-4 py-3 text-center text-xs">
+                            <div className="font-medium text-gray-700">{formatRevenue(m.quarterly_target)}</div>
+                            {m.is_exited && <div className="text-[10px] text-amber-600">pro-rated</div>}
+                          </td>
                           <td className="px-4 py-3 text-center text-xs font-semibold text-blue-700">{formatRevenue(m.quarterly_revenue)}</td>
-                          <td className="px-4 py-3 text-center"><AchievementBadge pct={m.quarterly_achievement} /></td>
-                          <td className="px-4 py-3 text-center text-xs font-medium">{formatRevenue(m.annual_target)}</td>
+                          <td className="px-4 py-3 text-center"><AchievementBadge pct={m.monthly_achievement} /></td>
+                          <td className="px-4 py-3 text-center text-xs">
+                            <div className="font-medium text-gray-700">{formatRevenue(m.annual_target)}</div>
+                            {m.is_exited && <div className="text-[10px] text-amber-600">pro-rated</div>}
+                          </td>
                           <td className="px-4 py-3 text-center text-xs font-semibold text-blue-700">{formatRevenue(m.annual_revenue)}</td>
                           <td className="px-4 py-3 text-center"><AchievementBadge pct={m.annual_achievement} /></td>
                         </tr>
@@ -1102,6 +1120,7 @@ export default function ManagementTeams() {
                 )}
               </div>
             )}
+
           </div>
         </div>
       </div>

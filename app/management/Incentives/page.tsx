@@ -27,6 +27,7 @@ interface UserRow {
   monthly_target: number
   quarterly_target: number
   annual_target: number
+  last_working_date?: string | null
 }
 
 interface MonthEntry {
@@ -68,6 +69,25 @@ interface RecruiterCalc {
 
 const MONTH_NAMES   = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar']
 const FY_CAL_MONTHS = [3,4,5,6,7,8,9,10,11,0,1,2]
+
+function getEffectiveTarget(user: UserRow, fyIdx: number, fyStart: number): number {
+  if (!user.last_working_date) return user.monthly_target ?? 0
+
+  const lwd = new Date(user.last_working_date)
+  const lwdFyIdx = FY_CAL_MONTHS.indexOf(lwd.getMonth())
+  const lwdYear = lwd.getFullYear()
+  const periodYear = FY_CAL_MONTHS[fyIdx] >= 3 ? fyStart : fyStart + 1
+
+  // If this FY month is after last working date → target = 0
+  if (
+    periodYear > lwdYear ||
+    (periodYear === lwdYear && fyIdx > lwdFyIdx)
+  ) {
+    return 0
+  }
+
+  return user.monthly_target ?? 0
+}
 
 function fyLabel(fyStart: number) {
   return `FY ${fyStart}-${String(fyStart + 1).slice(2)}`
@@ -163,7 +183,7 @@ export default function IncentivesPage() {
       .from('users')
       .select('id, full_name, role, monthly_target, quarterly_target, annual_target')
       .in('role', ['recruiter', 'team_leader', 'sr_team_leader'])
-      .eq('is_active', true)
+      .or(`is_active.eq.true,last_working_date.gte.${fyStart}-04-01`)
     if (!error && data) setUsers(data as UserRow[])
     setLoading(false)
   }, [supabase])
@@ -280,7 +300,7 @@ export default function IncentivesPage() {
   function computeRecruiter(user: UserRow): RecruiterCalc {
     const fyMonths = FY_CAL_MONTHS.map((calMonth, fyIdx) => {
       const yr         = calMonth >= 3 ? fyStart : fyStart + 1
-      const target     = user.monthly_target ?? 0
+      const target = getEffectiveTarget(user, fyIdx, fyStart)
       const achieved   = revenueData[user.id]?.[calMonth] ?? 0
       const pct        = target > 0 ? Math.round((achieved / target) * 100) : 0
       const incentive  = calcMonthlyIncentive(achieved, pct)
