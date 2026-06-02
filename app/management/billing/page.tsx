@@ -6,9 +6,9 @@ import { useRouter } from 'next/navigation'
 import { supabase as supabaseAdmin } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
 
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 type InvoiceStatus = 'issued' | 'paid' | 'overdue' | 'on_hold' | 'clawback'
+type FYFilter = 'all' | 'current' | 'previous'
 
 interface Invoice {
   id: string
@@ -35,7 +35,6 @@ interface Invoice {
   clawback_reason: string | null
   notes: string | null
   created_at: string
-  // Joined display fields
   _candidateName: string
   _clientName: string
   _jobTitle: string
@@ -47,100 +46,94 @@ interface Invoice {
 }
 
 interface FormData {
-  invoice_number: string
-  candidate_id: string
-  offer_id: string
-  client_id: string
-  recruiter_id: string
-  base_amount: string
-  gst_percentage: string
-  tds_rate: string
-  invoice_date: string
-  due_date: string
-  guarantee_end_date: string
-  notes: string
+  invoice_number: string; candidate_id: string; offer_id: string; client_id: string
+  recruiter_id: string; base_amount: string; gst_percentage: string; tds_rate: string
+  invoice_date: string; due_date: string; guarantee_end_date: string; notes: string
 }
-
-interface PaymentData {
-  payment_date: string
-  amount_received: string
-  tds_credit: string
-  notes: string
-}
-
-interface ClawbackData {
-  clawback_date: string
-  clawback_reason: string
-}
+interface PaymentData  { payment_date: string; amount_received: string; tds_credit: string; notes: string }
+interface ClawbackData { clawback_date: string; clawback_reason: string }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const fmt = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-const today = () => new Date().toISOString().slice(0, 10)
+const fmt    = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const today  = () => new Date().toISOString().slice(0, 10)
 const addDays = (date: string, days: number) => {
   const d = new Date(date); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10)
 }
 const daysDiff = (from: string, to: string) =>
-  Math.floor((new Date(to).getTime() - new Date(from).getTime()) / (1000 * 60 * 60 * 24))
+  Math.floor((new Date(to).getTime() - new Date(from).getTime()) / 86400000)
+
+// ─── FY date bounds ───────────────────────────────────────────────────────────
+function getFYBounds(fy: FYFilter): { start: string; end: string; label: string } | null {
+  if (fy === 'all') return null
+  const now       = new Date()
+  const m         = now.getMonth() + 1
+  const y         = now.getFullYear()
+  const fyStart   = m >= 4 ? y : y - 1        // April = month 4
+  if (fy === 'current')  return { start: `${fyStart}-04-01`,     end: `${fyStart + 1}-03-31`,   label: `FY ${fyStart}–${fyStart + 1}` }
+  /* previous */         return { start: `${fyStart - 1}-04-01`, end: `${fyStart}-03-31`,        label: `FY ${fyStart - 1}–${fyStart}` }
+}
 
 const overdueColor = (days: number) => {
-  if (days <= 0)   return ''
-  if (days <= 30)  return 'bg-yellow-50 border-yellow-300'
-  if (days <= 60)  return 'bg-orange-50 border-orange-300'
-  if (days <= 90)  return 'bg-red-50 border-red-300'
+  if (days <= 0)  return ''
+  if (days <= 30) return 'bg-yellow-50 border-yellow-300'
+  if (days <= 60) return 'bg-orange-50 border-orange-300'
+  if (days <= 90) return 'bg-red-50 border-red-300'
   return 'bg-red-100 border-red-500'
 }
 const overdueBadge = (days: number) => {
-  if (days <= 0)   return null
-  if (days <= 30)  return { label: `${days}d overdue`, cls: 'bg-yellow-100 text-yellow-800' }
-  if (days <= 60)  return { label: `${days}d overdue`, cls: 'bg-orange-100 text-orange-800' }
-  if (days <= 90)  return { label: `${days}d overdue`, cls: 'bg-red-100 text-red-700' }
+  if (days <= 0)  return null
+  if (days <= 30) return { label: `${days}d overdue`, cls: 'bg-yellow-100 text-yellow-800' }
+  if (days <= 60) return { label: `${days}d overdue`, cls: 'bg-orange-100 text-orange-800' }
+  if (days <= 90) return { label: `${days}d overdue`, cls: 'bg-red-100 text-red-700' }
   return { label: `${days}d overdue`, cls: 'bg-red-200 text-red-900 font-bold' }
 }
 
 const STATUS_CONFIG: Record<InvoiceStatus, { label: string; cls: string; icon: string }> = {
-  issued:   { label: 'Invoice Issued', cls: 'bg-blue-100 text-blue-800',   icon: '📄' },
-  paid:     { label: 'Paid',           cls: 'bg-green-100 text-green-800', icon: '✅' },
-  overdue:  { label: 'Overdue',        cls: 'bg-red-100 text-red-800',     icon: '🔴' },
-  on_hold:  { label: 'On Hold',        cls: 'bg-gray-100 text-gray-700',   icon: '⏸️' },
+  issued:   { label: 'Invoice Issued', cls: 'bg-blue-100 text-blue-800',     icon: '📄' },
+  paid:     { label: 'Paid',           cls: 'bg-green-100 text-green-800',   icon: '✅' },
+  overdue:  { label: 'Overdue',        cls: 'bg-red-100 text-red-800',       icon: '🔴' },
+  on_hold:  { label: 'On Hold',        cls: 'bg-gray-100 text-gray-700',     icon: '⏸️' },
   clawback: { label: 'Clawback',       cls: 'bg-purple-100 text-purple-800', icon: '↩️' },
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function ManagementBillingPage() {
   const router = useRouter()
-  const [user, setUser] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
+  const [user, setUser]     = useState<any>(null)
+  const [loading, setLoading]   = useState(true)
   const [exporting, setExporting] = useState(false)
 
-  const [invoices, setInvoices]       = useState<Invoice[]>([])
+  const [invoices, setInvoices]             = useState<Invoice[]>([])
   const [pendingInvoicing, setPendingInvoicing] = useState<any[]>([])
-  const [filtered, setFiltered]       = useState<Invoice[]>([])
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [clientFilter, setClientFilter] = useState<string>('all')
-  const [search, setSearch]           = useState('')
+  const [filtered, setFiltered]             = useState<Invoice[]>([])
+
+  // ── Filters ───────────────────────────────────────────────────────────────
+  const [fyFilter, setFyFilter]             = useState<FYFilter>('current')
+  const [statusFilter, setStatusFilter]     = useState<string>('all')
+  const [clientFilter, setClientFilter]     = useState<string>('all')
+  const [search, setSearch]                 = useState('')
 
   // Modal states
-  const [showCreate, setShowCreate]   = useState(false)
-  const [showPay, setShowPay]         = useState<Invoice | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [showPay, setShowPay]       = useState<Invoice | null>(null)
   const [showClawback, setShowClawback] = useState<Invoice | null>(null)
-  const [showEdit, setShowEdit]       = useState<Invoice | null>(null)
-  const [saving, setSaving]           = useState(false)
+  const [showEdit, setShowEdit]     = useState<Invoice | null>(null)
+  const [saving, setSaving]         = useState(false)
 
   // Dropdown data
-  const [candidates, setCandidates]   = useState<any[]>([])
-  const [clients, setClients]         = useState<any[]>([])
-  const [userMap, setUserMap]         = useState<Record<string, any>>({})
+  const [candidates, setCandidates] = useState<any[]>([])
+  const [clients, setClients]       = useState<any[]>([])
+  const [userMap, setUserMap]       = useState<Record<string, any>>({})
 
-  // Form states
   const emptyForm: FormData = {
     invoice_number: '', candidate_id: '', offer_id: '', client_id: '',
     recruiter_id: '', base_amount: '', gst_percentage: '18', tds_rate: '10',
     invoice_date: today(), due_date: addDays(today(), 30),
     guarantee_end_date: '', notes: '',
   }
-  const [form, setForm]               = useState<FormData>(emptyForm)
-  const [payForm, setPayForm]         = useState<PaymentData>({ payment_date: today(), amount_received: '', tds_credit: '', notes: '' })
-  const [clawbackForm, setClawbackForm] = useState<ClawbackData>({ clawback_date: today(), clawback_reason: '' })
+  const [form, setForm]                     = useState<FormData>(emptyForm)
+  const [payForm, setPayForm]               = useState<PaymentData>({ payment_date: today(), amount_received: '', tds_credit: '', notes: '' })
+  const [clawbackForm, setClawbackForm]     = useState<ClawbackData>({ clawback_date: today(), clawback_reason: '' })
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -154,44 +147,56 @@ export default function ManagementBillingPage() {
     loadAll()
   }, [])
 
-  // ── Filters ───────────────────────────────────────────────────────────────
+  // ── Apply filters (including FY) ─────────────────────────────────────────
   useEffect(() => {
-  let r = [...invoices]
-  if (statusFilter === 'overdue') {
-    // 'overdue' tab must catch invoices whose DB status is 'overdue' OR
-    // issued/on_hold invoices that have simply passed their due date
-    r = r.filter(i =>
-      i.status === 'overdue' ||
-      (i._overdueDays > 0 && ['issued', 'on_hold'].includes(i.status))
-    )
-  } else if (statusFilter !== 'all') {
-    r = r.filter(i => i.status === statusFilter)
-  }
-  if (clientFilter !== 'all') r = r.filter(i => i.client_id === clientFilter)
-  if (search.trim()) {
-    const q = search.toLowerCase()
-    r = r.filter(i =>
-      i.invoice_number.toLowerCase().includes(q) ||
-      i._candidateName.toLowerCase().includes(q) ||
-      i._clientName.toLowerCase().includes(q) ||
-      i._recruiterName.toLowerCase().includes(q)
-    )
-  }
-  setFiltered(r)
-}, [invoices, statusFilter, clientFilter, search])
+    const fyBounds = getFYBounds(fyFilter)
+
+    let r = [...invoices]
+
+    // FY filter on invoice_date
+    if (fyBounds) {
+      r = r.filter(i => i.invoice_date >= fyBounds.start && i.invoice_date <= fyBounds.end)
+    }
+
+    // Status filter
+    if (statusFilter === 'overdue') {
+      r = r.filter(i => i.status === 'overdue' || (i._overdueDays > 0 && ['issued', 'on_hold'].includes(i.status)))
+    } else if (statusFilter !== 'all') {
+      r = r.filter(i => i.status === statusFilter)
+    }
+
+    if (clientFilter !== 'all') r = r.filter(i => i.client_id === clientFilter)
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      r = r.filter(i =>
+        i.invoice_number.toLowerCase().includes(q) ||
+        i._candidateName.toLowerCase().includes(q) ||
+        i._clientName.toLowerCase().includes(q) ||
+        i._recruiterName.toLowerCase().includes(q)
+      )
+    }
+    setFiltered(r)
+  }, [invoices, fyFilter, statusFilter, clientFilter, search])
 
   // ── Load all data ─────────────────────────────────────────────────────────
   const loadAll = async () => {
     setLoading(true)
     try {
-      // Users map (same pattern as teams page)
+      // ── FIXED: fetch ALL users (active + resigned) ────────────────────────
+      // Billing is all-time. A resigned recruiter's invoice from 2 years ago
+      // must still appear. Removing is_active filter entirely here.
       const { data: allUsers } = await supabaseAdmin
-        .from('users').select('id, full_name, role, reports_to').eq('is_active', true)
+        .from('users')
+        .select('id, full_name, role, reports_to')
+        .in('role', ['sr_team_leader', 'team_leader', 'recruiter'])
+
       const uMap: Record<string, any> = {}
       ;(allUsers || []).forEach((u: any) => { uMap[u.id] = u })
       setUserMap(uMap)
 
-      const allRecruiterIds = Object.keys(uMap)
+      const allRecruiterIds = (allUsers || [])
+        .filter((u: any) => u.role === 'recruiter')
+        .map((u: any) => u.id)
 
       // Clients
       const { data: allClients } = await supabaseAdmin
@@ -200,15 +205,15 @@ export default function ManagementBillingPage() {
       const clientMap: Record<string, any> = {}
       ;(allClients || []).forEach((c: any) => { clientMap[c.id] = c })
 
-      // Candidates who have joined (for create form dropdown)
+      // Candidates who have joined — ALL time (FY filter applied in UI, not here)
       const { data: joinedCandidates } = await supabaseAdmin
         .from('candidates')
         .select(`id, full_name, assigned_to, job_id, jobs(job_title, client_id, clients(company_name))`)
         .eq('current_stage', 'joined')
-        .in('assigned_to', allRecruiterIds)
       setCandidates(joinedCandidates || [])
 
-      // Invoices scoped by recruiter_id (same pattern as offers page)
+      // Invoices — ALL time, ALL recruiters including resigned
+      // Filter by recruiter_id covers any invoice ever created in the system
       const { data: rawInvoices } = await supabaseAdmin
         .from('invoices')
         .select(`
@@ -217,7 +222,6 @@ export default function ManagementBillingPage() {
           clients ( company_name ),
           users!invoices_recruiter_id_fkey ( full_name )
         `)
-        .in('recruiter_id', allRecruiterIds)
         .order('invoice_date', { ascending: false })
 
       const todayStr = today()
@@ -226,7 +230,6 @@ export default function ManagementBillingPage() {
           ? Math.max(0, daysDiff(inv.due_date, todayStr))
           : 0
 
-        // Payment safety vs guarantee
         let paymentSafetyStatus: Invoice['_paymentSafetyStatus'] = null
         let guaranteeDaysLeft: number | null = null
         if (inv.guarantee_end_date) {
@@ -236,43 +239,45 @@ export default function ManagementBillingPage() {
           else                             paymentSafetyStatus = 'critical'
         }
 
-        // Team resolution
+        // Team resolution — works for active & resigned recruiters
         const recruiter = uMap[inv.recruiter_id]
         let teamName = '—'
         if (recruiter) {
           if (!recruiter.reports_to) teamName = recruiter.full_name
           else {
             const parent = uMap[recruiter.reports_to]
-            teamName = parent ? (!parent.reports_to ? parent.full_name : (uMap[parent.reports_to]?.full_name || parent.full_name)) : recruiter.full_name
+            teamName = parent
+              ? (!parent.reports_to ? parent.full_name : (uMap[parent.reports_to]?.full_name || parent.full_name))
+              : recruiter.full_name
           }
         }
 
         return {
           ...inv,
-          _candidateName: inv.candidates?.full_name || '—',
-          _clientName:    inv.clients?.company_name || '—',
-          _jobTitle:      inv.candidates?.jobs?.job_title || '—',
-          _recruiterName: inv.users?.full_name || uMap[inv.recruiter_id]?.full_name || '—',
-          _teamName:      teamName,
-          _overdueDays:   overdueDays,
+          _candidateName:       inv.candidates?.full_name || '—',
+          _clientName:          inv.clients?.company_name || '—',
+          _jobTitle:            inv.candidates?.jobs?.job_title || '—',
+          _recruiterName:       inv.users?.full_name || uMap[inv.recruiter_id]?.full_name || '—',
+          _teamName:            teamName,
+          _overdueDays:         overdueDays,
           _paymentSafetyStatus: paymentSafetyStatus,
-          _guaranteeDaysLeft: guaranteeDaysLeft,
+          _guaranteeDaysLeft:   guaranteeDaysLeft,
         }
       })
 
       setInvoices(mapped)
 
-      // Candidates with no invoice yet — cross-check joined candidates vs invoices
+      // Pending invoicing — candidates joined but no invoice yet
       const invoicedCandidateIds = new Set((rawInvoices || []).map((inv: any) => inv.candidate_id).filter(Boolean))
-      const pending = (joinedCandidates || []).filter((c: any) => !invoicedCandidateIds.has(c.id)).map((c: any) => ({
-        id: c.id,
-        full_name: c.full_name,
-        assigned_to: c.assigned_to,
-        job_title: c.jobs?.job_title || '—',
-        client_name: c.jobs?.clients?.company_name || '—',
-        client_id: c.jobs?.client_id || null,
-        recruiter_name: uMap[c.assigned_to]?.full_name || '—',
-      }))
+      const pending = (joinedCandidates || [])
+        .filter((c: any) => !invoicedCandidateIds.has(c.id))
+        .map((c: any) => ({
+          id: c.id, full_name: c.full_name, assigned_to: c.assigned_to,
+          job_title: c.jobs?.job_title || '—',
+          client_name: c.jobs?.clients?.company_name || '—',
+          client_id: c.jobs?.client_id || null,
+          recruiter_name: uMap[c.assigned_to]?.full_name || '—',
+        }))
       setPendingInvoicing(pending)
     } catch (err) {
       console.error('Error loading billing data:', err)
@@ -281,50 +286,54 @@ export default function ManagementBillingPage() {
     }
   }
 
-  // ── Computed KPIs ─────────────────────────────────────────────────────────
+  // ── KPIs — computed from FY-filtered slice ────────────────────────────────
+  const fyBoundsForKpi = getFYBounds(fyFilter)
+  const fyInvoices = fyBoundsForKpi
+    ? invoices.filter(i => i.invoice_date >= fyBoundsForKpi.start && i.invoice_date <= fyBoundsForKpi.end)
+    : invoices
+
   const kpis = {
-    totalInvoiced:   invoices.reduce((s, i) => s + i.total_invoice_amount, 0),
-    totalCollected:  invoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.amount_received || 0), 0),
-    totalOutstanding: invoices.filter(i => ['issued', 'overdue', 'on_hold'].includes(i.status)).reduce((s, i) => s + i.net_receivable, 0),
-    totalOverdue:    invoices.filter(i => i.status === 'overdue' || (i._overdueDays > 0 && i.status === 'issued')).reduce((s, i) => s + i.net_receivable, 0),
-    totalTdsCredit:  invoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.tds_credit || 0), 0),
-    totalClawback:   invoices.filter(i => i.status === 'clawback').reduce((s, i) => s + i.base_amount, 0),
-    countIssued:     invoices.filter(i => i.status === 'issued').length,
-    countPaid:       invoices.filter(i => i.status === 'paid').length,
-    countOverdue:    invoices.filter(i => i.status === 'overdue' || (i._overdueDays > 0 && i.status === 'issued')).length,
-    countOnHold:     invoices.filter(i => i.status === 'on_hold').length,
-    countClawback:   invoices.filter(i => i.status === 'clawback').length,
-    countPending:    pendingInvoicing.length,
+    totalInvoiced:    fyInvoices.reduce((s, i) => s + i.total_invoice_amount, 0),
+    totalCollected:   fyInvoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.amount_received || 0), 0),
+    totalOutstanding: fyInvoices.filter(i => ['issued','overdue','on_hold'].includes(i.status)).reduce((s, i) => s + i.net_receivable, 0),
+    totalOverdue:     fyInvoices.filter(i => i.status === 'overdue' || (i._overdueDays > 0 && i.status === 'issued')).reduce((s, i) => s + i.net_receivable, 0),
+    totalTdsCredit:   fyInvoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.tds_credit || 0), 0),
+    totalClawback:    fyInvoices.filter(i => i.status === 'clawback').reduce((s, i) => s + i.base_amount, 0),
+    countIssued:      fyInvoices.filter(i => i.status === 'issued').length,
+    countPaid:        fyInvoices.filter(i => i.status === 'paid').length,
+    countOverdue:     fyInvoices.filter(i => i.status === 'overdue' || (i._overdueDays > 0 && i.status === 'issued')).length,
+    countOnHold:      fyInvoices.filter(i => i.status === 'on_hold').length,
+    countClawback:    fyInvoices.filter(i => i.status === 'clawback').length,
+    countPending:     pendingInvoicing.length,
   }
 
   // ── Form helpers ──────────────────────────────────────────────────────────
   const calcAmounts = (base: number, gstPct: number, tdsPct: number) => {
-    const gst = +(base * gstPct / 100).toFixed(2)
+    const gst   = +(base * gstPct / 100).toFixed(2)
     const total = +(base + gst).toFixed(2)
-    const tds = +(base * tdsPct / 100).toFixed(2)
-    const net = +(total - tds).toFixed(2)
+    const tds   = +(base * tdsPct / 100).toFixed(2)
+    const net   = +(total - tds).toFixed(2)
     return { gst, total, tds, net }
   }
 
   const onCandidateSelect = (candidateId: string) => {
     const cand = candidates.find((c: any) => c.id === candidateId)
     if (!cand) return
-    const client = clients.find((cl: any) => cl.id === cand.jobs?.client_id)
-    const payTerms = client?.payment_terms_days || 30
-    const guaranteeDays = client?.replacement_guarantee_days || 90
-    const invDate = form.invoice_date || today()
+    const client    = clients.find((cl: any) => cl.id === cand.jobs?.client_id)
+    const payTerms  = client?.payment_terms_days || 30
+    const guarantee = client?.replacement_guarantee_days || 90
+    const invDate   = form.invoice_date || today()
     setForm(f => ({
-      ...f,
-      candidate_id: candidateId,
+      ...f, candidate_id: candidateId,
       client_id: cand.jobs?.client_id || '',
       recruiter_id: cand.assigned_to || '',
       due_date: addDays(invDate, payTerms),
-      guarantee_end_date: addDays(invDate, guaranteeDays),
+      guarantee_end_date: addDays(invDate, guarantee),
     }))
   }
 
   const onInvoiceDateChange = (date: string) => {
-    const client = clients.find(c => c.id === form.client_id)
+    const client   = clients.find(c => c.id === form.client_id)
     const payTerms = client?.payment_terms_days || 30
     setForm(f => ({ ...f, invoice_date: date, due_date: addDays(date, payTerms) }))
   }
@@ -340,28 +349,19 @@ export default function ManagementBillingPage() {
     const tdsPct = parseFloat(form.tds_rate) || 10
     const { gst, total, tds, net } = calcAmounts(base, gstPct, tdsPct)
 
-    const payload = {
+    const { error } = await supabaseAdmin.from('invoices').insert({
       invoice_number: form.invoice_number,
       candidate_id: form.candidate_id || null,
       offer_id: form.offer_id || null,
       client_id: form.client_id || null,
       recruiter_id: form.recruiter_id || null,
-      base_amount: base,
-      gst_percentage: gstPct,
-      gst_amount: gst,
-      total_invoice_amount: total,
-      tds_rate: tdsPct,
-      tds_amount: tds,
-      net_receivable: net,
-      invoice_date: form.invoice_date,
-      due_date: form.due_date,
+      base_amount: base, gst_percentage: gstPct, gst_amount: gst,
+      total_invoice_amount: total, tds_rate: tdsPct, tds_amount: tds, net_receivable: net,
+      invoice_date: form.invoice_date, due_date: form.due_date,
       guarantee_end_date: form.guarantee_end_date || null,
       status: 'issued' as InvoiceStatus,
-      notes: form.notes || null,
-      created_by: user?.id || null,
-    }
-
-    const { error } = await supabaseAdmin.from('invoices').insert(payload)
+      notes: form.notes || null, created_by: user?.id || null,
+    })
     if (error) { alert('Error creating invoice: ' + error.message); setSaving(false); return }
     setShowCreate(false); setForm(emptyForm); await loadAll()
     setSaving(false)
@@ -378,15 +378,9 @@ export default function ManagementBillingPage() {
 
     const { error } = await supabaseAdmin.from('invoices').update({
       invoice_number: form.invoice_number,
-      base_amount: base,
-      gst_percentage: gstPct,
-      gst_amount: gst,
-      total_invoice_amount: total,
-      tds_rate: tdsPct,
-      tds_amount: tds,
-      net_receivable: net,
-      invoice_date: form.invoice_date,
-      due_date: form.due_date,
+      base_amount: base, gst_percentage: gstPct, gst_amount: gst,
+      total_invoice_amount: total, tds_rate: tdsPct, tds_amount: tds, net_receivable: net,
+      invoice_date: form.invoice_date, due_date: form.due_date,
       guarantee_end_date: form.guarantee_end_date || null,
       notes: form.notes || null,
     }).eq('id', showEdit.id)
@@ -409,10 +403,8 @@ export default function ManagementBillingPage() {
       tds_credit: payForm.tds_credit ? parseFloat(payForm.tds_credit) : showPay.tds_amount,
       notes: payForm.notes || showPay.notes,
     }).eq('id', showPay.id)
-
     if (error) { alert('Error recording payment: ' + error.message); setSaving(false); return }
-    setShowPay(null); await loadAll()
-    setSaving(false)
+    setShowPay(null); await loadAll(); setSaving(false)
   }
 
   // ── Clawback ──────────────────────────────────────────────────────────────
@@ -426,45 +418,29 @@ export default function ManagementBillingPage() {
       clawback_date: clawbackForm.clawback_date,
       clawback_reason: clawbackForm.clawback_reason,
     }).eq('id', showClawback.id)
-
     if (error) { alert('Error recording clawback: ' + error.message); setSaving(false); return }
-    setShowClawback(null); await loadAll()
-    setSaving(false)
+    setShowClawback(null); await loadAll(); setSaving(false)
   }
 
-  // ── Status change (on hold / reissue) ─────────────────────────────────────
   const updateStatus = async (id: string, status: InvoiceStatus) => {
     await supabaseAdmin.from('invoices').update({ status }).eq('id', id)
     await loadAll()
   }
 
-  // ── Open edit modal ───────────────────────────────────────────────────────
   const openEdit = (inv: Invoice) => {
     setForm({
-      invoice_number: inv.invoice_number,
-      candidate_id: inv.candidate_id,
-      offer_id: inv.offer_id || '',
-      client_id: inv.client_id || '',
+      invoice_number: inv.invoice_number, candidate_id: inv.candidate_id,
+      offer_id: inv.offer_id || '', client_id: inv.client_id || '',
       recruiter_id: inv.recruiter_id || '',
-      base_amount: String(inv.base_amount),
-      gst_percentage: String(inv.gst_percentage),
-      tds_rate: String(inv.tds_rate),
-      invoice_date: inv.invoice_date,
-      due_date: inv.due_date,
-      guarantee_end_date: inv.guarantee_end_date || '',
-      notes: inv.notes || '',
+      base_amount: String(inv.base_amount), gst_percentage: String(inv.gst_percentage),
+      tds_rate: String(inv.tds_rate), invoice_date: inv.invoice_date, due_date: inv.due_date,
+      guarantee_end_date: inv.guarantee_end_date || '', notes: inv.notes || '',
     })
     setShowEdit(inv)
   }
 
-  // ── Open pay modal ────────────────────────────────────────────────────────
   const openPay = (inv: Invoice) => {
-    setPayForm({
-      payment_date: today(),
-      amount_received: String(inv.net_receivable),
-      tds_credit: String(inv.tds_amount),
-      notes: '',
-    })
+    setPayForm({ payment_date: today(), amount_received: String(inv.net_receivable), tds_credit: String(inv.tds_amount), notes: '' })
     setShowPay(inv)
   }
 
@@ -473,25 +449,20 @@ export default function ManagementBillingPage() {
     setExporting(true)
     try {
       const ExcelJS = (await import('exceljs')).default
-      const wb      = new ExcelJS.Workbook()
- 
-      const headers = [
+      const wb = new ExcelJS.Workbook()
+      const fyLabel = getFYBounds(fyFilter)?.label || 'All Time'
+      const ws = wb.addWorksheet(`Invoices — ${fyLabel}`)
+      ws.columns = [
+        { width: 14 },{ width: 20 },{ width: 22 },{ width: 20 },{ width: 18 },{ width: 18 },
+        ...Array(4).fill({ width: 14 }), ...Array(10).fill({ width: 16 }),
+        { width: 10 },{ width: 30 },
+      ]
+      ws.addRow([
         'Invoice #','Candidate','Client','Job','Recruiter','Team',
         'Invoice Date','Due Date','Payment Date','Guarantee End',
         'Base Amount','GST (18%)','Total Invoice','TDS Rate','TDS Amount','Net Receivable',
         'Amount Received','TDS Credit','Status','Overdue Days','Notes',
-      ]
- 
-      const ws = wb.addWorksheet('Invoices')
-      ws.columns = [
-        { width: 14 },{ width: 20 },{ width: 22 },{ width: 20 },{ width: 18 },{ width: 18 },
-        ...Array(4).fill({ width: 14 }),
-        ...Array(10).fill({ width: 16 }),
-        { width: 10 },{ width: 30 },
-      ]
- 
-      ws.addRow(headers)
- 
+      ])
       filtered.forEach(i => ws.addRow([
         i.invoice_number, i._candidateName, i._clientName, i._jobTitle,
         i._recruiterName, i._teamName,
@@ -499,27 +470,21 @@ export default function ManagementBillingPage() {
         i.base_amount, i.gst_amount, i.total_invoice_amount,
         `${i.tds_rate}%`, i.tds_amount, i.net_receivable,
         i.amount_received || '', i.tds_credit || '',
-        i.status, i._overdueDays > 0 ? i._overdueDays : '',
-        i.notes || '',
+        i.status, i._overdueDays > 0 ? i._overdueDays : '', i.notes || '',
       ]))
- 
-      // Download
       const buffer = await wb.xlsx.writeBuffer()
       const blob   = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
       const url    = URL.createObjectURL(blob)
-      const a      = document.createElement('a')
-      a.href       = url
-      a.download   = `Billing_${today()}.xlsx`
-      document.body.appendChild(a); a.click()
-      document.body.removeChild(a); URL.revokeObjectURL(url)
- 
-    } catch(err) {
-      console.error('Export error:', err)
-      alert('Export failed.')
+      const a      = document.createElement('a'); a.href = url
+      a.download   = `Billing_${fyLabel.replace(/[–]/g,'-')}_${today()}.xlsx`
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Export error:', err); alert('Export failed.')
     } finally {
       setExporting(false)
     }
   }
+
   if (loading) return (
     <DashboardLayout>
       <div className="flex items-center justify-center h-64">
@@ -529,12 +494,13 @@ export default function ManagementBillingPage() {
   )
 
   const uniqueClients = [...new Map(invoices.map(i => [i.client_id, { id: i.client_id, name: i._clientName }])).values()]
+  const fyLabel = getFYBounds(fyFilter)?.label || 'All Time'
 
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6 pb-8">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="bg-gradient-to-r from-emerald-400 to-blue-700 rounded-lg p-6 text-white flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold mb-1">💰 Billing & Revenue Management</h1>
@@ -552,16 +518,38 @@ export default function ManagementBillingPage() {
           </div>
         </div>
 
-        {/* ── KPI Cards ── */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {/* ── FY Filter Bar ── */}
+        <div className="bg-white rounded-lg shadow px-5 py-3 flex items-center gap-4 flex-wrap">
+          <span className="text-sm font-semibold text-gray-600">📅 Period:</span>
+          {([
+            { key: 'current',  label: `Current FY (${getFYBounds('current')?.label})` },
+            { key: 'previous', label: `Previous FY (${getFYBounds('previous')?.label})` },
+            { key: 'all',      label: 'All Time' },
+          ] as { key: FYFilter; label: string }[]).map(({ key, label }) => (
+            <button key={key} onClick={() => setFyFilter(key)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition border ${
+                fyFilter === key
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-emerald-400 hover:text-emerald-600'
+              }`}>
+              {label}
+            </button>
+          ))}
+          <span className="text-xs text-gray-400 ml-auto italic">
+            Filtered by invoice_date · KPIs reflect selected period
+          </span>
+        </div>
+
+        {/* KPI Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
           {[
-            { label: 'Pending Invoice', value: String(kpis.countPending),  color: 'text-amber-600',   sub: 'not yet issued' },
-            { label: 'Total Invoiced',   value: fmt(kpis.totalInvoiced),   color: 'text-gray-900',    sub: `${invoices.length} invoices` },
-            { label: 'Collected',        value: fmt(kpis.totalCollected),  color: 'text-green-700',   sub: `${kpis.countPaid} paid` },
-            { label: 'Outstanding',      value: fmt(kpis.totalOutstanding),color: 'text-blue-700',    sub: `${kpis.countIssued} issued` },
-            { label: 'Overdue',          value: fmt(kpis.totalOverdue),    color: 'text-red-700',     sub: `${kpis.countOverdue} invoices` },
-            { label: 'TDS Credit',       value: fmt(kpis.totalTdsCredit),  color: 'text-purple-700',  sub: 'claimable' },
-            { label: 'Clawback',         value: fmt(kpis.totalClawback),   color: 'text-orange-700',  sub: `${kpis.countClawback} invoices` },
+            { label: 'Pending Invoice',  value: String(kpis.countPending),   color: 'text-amber-600',   sub: 'not yet issued' },
+            { label: 'Total Invoiced',   value: fmt(kpis.totalInvoiced),     color: 'text-gray-900',    sub: `${fyInvoices.length} invoices` },
+            { label: 'Collected',        value: fmt(kpis.totalCollected),    color: 'text-green-700',   sub: `${kpis.countPaid} paid` },
+            { label: 'Outstanding',      value: fmt(kpis.totalOutstanding),  color: 'text-blue-700',    sub: `${kpis.countIssued} issued` },
+            { label: 'Overdue',          value: fmt(kpis.totalOverdue),      color: 'text-red-700',     sub: `${kpis.countOverdue} invoices` },
+            { label: 'TDS Credit',       value: fmt(kpis.totalTdsCredit),    color: 'text-purple-700',  sub: 'claimable' },
+            { label: 'Clawback',         value: fmt(kpis.totalClawback),     color: 'text-orange-700',  sub: `${kpis.countClawback} invoices` },
           ].map(({ label, value, color, sub }) => (
             <div key={label} className="bg-white rounded-lg p-4 shadow text-center">
               <div className="text-xs text-gray-500 mb-1">{label}</div>
@@ -571,11 +559,11 @@ export default function ManagementBillingPage() {
           ))}
         </div>
 
-        {/* ── Status Filter + Search ── */}
+        {/* Status Filter + Search */}
         <div className="bg-white rounded-lg shadow p-4 flex flex-wrap gap-3 items-center">
           <div className="flex gap-2 flex-wrap">
             {[
-              { key: 'all',      label: `All (${invoices.length})` },
+              { key: 'all',      label: `All (${fyInvoices.length})` },
               { key: 'pending',  label: `⏳ Not Invoiced (${kpis.countPending})` },
               { key: 'issued',   label: `📄 Issued (${kpis.countIssued})` },
               { key: 'paid',     label: `✅ Paid (${kpis.countPaid})` },
@@ -601,7 +589,7 @@ export default function ManagementBillingPage() {
           </div>
         </div>
 
-        {/* ── Pending Invoicing Section ── */}
+        {/* Pending Invoicing Section */}
         {statusFilter === 'pending' && (
           <div className="space-y-3">
             {pendingInvoicing.length === 0 ? (
@@ -630,12 +618,7 @@ export default function ManagementBillingPage() {
                       </div>
                     </div>
                     <button
-                      onClick={() => {
-                        setForm({ ...emptyForm, candidate_id: c.id, client_id: c.client_id || '' })
-                        // auto-select candidate to trigger onCandidateSelect
-                        onCandidateSelect(c.id)
-                        setShowCreate(true)
-                      }}
+                      onClick={() => { onCandidateSelect(c.id); setShowCreate(true) }}
                       className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 transition flex-shrink-0">
                       ➕ Create Invoice
                     </button>
@@ -646,31 +629,29 @@ export default function ManagementBillingPage() {
           </div>
         )}
 
-        {/* ── Invoice List ── */}
+        {/* Invoice List */}
         {statusFilter !== 'pending' && (filtered.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
             <div className="text-4xl mb-3">📭</div>
-            <p className="text-gray-500">No invoices found</p>
+            <p className="text-gray-500">No invoices found for <strong>{fyLabel}</strong></p>
           </div>
         ) : (
           <div className="space-y-3">
             {filtered.map(inv => {
-              const badge = overdueBadge(inv._overdueDays)
-              const sc = STATUS_CONFIG[inv.status]
+              const badge  = overdueBadge(inv._overdueDays)
+              const sc     = STATUS_CONFIG[inv.status]
               const isOverdueRow = inv._overdueDays > 0 && inv.status !== 'paid' && inv.status !== 'clawback'
               return (
                 <div key={inv.id}
                   className={`bg-white rounded-lg shadow border transition ${isOverdueRow ? overdueColor(inv._overdueDays) : 'border-gray-100'}`}>
                   <div className="p-5">
                     <div className="flex items-start justify-between gap-4 flex-wrap">
-
-                      {/* Left block */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap mb-1">
                           <span className="font-bold text-gray-900 text-base">{inv.invoice_number}</span>
                           <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${sc.cls}`}>{sc.icon} {sc.label}</span>
                           {badge && <span className={`px-2 py-0.5 rounded text-xs font-bold ${badge.cls}`}>{badge.label}</span>}
-                          {inv._paymentSafetyStatus === 'at_risk' && <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded text-xs">⚠️ Guarantee at risk</span>}
+                          {inv._paymentSafetyStatus === 'at_risk'  && <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded text-xs">⚠️ Guarantee at risk</span>}
                           {inv._paymentSafetyStatus === 'critical' && <span className="px-2 py-0.5 bg-red-100 text-red-800 rounded text-xs">🚨 Guarantee expired</span>}
                           {inv._paymentSafetyStatus === 'safe' && inv.status !== 'paid' && <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">🛡️ In guarantee</span>}
                         </div>
@@ -679,13 +660,11 @@ export default function ManagementBillingPage() {
                           {inv._jobTitle} · Recruiter: {inv._recruiterName} · Team: {inv._teamName}
                         </div>
                       </div>
-
-                      {/* Right block — financials */}
                       <div className="text-right flex-shrink-0 min-w-48">
                         <div className="text-xs text-gray-400 grid grid-cols-2 gap-x-4 gap-y-0.5 text-right">
-                          <span className="text-left text-gray-500">Base:</span>       <span className="font-semibold text-gray-800">{fmt(inv.base_amount)}</span>
-                          <span className="text-left text-gray-500">GST (18%):</span>  <span className="text-gray-600">{fmt(inv.gst_amount)}</span>
-                          <span className="text-left text-gray-500">Total:</span>      <span className="font-bold text-gray-900">{fmt(inv.total_invoice_amount)}</span>
+                          <span className="text-left text-gray-500">Base:</span>            <span className="font-semibold text-gray-800">{fmt(inv.base_amount)}</span>
+                          <span className="text-left text-gray-500">GST (18%):</span>       <span className="text-gray-600">{fmt(inv.gst_amount)}</span>
+                          <span className="text-left text-gray-500">Total:</span>           <span className="font-bold text-gray-900">{fmt(inv.total_invoice_amount)}</span>
                           <span className="text-left text-gray-500">TDS ({inv.tds_rate}%):</span> <span className="text-orange-600">-{fmt(inv.tds_amount)}</span>
                           <span className="text-left font-semibold text-emerald-700">Net Receivable:</span> <span className="font-bold text-emerald-700">{fmt(inv.net_receivable)}</span>
                           {inv.status === 'paid' && inv.amount_received && <>
@@ -696,8 +675,6 @@ export default function ManagementBillingPage() {
                         </div>
                       </div>
                     </div>
-
-                    {/* Dates row */}
                     <div className="flex items-center gap-5 mt-3 pt-3 border-t border-gray-100 text-xs text-gray-500 flex-wrap">
                       <span>📅 Invoice: <strong>{inv.invoice_date}</strong></span>
                       <span className={inv._overdueDays > 0 && inv.status !== 'paid' ? 'text-red-600 font-semibold' : ''}>
@@ -713,16 +690,14 @@ export default function ManagementBillingPage() {
                       )}
                       {inv.notes && <span className="text-gray-400 italic truncate max-w-xs">📝 {inv.notes}</span>}
                     </div>
-
-                    {/* Actions */}
                     <div className="flex gap-2 mt-3 flex-wrap">
-                      {['issued', 'overdue'].includes(inv.status) && (
+                      {['issued','overdue'].includes(inv.status) && (
                         <button onClick={() => openPay(inv)}
                           className="px-3 py-1.5 bg-green-600 text-white rounded text-xs font-semibold hover:bg-green-700 transition">
                           ✅ Record Payment
                         </button>
                       )}
-                      {['issued', 'overdue', 'on_hold'].includes(inv.status) && (
+                      {['issued','overdue','on_hold'].includes(inv.status) && (
                         <button onClick={() => { setClawbackForm({ clawback_date: today(), clawback_reason: '' }); setShowClawback(inv) }}
                           className="px-3 py-1.5 bg-purple-600 text-white rounded text-xs font-semibold hover:bg-purple-700 transition">
                           ↩️ Clawback
@@ -759,31 +734,22 @@ export default function ManagementBillingPage() {
         ))}
       </div>
 
-      {/* ════════════════════════════════════════════════════════════════════
-          CREATE / EDIT INVOICE MODAL
-      ════════════════════════════════════════════════════════════════════ */}
+      {/* Create / Edit Invoice Modal */}
       {(showCreate || showEdit) && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-bold text-gray-900">
-                  {showCreate ? '➕ New Invoice' : '✏️ Edit Invoice'}
-                </h2>
-                <button onClick={() => { setShowCreate(false); setShowEdit(null); setForm(emptyForm) }}
-                  className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
+                <h2 className="text-xl font-bold text-gray-900">{showCreate ? '➕ New Invoice' : '✏️ Edit Invoice'}</h2>
+                <button onClick={() => { setShowCreate(false); setShowEdit(null); setForm(emptyForm) }} className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
               </div>
-
               <div className="space-y-4">
-                {/* Invoice number */}
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Invoice Number (from Zoho) *</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Invoice Number *</label>
                   <input type="text" placeholder="e.g. INV-2025-001"
                     value={form.invoice_number} onChange={e => setForm(f => ({ ...f, invoice_number: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                 </div>
-
-                {/* Candidate */}
                 {showCreate && (
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1">Candidate (Joined) *</label>
@@ -796,24 +762,18 @@ export default function ManagementBillingPage() {
                     </select>
                   </div>
                 )}
-
-                {/* Dates row */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1">Invoice Date *</label>
-                    <input type="date" value={form.invoice_date}
-                      onChange={e => onInvoiceDateChange(e.target.value)}
+                    <input type="date" value={form.invoice_date} onChange={e => onInvoiceDateChange(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1">Due Date *</label>
-                    <input type="date" value={form.due_date}
-                      onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))}
+                    <input type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                   </div>
                 </div>
-
-                {/* Base amount + GST */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1">Base Amount (₹) *</label>
@@ -823,13 +783,10 @@ export default function ManagementBillingPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1">GST %</label>
-                    <input type="number" value={form.gst_percentage}
-                      onChange={e => setForm(f => ({ ...f, gst_percentage: e.target.value }))}
+                    <input type="number" value={form.gst_percentage} onChange={e => setForm(f => ({ ...f, gst_percentage: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                   </div>
                 </div>
-
-                {/* TDS */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">TDS Rate</label>
                   <div className="flex gap-3">
@@ -845,8 +802,6 @@ export default function ManagementBillingPage() {
                     </button>
                   </div>
                 </div>
-
-                {/* Live preview */}
                 {form.base_amount && (
                   <div className="bg-emerald-50 rounded-lg p-4 border border-emerald-200">
                     <p className="text-xs font-bold text-emerald-800 mb-2 uppercase">Invoice Preview</p>
@@ -857,28 +812,23 @@ export default function ManagementBillingPage() {
                       const { gst, total, tds, net } = calcAmounts(base, gstPct, tdsPct)
                       return (
                         <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                          <span className="text-gray-600">Base Amount:</span>      <span className="font-semibold">{fmt(base)}</span>
-                          <span className="text-gray-600">+ GST ({gstPct}%):</span> <span>{fmt(gst)}</span>
+                          <span className="text-gray-600">Base Amount:</span>        <span className="font-semibold">{fmt(base)}</span>
+                          <span className="text-gray-600">+ GST ({gstPct}%):</span>  <span>{fmt(gst)}</span>
                           <span className="text-gray-600 font-semibold">Total Invoice:</span> <span className="font-bold text-gray-900">{fmt(total)}</span>
-                          <span className="text-gray-600">- TDS ({tdsPct}%):</span> <span className="text-orange-600">-{fmt(tds)}</span>
+                          <span className="text-gray-600">- TDS ({tdsPct}%):</span>  <span className="text-orange-600">-{fmt(tds)}</span>
                           <span className="text-emerald-700 font-bold">Net Receivable:</span> <span className="font-bold text-emerald-700">{fmt(net)}</span>
-                          <span className="text-purple-600">TDS Credit:</span> <span className="text-purple-600">{fmt(tds)}</span>
+                          <span className="text-purple-600">TDS Credit:</span>        <span className="text-purple-600">{fmt(tds)}</span>
                         </div>
                       )
                     })()}
                   </div>
                 )}
-
-                {/* Guarantee end */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Guarantee End Date</label>
-                  <input type="date" value={form.guarantee_end_date}
-                    onChange={e => setForm(f => ({ ...f, guarantee_end_date: e.target.value }))}
+                  <input type="date" value={form.guarantee_end_date} onChange={e => setForm(f => ({ ...f, guarantee_end_date: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                   <p className="text-xs text-gray-400 mt-1">Auto-filled from client guarantee period when candidate is selected</p>
                 </div>
-
-                {/* Notes */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Notes</label>
                   <textarea rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
@@ -886,12 +836,9 @@ export default function ManagementBillingPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                 </div>
               </div>
-
               <div className="flex gap-3 mt-6">
                 <button onClick={() => { setShowCreate(false); setShowEdit(null); setForm(emptyForm) }}
-                  className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 transition">
-                  Cancel
-                </button>
+                  className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 transition">Cancel</button>
                 <button onClick={showCreate ? handleCreate : handleEdit} disabled={saving}
                   className="flex-1 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition disabled:opacity-60">
                   {saving ? 'Saving...' : showCreate ? 'Create Invoice' : 'Save Changes'}
@@ -902,9 +849,7 @@ export default function ManagementBillingPage() {
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════════════════════════
-          RECORD PAYMENT MODAL
-      ════════════════════════════════════════════════════════════════════ */}
+      {/* Record Payment Modal */}
       {showPay && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
@@ -922,20 +867,17 @@ export default function ManagementBillingPage() {
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Payment Date *</label>
-                  <input type="date" value={payForm.payment_date}
-                    onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))}
+                  <input type="date" value={payForm.payment_date} onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Amount Received (₹) *</label>
-                  <input type="number" value={payForm.amount_received}
-                    onChange={e => setPayForm(f => ({ ...f, amount_received: e.target.value }))}
+                  <input type="number" value={payForm.amount_received} onChange={e => setPayForm(f => ({ ...f, amount_received: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">TDS Credit (₹)</label>
-                  <input type="number" value={payForm.tds_credit}
-                    onChange={e => setPayForm(f => ({ ...f, tds_credit: e.target.value }))}
+                  <input type="number" value={payForm.tds_credit} onChange={e => setPayForm(f => ({ ...f, tds_credit: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                   <p className="text-xs text-gray-400 mt-1">Pre-filled with expected TDS. Adjust if needed.</p>
                 </div>
@@ -947,8 +889,7 @@ export default function ManagementBillingPage() {
                 </div>
               </div>
               <div className="flex gap-3 mt-5">
-                <button onClick={() => setShowPay(null)}
-                  className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+                <button onClick={() => setShowPay(null)} className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
                 <button onClick={handlePayment} disabled={saving}
                   className="flex-1 py-2.5 bg-green-600 text-white rounded-lg text-sm font-bold hover:bg-green-700 disabled:opacity-60">
                   {saving ? 'Saving...' : 'Confirm Payment'}
@@ -959,9 +900,7 @@ export default function ManagementBillingPage() {
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════════════════════════
-          CLAWBACK MODAL
-      ════════════════════════════════════════════════════════════════════ */}
+      {/* Clawback Modal */}
       {showClawback && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
@@ -979,21 +918,18 @@ export default function ManagementBillingPage() {
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Clawback Date *</label>
-                  <input type="date" value={clawbackForm.clawback_date}
-                    onChange={e => setClawbackForm(f => ({ ...f, clawback_date: e.target.value }))}
+                  <input type="date" value={clawbackForm.clawback_date} onChange={e => setClawbackForm(f => ({ ...f, clawback_date: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Reason *</label>
-                  <textarea rows={3} value={clawbackForm.clawback_reason}
-                    onChange={e => setClawbackForm(f => ({ ...f, clawback_reason: e.target.value }))}
+                  <textarea rows={3} value={clawbackForm.clawback_reason} onChange={e => setClawbackForm(f => ({ ...f, clawback_reason: e.target.value }))}
                     placeholder="Candidate left within guarantee period. Client requesting refund / credit note..."
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
                 </div>
               </div>
               <div className="flex gap-3 mt-5">
-                <button onClick={() => setShowClawback(null)}
-                  className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+                <button onClick={() => setShowClawback(null)} className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
                 <button onClick={handleClawback} disabled={saving}
                   className="flex-1 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-bold hover:bg-purple-700 disabled:opacity-60">
                   {saving ? 'Saving...' : 'Confirm Clawback'}

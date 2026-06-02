@@ -202,11 +202,17 @@ function CandidatesTable() {
 
   const loadTeamMembers = async () => {
     try {
+      // Include active users + those who left this FY — so exited recruiter candidates appear
+      const fyStart = (() => {
+        const now = new Date(); const m = now.getMonth() + 1
+        return `${m >= 4 ? now.getFullYear() : now.getFullYear() - 1}-04-01`
+      })()
+
       const { data: allUsers } = await supabaseAdmin
         .from('users')
         .select('id, full_name, role, reports_to')
         .in('role', ['sr_team_leader', 'team_leader', 'recruiter'])
-        .eq('is_active', true)
+        .or(`is_active.eq.true,last_working_date.gte.${fyStart}`)
 
       const uMap: Record<string, any> = {}
       ;(allUsers || []).forEach((u: any) => { uMap[u.id] = u })
@@ -237,17 +243,31 @@ function CandidatesTable() {
     }
   }
 
-  // Build scoped IDs and base query conditions (shared between KPI + table queries)
-  const buildScopedIds = useCallback(() => {
-    let scopedIds = teamMembers.map((m: any) => m.id)
-    if (teamFilter !== 'all') {
-      scopedIds = teamMembers.filter((m: any) => m._teamHead === teamFilter).map((m: any) => m.id)
-    }
+  // Build the team_id list for team/recruiter scoping
+  // After DB migration, candidates have team_id directly so we don't need
+  // to go through assigned_to → users for team filtering.
+  const buildTeamScope = useCallback((): {
+    useTeamId: boolean; teamIds: string[] | null; scopedIds: string[] | null
+  } => {
+    // If a specific recruiter is selected, still filter by assigned_to
     if (recruiterFilter !== 'all') {
-      scopedIds = [recruiterFilter]
+      return { useTeamId: false, teamIds: null, scopedIds: [recruiterFilter] }
     }
-    return scopedIds
+    // If a team (Sr-TL) is selected, get the team_id of members in that group
+    if (teamFilter !== 'all') {
+      const ids = teamMembers.filter((m: any) => m._teamHead === teamFilter).map((m: any) => m.id)
+      return { useTeamId: false, teamIds: null, scopedIds: ids }
+    }
+    // No filter — use all team members (active + exited FY), scoped by assigned_to
+    const allIds = teamMembers.map((m: any) => m.id)
+    return { useTeamId: false, teamIds: null, scopedIds: allIds }
   }, [teamMembers, teamFilter, recruiterFilter])
+
+  // Keep buildScopedIds for backward compat with getClientJobIds
+  const buildScopedIds = useCallback(() => {
+    const { scopedIds } = buildTeamScope()
+    return scopedIds || teamMembers.map((m: any) => m.id)
+  }, [buildTeamScope, teamMembers])
 
   // Returns job IDs for the selected client (null = no filter)
   const getClientJobIds = useCallback(async (): Promise<string[] | null> => {
@@ -278,6 +298,7 @@ function CandidatesTable() {
       const applyClientFilter = (q: any) =>
         clientJobIds ? q.in('job_id', clientJobIds.length > 0 ? clientJobIds : ['__none__']) : q
 
+      // Use assigned_to (includes inactive — they're already in scopedIds via FY filter)
       const [totalRes, activeRes, joinedRes, rejectedRes] = await Promise.all([
         applyClientFilter(supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds)),
         applyClientFilter(supabaseAdmin.from('candidates').select('id', { count: 'exact', head: true }).in('assigned_to', scopedIds).in('current_stage', activeStages)),
@@ -306,7 +327,6 @@ function CandidatesTable() {
       if (scopedIds.length === 0) { setCandidates([]); setTotalRows(0); setLoading(false); return }
 
       const clientJobIds = await getClientJobIds()
-      // If client selected but has no jobs, return empty immediately
       if (clientJobIds !== null && clientJobIds.length === 0) {
         setCandidates([]); setTotalRows(0); setLoading(false); return
       }
@@ -321,7 +341,7 @@ function CandidatesTable() {
           jobs ( job_title, job_code, clients ( company_name ) ),
           users:assigned_to ( full_name, role )
         `, { count: 'exact' })
-        .in('assigned_to', scopedIds)
+        .in('assigned_to', scopedIds)   // scopedIds now includes exited recruiters
         .order('created_at', { ascending: false })
         .range(from, to)
 
