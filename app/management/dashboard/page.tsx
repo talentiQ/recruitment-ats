@@ -699,7 +699,7 @@ const renegeCount = renegeData.length
 
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg p-6 text-white">
-          <h1 className="text-3xl font-bold mb-2">Management Dashboard</h1>
+          <h1 className="text-2xl font-bold mb-2">Management Dashboard</h1>
           <p className="text-blue-100">Data-driven insights for strategic decision making</p>
         </div>
 
@@ -730,22 +730,22 @@ const renegeCount = renegeData.length
           {/* Revenue Earned */}
           <div className="bg-white rounded-lg p-6 shadow border-l-4 border-green-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Revenue Earned</div>
-            <div className="text-3xl font-bold text-gray-900">{formatCurrency(stats.totalRevenueEarned)}</div>
-            <div className="text-sm text-green-600 mt-2">From {stats.totalJoinings} joinings</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(stats.totalRevenueEarned)}</div>
+            <div className="text-xs text-green-600 mt-2">From {stats.totalJoinings} joinings</div>
           </div>
 
           {/* Expected Revenue */}
           <div className="bg-white rounded-lg p-6 shadow border-l-4 border-blue-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Expected Revenue</div>
-            <div className="text-3xl font-bold text-gray-900">{formatCurrency(stats.expectedRevenue)}</div>
-            <div className="text-sm text-blue-600 mt-2">Offers Accepted</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(stats.expectedRevenue)}</div>
+            <div className="text-xs text-blue-600 mt-2">Offers Accepted</div>
           </div>
 
           {/* Revenue Lost */}
           <div className="bg-white rounded-lg p-6 shadow border-l-4 border-red-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Revenue Lost</div>
-            <div className="text-3xl font-bold text-red-600">{formatCurrency(stats.revenueLost)}</div>
-            <div className="text-sm text-red-400 mt-2">
+            <div className="text-2xl font-bold text-red-600">{formatCurrency(stats.revenueLost)}</div>
+            <div className="text-xs text-red-400 mt-2">
               {stats.renegeCount} renege{stats.renegeCount !== 1 ? 's' : ''} this period
             </div>
           </div>
@@ -753,24 +753,24 @@ const renegeCount = renegeData.length
           {/* Total Joinings */}
           <div className="bg-white rounded-lg p-6 shadow border-l-4 border-purple-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Total Joinings</div>
-            <div className="text-3xl font-bold text-gray-900">{stats.totalJoinings}</div>
-            <div className="text-sm text-gray-500 mt-2">Candidates placed</div>
+            <div className="text-2xl font-bold text-gray-900">{stats.totalJoinings}</div>
+            <div className="text-xs text-gray-500 mt-2">Candidates placed</div>
           </div>
           
           {/* Avg Value per Joining */}
           <div className="bg-white rounded-lg p-6 shadow border-l-4 border-teal-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Avg Value / Joining</div>
-            <div className="text-3xl font-bold text-gray-900">
+            <div className="text-2xl font-bold text-gray-900">
               {formatCurrency(stats.totalJoinings > 0 ? stats.totalRevenueEarned / stats.totalJoinings : 0)}
             </div>
-            <div className="text-sm text-gray-500 mt-2">Revenue ÷ Joinings</div>
+            <div className="text-xs text-gray-500 mt-2">Revenue ÷ Joinings</div>
           </div>
 
           {/* Avg Time-to-Hire */}
           <div className="bg-white rounded-lg p-6 shadow border-l-4 border-orange-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Avg Time-to-Hire</div>
-            <div className="text-3xl font-bold text-gray-900">{stats.avgTimeToHire} Days</div>
-            <div className="text-sm text-gray-500 mt-2">Industry avg: 45 days</div>
+            <div className="text-2xl font-bold text-gray-900">{stats.avgTimeToHire} Days</div>
+            <div className="text-xs text-gray-500 mt-2">Industry avg: 45 days</div>
           </div>
         </div>
 
@@ -833,7 +833,7 @@ const renegeCount = renegeData.length
         {/* Analytics Insights */}
         <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-6 border-2 border-purple-200">
           <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-            <span className="text-3xl">📊</span>
+            <span className="text-2xl">📊</span>
             Analytics Insights
           </h2>
 
