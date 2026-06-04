@@ -728,21 +728,21 @@ const renegeCount = renegeData.length
         {/* Key Metrics — 6 cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           {/* Revenue Earned */}
-          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-green-500">
+          <div className="bg-white rounded-lg p-4 shadow border-l-4 border-green-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Revenue Earned</div>
             <div className="text-2xl font-bold text-gray-900">{formatCurrency(stats.totalRevenueEarned)}</div>
             <div className="text-xs text-green-600 mt-2">From {stats.totalJoinings} joinings</div>
           </div>
 
           {/* Expected Revenue */}
-          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-blue-500">
+          <div className="bg-white rounded-lg p-4 shadow border-l-4 border-blue-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Expected Revenue</div>
             <div className="text-2xl font-bold text-gray-900">{formatCurrency(stats.expectedRevenue)}</div>
             <div className="text-xs text-blue-600 mt-2">Offers Accepted</div>
           </div>
 
           {/* Revenue Lost */}
-          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-red-500">
+          <div className="bg-white rounded-lg p-4 shadow border-l-4 border-red-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Revenue Lost</div>
             <div className="text-2xl font-bold text-red-600">{formatCurrency(stats.revenueLost)}</div>
             <div className="text-xs text-red-400 mt-2">
@@ -751,14 +751,14 @@ const renegeCount = renegeData.length
           </div>
 
           {/* Total Joinings */}
-          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-purple-500">
+          <div className="bg-white rounded-lg p-4 shadow border-l-4 border-purple-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Total Joinings</div>
             <div className="text-2xl font-bold text-gray-900">{stats.totalJoinings}</div>
             <div className="text-xs text-gray-500 mt-2">Candidates placed</div>
           </div>
           
           {/* Avg Value per Joining */}
-          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-teal-500">
+          <div className="bg-white rounded-lg p-4 shadow border-l-4 border-teal-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Avg Value / Joining</div>
             <div className="text-2xl font-bold text-gray-900">
               {formatCurrency(stats.totalJoinings > 0 ? stats.totalRevenueEarned / stats.totalJoinings : 0)}
@@ -767,7 +767,7 @@ const renegeCount = renegeData.length
           </div>
 
           {/* Avg Time-to-Hire */}
-          <div className="bg-white rounded-lg p-6 shadow border-l-4 border-orange-500">
+          <div className="bg-white rounded-lg p-4 shadow border-l-4 border-orange-500">
             <div className="text-sm text-gray-600 mb-2 font-semibold uppercase">Avg Time-to-Hire</div>
             <div className="text-2xl font-bold text-gray-900">{stats.avgTimeToHire} Days</div>
             <div className="text-xs text-gray-500 mt-2">Industry avg: 45 days</div>
