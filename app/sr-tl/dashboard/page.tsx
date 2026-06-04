@@ -6,6 +6,43 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
+function getActiveMonths(
+  periodStart: string,
+  periodEnd: string,
+  lwd: string | null,
+  targetEnd: string | null,
+  totalMonths: number,
+): number {
+  if (!lwd && !targetEnd) return totalMonths
+  const cutoffs = [lwd, targetEnd].filter(Boolean) as string[]
+  if (cutoffs.length === 0) return totalMonths
+  const effectiveCutoff = cutoffs.sort()[0]
+  if (effectiveCutoff < periodStart) return 0
+  if (effectiveCutoff >= periodEnd) return totalMonths
+  const pStart = new Date(periodStart)
+  const cutDate = new Date(effectiveCutoff)
+  const monthsActive = (cutDate.getFullYear() - pStart.getFullYear()) * 12
+    + (cutDate.getMonth() - pStart.getMonth()) + 1
+  return Math.max(0, Math.min(monthsActive, totalMonths))
+}
+
+function getProRatedTarget(
+  monthlyTarget: number,
+  periodStart: string,
+  periodEnd: string,
+  lwd: string | null,
+  targetEnd: string | null,
+  totalMonths: number,
+): number {
+  if (monthlyTarget <= 0) return 0
+  return monthlyTarget * getActiveMonths(periodStart, periodEnd, lwd, targetEnd, totalMonths)
+}
+
+function calcAchievementPct(achieved: number, target: number): number {
+  if (target <= 0) return 0
+  return Math.round((achieved / target) * 100)
+}
+
 export default function SrTeamLeaderDashboard() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -32,11 +69,17 @@ export default function SrTeamLeaderDashboard() {
   const loadDashboard = async (user: any) => {
     setLoading(true)
     try {
+      const now = new Date()
+      const currentYear = now.getFullYear()
+      const currentMonth = now.getMonth() + 1
+      const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
+      const fyStartDate = `${fiscalYearStart}-04-01`
+
       const { data: directReports, error: reportsError } = await supabase
         .from('users')
-        .select('id, role, team_id, full_name, monthly_target, quarterly_target, annual_target')
+        .select('id, role, team_id, full_name, monthly_target, quarterly_target, annual_target, last_working_date, target_end_date, is_active')
         .eq('reports_to', user.id)
-        .eq('is_active', true)
+        .or(`is_active.eq.true,last_working_date.gte.${fyStartDate}`)
 
       if (reportsError) {
         console.error('Direct reports error:', reportsError)
@@ -49,10 +92,10 @@ export default function SrTeamLeaderDashboard() {
       if (tlIds.length > 0) {
         const { data: recruiterReports, error: recError } = await supabase
           .from('users')
-          .select('id, role, team_id, full_name, monthly_target, quarterly_target, annual_target')
+          .select('id, role, team_id, full_name, monthly_target, quarterly_target, annual_target, last_working_date, target_end_date, is_active')
           .in('reports_to', tlIds)
           .eq('role', 'recruiter')
-          .eq('is_active', true)
+          .or(`is_active.eq.true,last_working_date.gte.${fyStartDate}`)
         
         if (recError) {
           console.error('Indirect recruiters error:', recError)
@@ -67,17 +110,18 @@ export default function SrTeamLeaderDashboard() {
       const totalRecruiters = allTeamMembers.filter((m: any) => m.role === 'recruiter').length
 
       const memberIds = allTeamMembers.map((m: any) => m.id)
+      const memberIdFilter = memberIds.length > 0 ? memberIds : ['none']
       
       const { count: candidatesCount } = await supabase
         .from('candidates')
         .select('*', { count: 'exact', head: true })
-        .in('assigned_to', memberIds)
+        .in('assigned_to', memberIdFilter)
 
       const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
       const { count: monthJoinings } = await supabase
         .from('candidates')
         .select('*', { count: 'exact', head: true })
-        .in('assigned_to', memberIds)
+        .in('assigned_to', memberIdFilter)
         .eq('current_stage', 'joined')
         .gte('date_joined', firstDayOfMonth)
 
@@ -103,9 +147,6 @@ export default function SrTeamLeaderDashboard() {
       })
 
       if (allTeamMembers.length > 0) {
-        const now = new Date()
-        const currentYear = now.getFullYear()
-        const currentMonth = now.getMonth() + 1
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
 
         let businessQuarter: number
@@ -134,7 +175,6 @@ export default function SrTeamLeaderDashboard() {
         const quarterStart = `${quarterStartYear}-${String(quarterStartMonth).padStart(2, '0')}-01`
         const quarterEnd = `${quarterEndYear}-${String(quarterEndMonth).padStart(2, '0')}-01`
 
-        const fiscalYearStart = currentMonth >= 4 ? currentYear : currentYear - 1
         const annualStart = `${fiscalYearStart}-04-01`
         const annualEnd = `${fiscalYearStart + 1}-04-01`
 
@@ -146,6 +186,8 @@ export default function SrTeamLeaderDashboard() {
 
         const performanceData = await Promise.all(
           allTeamMembers.map(async (member: any) => {
+            const revenueFilter = `assigned_to.eq.${member.id},original_assigned_to.eq.${member.id}`
+
             const { count: candidatesCount } = await supabase
               .from('candidates')
               .select('*', { count: 'exact', head: true })
@@ -154,7 +196,7 @@ export default function SrTeamLeaderDashboard() {
             const { count: monthJoinings } = await supabase
               .from('candidates')
               .select('*', { count: 'exact', head: true })
-              .eq('assigned_to', member.id)
+              .or(revenueFilter)
               .eq('current_stage', 'joined')
               .gte('date_joined', firstDayOfMonth)
 
@@ -168,14 +210,14 @@ export default function SrTeamLeaderDashboard() {
             const { data: monthlyRevData } = await supabase
               .from('candidates')
               .select('revenue_earned')
-              .eq('assigned_to', member.id)
+              .or(revenueFilter)
               .eq('current_stage', 'joined')
               .gte('date_joined', monthStart)
 
             const { data: quarterlyRevData } = await supabase
               .from('candidates')
               .select('revenue_earned')
-              .eq('assigned_to', member.id)
+              .or(revenueFilter)
               .eq('current_stage', 'joined')
               .gte('date_joined', quarterStart)
               .lt('date_joined', quarterEnd)
@@ -183,7 +225,7 @@ export default function SrTeamLeaderDashboard() {
             const { data: annualRevData } = await supabase
               .from('candidates')
               .select('revenue_earned')
-              .eq('assigned_to', member.id)
+              .or(revenueFilter)
               .eq('current_stage', 'joined')
               .gte('date_joined', annualStart)
               .lt('date_joined', annualEnd)
@@ -192,9 +234,12 @@ export default function SrTeamLeaderDashboard() {
             const quarterlyRevenue = quarterlyRevData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
             const annualRevenue   = annualRevData?.reduce((sum, c) => sum + (c.revenue_earned || 0), 0) || 0
 
-            const monthlyTarget   = member.monthly_target   ? Number(member.monthly_target)   : (member.role === 'team_leader' ? 5 : 2)
-            const quarterlyTarget = member.quarterly_target ? Number(member.quarterly_target) : (monthlyTarget * 3)
-            const annualTarget    = member.annual_target    ? Number(member.annual_target)    : (monthlyTarget * 12)
+            const baseTarget = member.monthly_target ? Number(member.monthly_target) : (member.role === 'team_leader' ? 5 : 2)
+            const lwd = member.last_working_date ?? null
+            const targetEnd = member.target_end_date ?? null
+            const monthlyTarget = getProRatedTarget(baseTarget, monthStart, new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString().slice(0, 10), lwd, targetEnd, 1)
+            const quarterlyTarget = getProRatedTarget(baseTarget, quarterStart, quarterEnd, lwd, targetEnd, 3)
+            const annualTarget = getProRatedTarget(baseTarget, annualStart, annualEnd, lwd, targetEnd, 12)
 
             return {
               user_id:   member.id,
@@ -209,9 +254,9 @@ export default function SrTeamLeaderDashboard() {
               monthly_target:        monthlyTarget,
               quarterly_target:      quarterlyTarget,
               annual_target:         annualTarget,
-              monthly_achievement:   monthlyTarget   > 0 ? Math.round((monthlyRevenue   / monthlyTarget)   * 100) : 0,
-              quarterly_achievement: quarterlyTarget > 0 ? Math.round((quarterlyRevenue / quarterlyTarget) * 100) : 0,
-              annual_achievement:    annualTarget    > 0 ? Math.round((annualRevenue    / annualTarget)    * 100) : 0,
+              monthly_achievement:   calcAchievementPct(monthlyRevenue, monthlyTarget),
+              quarterly_achievement: calcAchievementPct(quarterlyRevenue, quarterlyTarget),
+              annual_achievement:    calcAchievementPct(annualRevenue, annualTarget),
             }
           })
         )
