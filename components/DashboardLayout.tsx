@@ -144,6 +144,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           icon: '📅',
           description: 'All interviews & scheduling'
         },
+         { name: 'Jobs Analytics',
+          href: '/management/jobs',
+          icon: '💼',
+          description: 'All Jobs Analytics'
+        },
         {
           name: 'Offers Control',
           href: '/management/offers',
