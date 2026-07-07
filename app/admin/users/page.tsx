@@ -42,7 +42,7 @@ function ExitModal({
 
   const fetchOpenCandidates = async () => {
     setLoadingCands(true)
-    const TERMINAL = ['joined','renege','screening_rejected','interview_rejected','offer_rejected','on_hold']
+    const TERMINAL = ['joined','renege','screening_rejected','interview_rejected']
     const { data } = await supabase
       .from('candidates')
       .select('id, full_name, current_stage, jobs(job_title)')
