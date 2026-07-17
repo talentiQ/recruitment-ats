@@ -46,7 +46,7 @@ interface FreedomRow {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CAMPAIGN_START = '2026-07-15'
+const CAMPAIGN_START = '2026-07-16'
 const CAMPAIGN_END   = '2026-08-15'
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
