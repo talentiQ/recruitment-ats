@@ -521,28 +521,210 @@ export default function AchieversPage(){
             </>
           )}
 
-          {/* ── FREEDOM REWARDS ── */}
-          {activeTab==='freedom_rewards'&&(
-            <>
-              <div style={{background:'linear-gradient(135deg,#1e3a5f,#1e40af)',borderRadius:16,padding:'20px 28px',marginBottom:24,color:'#fff'}}>
-                <div style={{display:'flex',gap:32,flexWrap:'wrap'}}>
-                  {[
-                    {emoji:'📄',label:'CV Reward',    rule:'Every 100 CVs (sent to client+) = ₹2,500',         color:'#93c5fd'},
-                    {emoji:'🤝',label:'Offer Reward', rule:'0.75% of offer value if ≥ ₹1,50,000 cumulative',   color:'#86efac'},
-                    {emoji:'🎯',label:'Join Reward',  rule:'1% of joining value if ≥ ₹1,00,000 cumulative',    color:'#fde68a'},
-                    {emoji:'📌',label:'One Reward',   rule:'Offer→Joining? Only Joining Reward is paid',        color:'#f9a8d4'},
-                  ].map(r=>(
-                    <div key={r.label} style={{minWidth:160,flex:1}}>
-                      <div style={{fontSize:20,marginBottom:4}}>{r.emoji}</div>
-                      <div style={{fontSize:12,fontWeight:700,color:r.color,marginBottom:2}}>{r.label}</div>
-                      <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',lineHeight:1.4}}>{r.rule}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <FreedomRewardsTable data={freedomData} loading={freedomLoad}/>
-            </>
-          )}
+{/* ── FREEDOM REWARDS ── */}
+{activeTab === 'freedom_rewards' && (
+  <>
+    <div
+      style={{
+        background:
+          'linear-gradient(135deg, #FF9933 0%, #FFFFFF 50%, #138808 100%)',
+        border: '2px solid rgba(19,136,8,0.15)',
+        borderRadius: 18,
+        padding: '22px 28px',
+        marginBottom: 24,
+        boxShadow: '0 10px 30px rgba(0,0,0,0.08)',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 20,
+          flexWrap: 'wrap',
+          gap: 12,
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: 26,
+              fontWeight: 800,
+              color: '#0A2E73',
+              letterSpacing: '.5px',
+            }}
+          >
+            🇮🇳 Freedom Rewards 2026
+          </div>
+
+          <div
+            style={{
+              fontSize: 14,
+              color: '#374151',
+              marginTop: 4,
+              fontWeight: 500,
+            }}
+          >
+            Every CV Counts. Every Success Counts.
+          </div>
+        </div>
+
+        <div
+          style={{
+            background: '#0A2E73',
+            color: '#fff',
+            padding: '8px 16px',
+            borderRadius: 999,
+            fontWeight: 700,
+            fontSize: 13,
+          }}
+        >
+          16 Jul – 15 Aug
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))',
+          gap: 18,
+        }}
+      >
+        {[
+          {
+            emoji: '📄',
+            label: 'CV Reward',
+            rule: 'Every 100 CVs submitted to clients',
+            value: '₹2,500',
+            color: '#FF9933',
+          },
+          {
+            emoji: '🤝',
+            label: 'Offer Reward',
+            rule: '0.75% of Offer Value (Threshold ₹1,50,000)',
+            value: '0.75%',
+            color: '#2563EB',
+          },
+          {
+            emoji: '🎯',
+            label: 'Joining Reward',
+            rule: '1% of Joining Value (Threshold ₹1,00,000)',
+            value: '1%',
+            color: '#138808',
+          },
+          {
+            emoji: '📌',
+            label: 'Important Rule',
+            rule: 'If an Offer converts into a Joining, only the Joining Reward is payable.',
+            value: 'One Reward',
+            color: '#0A2E73',
+          },
+        ].map((r) => (
+          <div
+            key={r.label}
+            style={{
+              background: 'rgba(255,255,255,0.94)',
+              borderRadius: 16,
+              padding: 18,
+              border: `2px solid ${r.color}20`,
+              boxShadow: '0 6px 18px rgba(0,0,0,.06)',
+              transition: '.25s',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 30,
+                marginBottom: 10,
+              }}
+            >
+              {r.emoji}
+            </div>
+
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 800,
+                color: '#0A2E73',
+                marginBottom: 10,
+                textTransform: 'uppercase',
+                letterSpacing: '.4px',
+              }}
+            >
+              {r.label}
+            </div>
+
+            <div
+              style={{
+                fontSize: 13,
+                color: '#4B5563',
+                lineHeight: 1.6,
+                minHeight: 60,
+              }}
+            >
+              {r.rule}
+            </div>
+
+            <div
+              style={{
+                marginTop: 16,
+                display: 'inline-block',
+                background: r.color,
+                color: '#fff',
+                padding: '8px 16px',
+                borderRadius: 999,
+                fontWeight: 800,
+                fontSize: 15,
+              }}
+            >
+              {r.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div
+        style={{
+          marginTop: 22,
+          padding: '14px 18px',
+          background: 'rgba(10,46,115,.08)',
+          borderRadius: 12,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 10,
+        }}
+      >
+        <div
+          style={{
+            color: '#0A2E73',
+            fontWeight: 700,
+            fontSize: 14,
+          }}
+        >
+          💰 Payout Date: <strong>7 September 2026</strong>
+        </div>
+
+        <div
+          style={{
+            color: '#138808',
+            fontWeight: 700,
+            fontSize: 14,
+          }}
+        >
+          🇮🇳 Every CV Counts.
+        </div>
+      </div>
+    </div>
+
+    <FreedomRewardsTable
+      data={freedomData}
+      loading={freedomLoad}
+    />
+  </>
+)}
         </div>
       </div>
     </DashboardLayout>
