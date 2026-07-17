@@ -263,7 +263,7 @@ function FreedomRewardsTable({data,loading}:{data:FreedomRow[];loading:boolean})
     <div style={{textAlign:'center',padding:'60px 0',background:'#fff',borderRadius:16,border:'1px solid #e5e7eb'}}>
       <div style={{fontSize:40,marginBottom:12}}>🇮🇳</div>
       <div style={{fontWeight:600,color:'#374151',fontSize:16}}>No campaign CVs yet</div>
-      <div style={{color:'#9ca3af',fontSize:13,marginTop:6}}>CVs sourced between 15 Jul – 15 Aug 2026 that progressed past sourced stage will appear here.</div>
+      <div style={{color:'#9ca3af',fontSize:13,marginTop:6}}>CVs sourced between 16 Jul – 15 Aug 2026 that progressed past sourced stage will appear here.</div>
     </div>
   )
 
@@ -385,7 +385,7 @@ function FreedomRewardsTable({data,loading}:{data:FreedomRow[];loading:boolean})
       </div>
 
       <div style={{padding:'10px 20px',borderTop:'1px solid #f1f5f9',background:'#fafafa',fontSize:11,color:'#6b7280'}}>
-        ⚠️ Offer→Joining: only Joining Reward paid. ✅ = eligible threshold met. 📈 = below threshold, not yet payable. Management validation required. · Campaign: 15 Jul – 15 Aug 2026
+        ⚠️ Offer→Joining: only Joining Reward paid. ✅ = eligible threshold met. 📈 = below threshold, not yet payable. Management validation required. · Campaign: 16 Jul – 15 Aug 2026
       </div>
     </div>
   </div>
@@ -437,7 +437,7 @@ export default function AchieversPage(){
                   {activeTab==='hall_of_fame'?'🏆 Hall of Fame':'🇮🇳 Freedom Rewards 2026'}
                 </h1>
                 <p style={{fontSize:13,color:'#64748b',margin:'4px 0 0'}}>
-                  {activeTab==='hall_of_fame'?`Celebrating recruiters who crush targets — ${periodLabel}`:'Campaign: 15 July – 15 August 2026 · Every CV Counts. Every Success Counts.'}
+                  {activeTab==='hall_of_fame'?`Celebrating recruiters who crush targets — ${periodLabel}`:'Campaign: 16 July – 15 August 2026 · Every CV Counts. Every Success Counts.'}
                 </p>
               </div>
               {activeTab==='hall_of_fame'&&(
