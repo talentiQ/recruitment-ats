@@ -32,28 +32,32 @@ export default function AddCandidateForm({
   existingCandidate,
   isEditMode = false,
 }: AddCandidateFormProps) {
-  const router      = useRouter()
+  const router       = useRouter()
   const searchParams = useSearchParams()
-  const jobFromUrl  = searchParams.get('job')
+  const jobFromUrl   = searchParams.get('job')
 
   const [loading,  setLoading]  = useState(false)
   const [jobs,     setJobs]     = useState<Job[]>([])
   const [user,     setUser]     = useState<any>(null)
+
+  // ── DUPLICATE STATE ─────────────────────────────────────────────────────────
+  // duplicateWarning  : non-empty string = duplicate exists → submission BLOCKED
+  // duplicateCandidate: the existing record so we can link to it
   const [duplicateWarning,   setDuplicateWarning]   = useState<string>('')
   const [duplicateCandidate, setDuplicateCandidate] = useState<any>(null)
 
   // Resume upload state
-  const [resumeFile,     setResumeFile]     = useState<File | null>(null)
-  const [parsing,        setParsing]        = useState(false)
-  const [parseConfidence,setParseConfidence]= useState(existingCandidate?.auto_fill_confidence || 0)
-  const [autoFilled,     setAutoFilled]     = useState(existingCandidate?.auto_filled || false)
-  const [parseError,     setParseError]     = useState<string>('')
-  const [resumeRawText,  setResumeRawText]  = useState<string>('')
+  const [resumeFile,      setResumeFile]      = useState<File | null>(null)
+  const [parsing,         setParsing]         = useState(false)
+  const [parseConfidence, setParseConfidence] = useState(existingCandidate?.auto_fill_confidence || 0)
+  const [autoFilled,      setAutoFilled]      = useState(existingCandidate?.auto_filled || false)
+  const [parseError,      setParseError]      = useState<string>('')
+  const [resumeRawText,   setResumeRawText]   = useState<string>('')
 
   // Red flag state
-  const [redFlagResult,       setRedFlagResult]       = useState<RedFlagResult | null>(null)
-  const [showRedFlagModal,    setShowRedFlagModal]    = useState(false)
-  const [pendingSubmitData,   setPendingSubmitData]   = useState<any>(null)
+  const [redFlagResult,     setRedFlagResult]     = useState<RedFlagResult | null>(null)
+  const [showRedFlagModal,  setShowRedFlagModal]  = useState(false)
+  const [pendingSubmitData, setPendingSubmitData] = useState<any>(null)
 
   // Validation
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -72,52 +76,52 @@ export default function AddCandidateForm({
   const [selectedSkills,   setSelectedSkills]   = useState<string[]>(existingCandidate?.key_skills || [])
 
   const [formData, setFormData] = useState({
-    full_name:            existingCandidate?.full_name            || '',
-    email:                existingCandidate?.email                || '',
-    phone:                existingCandidate?.phone                || '',
-    gender:               existingCandidate?.gender               || '',
-    date_of_birth:        existingCandidate?.date_of_birth        || '',
-    current_location:     existingCandidate?.current_location     || '',
-    job_id:               existingCandidate?.job_id || preSelectedJobId || jobFromUrl || '',
-    current_company:      existingCandidate?.current_company      || '',
-    current_designation:  existingCandidate?.current_designation  || '',
-    total_experience:     existingCandidate?.total_experience?.toString() || '',
-    relevant_experience:  existingCandidate?.relevant_experience?.toString() || '',
-    current_ctc:          existingCandidate?.current_ctc?.toString()     || '',
-    expected_ctc:         existingCandidate?.expected_ctc?.toString()    || '',
-    notice_period:        existingCandidate?.notice_period?.toString()   || '',
-    education_level:      existingCandidate?.education_level      || '',
-    education_degree:     existingCandidate?.education_degree     || '',
-    education_field:      existingCandidate?.education_field      || '',
-    education_institution:existingCandidate?.education_institution|| '',
-    source_portal:        existingCandidate?.source_portal        || 'Naukri',
-    notes:                existingCandidate?.notes                || '',
+    full_name:             existingCandidate?.full_name             || '',
+    email:                 existingCandidate?.email                 || '',
+    phone:                 existingCandidate?.phone                 || '',
+    gender:                existingCandidate?.gender                || '',
+    date_of_birth:         existingCandidate?.date_of_birth         || '',
+    current_location:      existingCandidate?.current_location      || '',
+    job_id:                existingCandidate?.job_id || preSelectedJobId || jobFromUrl || '',
+    current_company:       existingCandidate?.current_company       || '',
+    current_designation:   existingCandidate?.current_designation   || '',
+    total_experience:      existingCandidate?.total_experience?.toString()  || '',
+    relevant_experience:   existingCandidate?.relevant_experience?.toString() || '',
+    current_ctc:           existingCandidate?.current_ctc?.toString()      || '',
+    expected_ctc:          existingCandidate?.expected_ctc?.toString()     || '',
+    notice_period:         existingCandidate?.notice_period?.toString()    || '',
+    education_level:       existingCandidate?.education_level       || '',
+    education_degree:      existingCandidate?.education_degree      || '',
+    education_field:       existingCandidate?.education_field       || '',
+    education_institution: existingCandidate?.education_institution || '',
+    source_portal:         existingCandidate?.source_portal         || 'Naukri',
+    notes:                 existingCandidate?.notes                 || '',
   })
 
   // ── Edit mode sync ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (existingCandidate && isEditMode) {
       setFormData({
-        full_name:            existingCandidate.full_name            || '',
-        email:                existingCandidate.email                || '',
-        phone:                existingCandidate.phone                || '',
-        gender:               existingCandidate.gender               || '',
-        date_of_birth:        existingCandidate.date_of_birth        || '',
-        current_location:     existingCandidate.current_location     || '',
-        job_id:               existingCandidate.job_id               || '',
-        current_company:      existingCandidate.current_company      || '',
-        current_designation:  existingCandidate.current_designation  || '',
-        total_experience:     existingCandidate.total_experience?.toString()  || '',
-        relevant_experience:  existingCandidate.relevant_experience?.toString() || '',
-        current_ctc:          existingCandidate.current_ctc?.toString()  || '',
-        expected_ctc:         existingCandidate.expected_ctc?.toString() || '',
-        notice_period:        existingCandidate.notice_period?.toString() || '',
-        education_level:      existingCandidate.education_level      || '',
-        education_degree:     existingCandidate.education_degree     || '',
-        education_field:      existingCandidate.education_field      || '',
-        education_institution:existingCandidate.education_institution || '',
-        source_portal:        existingCandidate.source_portal        || 'Naukri',
-        notes:                existingCandidate.notes                || '',
+        full_name:             existingCandidate.full_name             || '',
+        email:                 existingCandidate.email                 || '',
+        phone:                 existingCandidate.phone                 || '',
+        gender:                existingCandidate.gender                || '',
+        date_of_birth:         existingCandidate.date_of_birth         || '',
+        current_location:      existingCandidate.current_location      || '',
+        job_id:                existingCandidate.job_id                || '',
+        current_company:       existingCandidate.current_company       || '',
+        current_designation:   existingCandidate.current_designation   || '',
+        total_experience:      existingCandidate.total_experience?.toString()  || '',
+        relevant_experience:   existingCandidate.relevant_experience?.toString() || '',
+        current_ctc:           existingCandidate.current_ctc?.toString()  || '',
+        expected_ctc:          existingCandidate.expected_ctc?.toString() || '',
+        notice_period:         existingCandidate.notice_period?.toString() || '',
+        education_level:       existingCandidate.education_level       || '',
+        education_degree:      existingCandidate.education_degree      || '',
+        education_field:       existingCandidate.education_field       || '',
+        education_institution: existingCandidate.education_institution || '',
+        source_portal:         existingCandidate.source_portal         || 'Naukri',
+        notes:                 existingCandidate.notes                 || '',
       })
       setSelectedSkills(existingCandidate.key_skills || [])
       setAutoFilled(existingCandidate.auto_filled || false)
@@ -201,7 +205,7 @@ export default function AddCandidateForm({
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'text/plain',
     ]
-    const validExts  = ['.pdf', '.doc', '.docx', '.txt']
+    const validExts   = ['.pdf', '.doc', '.docx', '.txt']
     const hasValidExt = validExts.some(ext => file.name.toLowerCase().endsWith(ext))
     if (!validTypes.includes(file.type) && !hasValidExt) {
       alert('Please upload PDF, Word (.docx), or Text file only')
@@ -217,24 +221,24 @@ export default function AddCandidateForm({
     setRedFlagResult(null)
 
     try {
-      const parsed = await parseResumeWithAI(file)
-      const rawText = parsed.rawText || ''
+      const parsed      = await parseResumeWithAI(file)
+      const rawText     = parsed.rawText || ''
       setResumeRawText(rawText)
 
       setFormData(prev => ({
         ...prev,
-        full_name:             parsed.full_name            || prev.full_name,
-        email:                 parsed.email                || prev.email,
-        phone:                 parsed.phone                || prev.phone,
-        gender:                parsed.gender               || prev.gender,
-        date_of_birth:         parsed.date_of_birth        || prev.date_of_birth,
-        current_location:      parsed.current_location     || prev.current_location,
-        current_company:       parsed.current_company      || prev.current_company,
-        current_designation:   parsed.current_designation  || prev.current_designation,
+        full_name:             parsed.full_name             || prev.full_name,
+        email:                 parsed.email                 || prev.email,
+        phone:                 parsed.phone                 || prev.phone,
+        gender:                parsed.gender                || prev.gender,
+        date_of_birth:         parsed.date_of_birth         || prev.date_of_birth,
+        current_location:      parsed.current_location      || prev.current_location,
+        current_company:       parsed.current_company       || prev.current_company,
+        current_designation:   parsed.current_designation   || prev.current_designation,
         total_experience:      parsed.total_experience != null ? parsed.total_experience.toString() : prev.total_experience,
-        current_ctc:           parsed.current_ctc     != null ? parsed.current_ctc.toString()      : prev.current_ctc,
-        expected_ctc:          parsed.expected_ctc    != null ? parsed.expected_ctc.toString()     : prev.expected_ctc,
-        notice_period:         parsed.notice_period   != null ? parsed.notice_period.toString()    : prev.notice_period,
+        current_ctc:           parsed.current_ctc      != null ? parsed.current_ctc.toString()      : prev.current_ctc,
+        expected_ctc:          parsed.expected_ctc     != null ? parsed.expected_ctc.toString()     : prev.expected_ctc,
+        notice_period:         parsed.notice_period    != null ? parsed.notice_period.toString()    : prev.notice_period,
         education_level:       parsed.education_level       || prev.education_level,
         education_degree:      parsed.education_degree      || prev.education_degree,
         education_field:       parsed.education_field       || prev.education_field,
@@ -250,7 +254,6 @@ export default function AddCandidateForm({
         expected_ctc:     parsed.expected_ctc     ?? null,
       })
 
-      // ── Run red flag detection immediately after parsing ─────────────────
       if (rawText.length > 100) {
         const flags = detectRedFlags(rawText, parsed.total_experience ?? null)
         setRedFlagResult(flags)
@@ -268,6 +271,8 @@ export default function AddCandidateForm({
   }
 
   // ── Duplicate check ─────────────────────────────────────────────────────────
+  // Returns true if a duplicate is found and sets duplicateWarning/duplicateCandidate.
+  // When duplicateWarning is truthy, the submit button is DISABLED — no bypass.
   const checkDuplicate = async (phone: string, email: string) => {
     if (!phone && !email) return false
     try {
@@ -282,15 +287,21 @@ export default function AddCandidateForm({
       if (data && data.length > 0) {
         const existing = data[0]
         setDuplicateCandidate(existing)
-        setDuplicateWarning(`DUPLICATE FOUND!\n\nName: ${existing.full_name}\nPhone: ${existing.phone}\nEmail: ${existing.email || 'N/A'}\nStage: ${existing.current_stage}`)
+        setDuplicateWarning(
+          `Name: ${existing.full_name}\nPhone: ${existing.phone}\nEmail: ${existing.email || 'N/A'}\nStage: ${existing.current_stage}`
+        )
         return true
       }
+      // No duplicate — clear any previous warning
       setDuplicateWarning('')
       setDuplicateCandidate(null)
       return false
-    } catch { return false }
+    } catch {
+      return false
+    }
   }
 
+  // Real-time duplicate check as recruiter types phone/email
   useEffect(() => {
     if (isEditMode) return
     const id = setTimeout(() => {
@@ -306,7 +317,11 @@ export default function AddCandidateForm({
     if (data) setSkillSuggestions(data.map((s: any) => s.skill_name))
   }
   const handleAddSkill    = (skill: string) => {
-    if (skill && !selectedSkills.includes(skill)) { setSelectedSkills([...selectedSkills, skill]); setSkillInput(''); setSkillSuggestions([]) }
+    if (skill && !selectedSkills.includes(skill)) {
+      setSelectedSkills([...selectedSkills, skill])
+      setSkillInput('')
+      setSkillSuggestions([])
+    }
   }
   const handleRemoveSkill = (s: string) => setSelectedSkills(selectedSkills.filter(x => x !== s))
 
@@ -315,7 +330,8 @@ export default function AddCandidateForm({
     if (!user?.id || !jobId) return
     try {
       await fetch('/api/score-resume', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobId, candidateId, screenedBy: user.id }),
       })
     } catch {}
@@ -330,10 +346,8 @@ export default function AddCandidateForm({
   ) => {
     if (!user?.id) return
     try {
-      // Resolve reporting chain — TL + Sr.TL + Management
       const recipients = await resolveRecipients(user.id)
-      // Exclude the recruiter themselves — they already know
-      const managers = recipients.filter(id => id !== user.id)
+      const managers   = recipients.filter(id => id !== user.id)
       if (managers.length === 0) return
 
       const flagSummary = flags.flags
@@ -362,7 +376,7 @@ export default function AddCandidateForm({
   const performSave = async (normalizedSkills: string[], candidateData: any) => {
     let resumeUrl = null
     if (resumeFile) {
-      const fileExt = resumeFile.name.split('.').pop()
+      const fileExt  = resumeFile.name.split('.').pop()
       const fileName = `${Date.now()}_${formData.full_name.replace(/\s+/g, '_')}.${fileExt}`
       const { error: uploadError } = await supabase.storage
         .from('resumes').upload(`resumes/${fileName}`, resumeFile)
@@ -388,9 +402,8 @@ export default function AddCandidateForm({
         resume_parsed:        autoFilled,
         auto_filled:          autoFilled,
         auto_fill_confidence: parseConfidence,
-        // Store red flags on candidate record
         red_flags:            redFlagResult?.hasFlags ? JSON.stringify(redFlagResult.flags) : null,
-        has_red_flags:        redFlagResult?.hasFlags || false,
+        has_red_flags:        redFlagResult?.hasFlags   || false,
         red_flag_critical:    redFlagResult?.hasCritical || false,
       }])
       .select()
@@ -400,36 +413,44 @@ export default function AddCandidateForm({
     const newCandidateId = data[0].id
 
     await supabase.from('candidate_timeline').insert([{
-      candidate_id:     newCandidateId,
-      activity_type:    'candidate_created',
-      activity_title:   'Candidate Created',
+      candidate_id:         newCandidateId,
+      activity_type:        'candidate_created',
+      activity_title:       'Candidate Created',
       activity_description: autoFilled
         ? `Candidate added via Talent IQ resume parsing (${(parseConfidence * 100).toFixed(0)}% confidence)`
         : 'Candidate added manually',
       metadata: {
-        auto_filled:    autoFilled,
-        confidence:     parseConfidence,
-        skills_count:   normalizedSkills.length,
-        red_flags:      redFlagResult?.flags.length || 0,
-        flag_critical:  redFlagResult?.hasCritical || false,
+        auto_filled:   autoFilled,
+        confidence:    parseConfidence,
+        skills_count:  normalizedSkills.length,
+        red_flags:     redFlagResult?.flags.length || 0,
+        flag_critical: redFlagResult?.hasCritical  || false,
       },
       performed_by: user.id,
     }])
 
-    // Notify TL/Sr.TL if red flags were found
     if (redFlagResult?.hasFlags) {
       const jobTitle = jobs.find(j => j.id === formData.job_id)?.job_title || 'Unknown Job'
       await notifyRedFlagToHierarchy(newCandidateId, formData.full_name, jobTitle, redFlagResult)
     }
 
     saveMatchScore(newCandidateId, formData.job_id || null)
-
     return newCandidateId
   }
 
   // ── Submit handler ──────────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // ── HARD DUPLICATE BLOCK ─────────────────────────────────────────────────
+    // If a duplicate is already detected (set by real-time check or resume parse),
+    // stop immediately. The submit button is also disabled in the UI as a second
+    // guard, but we defend here too in case the button is invoked programmatically.
+    if (!isEditMode && duplicateWarning) {
+      // Scroll the duplicate banner into view so the recruiter can see why
+      document.getElementById('duplicate-banner')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
 
     const errors: Record<string, string> = {}
     if (!formData.full_name.trim())        errors.full_name        = 'Full name is required'
@@ -452,32 +473,33 @@ export default function AddCandidateForm({
     }
     setFormErrors({})
 
+    // ── Final duplicate re-check (catches any edge case where real-time missed) ─
+    // CHANGED: no confirm() bypass — block hard if duplicate found
     if (!isEditMode) {
       const isDuplicate = await checkDuplicate(formData.phone, formData.email)
       if (isDuplicate) {
-        const confirm = window.confirm(`DUPLICATE DETECTED!\n\n${duplicateWarning}\n\nAdd anyway?`)
-        if (!confirm) return
+        document.getElementById('duplicate-banner')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return  // ← Hard stop. No "Add anyway" option.
       }
     }
 
-    // ── Red flag gate — show modal instead of proceeding ───────────────────
+    // ── Red flag gate — show modal instead of proceeding ─────────────────────
     if (!isEditMode && redFlagResult?.hasFlags) {
-      // Prepare data for after confirmation
       let normalizedSkills = selectedSkills
       if (selectedSkills.length > 0) {
         const normalized = await normalizeSkills(selectedSkills)
-        normalizedSkills = normalized.normalized
+        normalizedSkills  = normalized.normalized
       }
       const candidateData = {
         ...formData,
-        total_experience:   parseFloat(formData.total_experience)  || 0,
-        relevant_experience:parseFloat(formData.relevant_experience)|| 0,
-        current_ctc:        parseFloat(formData.current_ctc)       || 0,
-        expected_ctc:       parseFloat(formData.expected_ctc)      || 0,
-        notice_period:      parseInt(formData.notice_period)       || 0,
-        key_skills:         normalizedSkills,
-        last_activity_date: new Date().toISOString(),
-        job_id: formData.job_id || null, // ✅ FIX HERE
+        total_experience:    parseFloat(formData.total_experience)   || 0,
+        relevant_experience: parseFloat(formData.relevant_experience) || 0,
+        current_ctc:         parseFloat(formData.current_ctc)        || 0,
+        expected_ctc:        parseFloat(formData.expected_ctc)       || 0,
+        notice_period:       parseInt(formData.notice_period)        || 0,
+        key_skills:          normalizedSkills,
+        last_activity_date:  new Date().toISOString(),
+        job_id:              formData.job_id || null,
       }
       setPendingSubmitData({ normalizedSkills, candidateData })
       setShowRedFlagModal(true)
@@ -489,7 +511,7 @@ export default function AddCandidateForm({
       let normalizedSkills = selectedSkills
       if (selectedSkills.length > 0) {
         const normalized = await normalizeSkills(selectedSkills)
-        normalizedSkills = normalized.normalized
+        normalizedSkills  = normalized.normalized
       }
       const candidateData = {
         ...formData,
@@ -500,18 +522,18 @@ export default function AddCandidateForm({
         notice_period:       parseInt(formData.notice_period)        || 0,
         key_skills:          normalizedSkills,
         last_activity_date:  new Date().toISOString(),
-        job_id: formData.job_id || null, // ✅ FIX HERE
+        job_id:              formData.job_id || null,
       }
 
       if (isEditMode && existingCandidate) {
         const { error } = await supabase.from('candidates').update(candidateData).eq('id', existingCandidate.id)
         if (error) throw error
         await supabase.from('candidate_timeline').insert([{
-          candidate_id:        existingCandidate.id,
-          activity_type:       'candidate_updated',
-          activity_title:      'Candidate Updated',
-          activity_description:'Candidate information was updated',
-          performed_by:        user.id,
+          candidate_id:         existingCandidate.id,
+          activity_type:        'candidate_updated',
+          activity_title:       'Candidate Updated',
+          activity_description: 'Candidate information was updated',
+          performed_by:         user.id,
         }])
         alert('Candidate updated successfully!')
         if (redirectPath) router.push(redirectPath)
@@ -524,11 +546,9 @@ export default function AddCandidateForm({
         else if (userRole === 'sr_team_leader') router.push('/sr-tl/candidates')
         else                                    router.push('/recruiter/dashboard')
       }
-    } 
-    catch (error: any) {
-    console.error('Submit error:', error)
-    alert('Error: ' + error.message)
-   
+    } catch (error: any) {
+      console.error('Submit error:', error)
+      alert('Error: ' + error.message)
     } finally {
       setLoading(false)
     }
@@ -547,13 +567,10 @@ export default function AddCandidateForm({
       else if (userRole === 'team_leader')    router.push('/tl/candidates')
       else if (userRole === 'sr_team_leader') router.push('/sr-tl/candidates')
       else                                    router.push('/recruiter/dashboard')
-    } 
-  catch (error: any) {
-  console.error('Submit error:', error)
-  alert('Error: ' + error.message)
-  
-  
-  } finally {
+    } catch (error: any) {
+      console.error('Submit error:', error)
+      alert('Error: ' + error.message)
+    } finally {
       setLoading(false)
       setPendingSubmitData(null)
     }
@@ -565,6 +582,11 @@ export default function AddCandidateForm({
       setFormErrors(prev => { const n = { ...prev }; delete n[e.target.name]; return n })
     }
   }
+
+  // ── Derived: is submission currently blocked? ───────────────────────────────
+  // True when a duplicate is detected in add mode. Used to disable the button
+  // and show the correct label.
+  const isBlockedByDuplicate = !isEditMode && !!duplicateWarning
 
   // ── Red Flag Modal ──────────────────────────────────────────────────────────
   const RedFlagModal = () => {
@@ -591,7 +613,6 @@ export default function AddCandidateForm({
 
           {/* Flags list */}
           <div className="px-6 py-4 space-y-3 max-h-72 overflow-y-auto">
-
             {criticalFlags.length > 0 && (
               <div>
                 <p className="text-xs font-bold text-red-700 uppercase tracking-wide mb-2">🔴 Critical Issues</p>
@@ -603,7 +624,6 @@ export default function AddCandidateForm({
                 ))}
               </div>
             )}
-
             {warningFlags.length > 0 && (
               <div>
                 <p className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">🟡 Warnings</p>
@@ -615,7 +635,6 @@ export default function AddCandidateForm({
                 ))}
               </div>
             )}
-
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <p className="text-xs text-blue-700">
                 <strong>Note:</strong> If you proceed, your Team Leader and Sr. Team Leader will be automatically notified of these red flags.
@@ -634,9 +653,7 @@ export default function AddCandidateForm({
             <button
               onClick={handleRedFlagProceed}
               className={`flex-1 px-4 py-2.5 rounded-lg font-semibold text-white transition
-                ${redFlagResult.hasCritical
-                  ? 'bg-red-600 hover:bg-red-700'
-                  : 'bg-amber-500 hover:bg-amber-600'}`}
+                ${redFlagResult.hasCritical ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-500 hover:bg-amber-600'}`}
             >
               {redFlagResult.hasCritical ? 'Proceed Anyway →' : 'Proceed →'}
             </button>
@@ -704,7 +721,6 @@ export default function AddCandidateForm({
               <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">⚠️ {parseError}</div>
             )}
 
-            {/* Parsing complete + red flag summary */}
             {autoFilled && !isEditMode && (
               <div className="space-y-2">
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
@@ -718,12 +734,9 @@ export default function AddCandidateForm({
                   </div>
                 </div>
 
-                {/* Red flag banner below parse complete */}
                 {redFlagResult?.hasFlags && (
                   <div className={`rounded-lg p-4 border-2 ${
-                    redFlagResult.hasCritical
-                      ? 'bg-red-50 border-red-300'
-                      : 'bg-amber-50 border-amber-300'
+                    redFlagResult.hasCritical ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-300'
                   }`}>
                     <div className="flex items-start gap-2">
                       <span className="text-xl mt-0.5">{redFlagResult.hasCritical ? '🔴' : '⚠️'}</span>
@@ -773,22 +786,56 @@ export default function AddCandidateForm({
         </div>
       )}
 
-      {/* Duplicate Warning */}
+      {/* ── DUPLICATE BANNER ──────────────────────────────────────────────────
+          CHANGED: no "Add Anyway" button. Banner is a hard block with a clear
+          message explaining why submission is disabled, plus a direct link to
+          the existing candidate record.
+      ───────────────────────────────────────────────────────────────────────── */}
       {duplicateWarning && !isEditMode && (
-        <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 mb-6">
-          <strong className="text-red-900">⚠️ DUPLICATE DETECTED!</strong>
-          <pre className="mt-2 text-sm whitespace-pre-wrap font-mono text-red-800">{duplicateWarning}</pre>
-          {duplicateCandidate && (
-            <button type="button"
-              onClick={() => {
-                const base = userRole === 'sr_team_leader' ? '/sr-tl' : userRole === 'team_leader' ? '/tl' : '/recruiter'
-                router.push(`${base}/candidates/${duplicateCandidate.id}`)
-              }}
-              className="mt-3 px-4 py-2 bg-white text-red-700 border border-red-300 rounded-lg text-sm font-medium hover:bg-red-50"
-            >
-              View Existing Candidate →
-            </button>
-          )}
+        <div
+          id="duplicate-banner"
+          className="bg-red-50 border-2 border-red-400 rounded-xl p-5 mb-6 shadow-sm"
+          role="alert"
+          aria-live="assertive"
+        >
+          {/* Title row */}
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-2xl">🚫</span>
+            <div>
+              <h3 className="text-red-900 font-bold text-base leading-tight">Duplicate Candidate — Submission Blocked</h3>
+              <p className="text-red-700 text-xs mt-0.5">
+                A candidate with this phone number or email already exists in the system.
+                Duplicate entries are not permitted.
+              </p>
+            </div>
+          </div>
+
+          {/* Existing record details */}
+          <div className="bg-white border border-red-200 rounded-lg p-3 mb-3">
+            <p className="text-xs font-semibold text-red-800 uppercase tracking-wide mb-2">Existing Record</p>
+            <pre className="text-sm text-red-800 font-mono whitespace-pre-wrap leading-relaxed">{duplicateWarning}</pre>
+          </div>
+
+          {/* Action — view existing, or resolve the conflict */}
+          <div className="flex flex-wrap items-center gap-3">
+            {duplicateCandidate && (
+              <button
+                type="button"
+                onClick={() => {
+                  const base = userRole === 'sr_team_leader' ? '/sr-tl'
+                             : userRole === 'team_leader'    ? '/tl'
+                             : '/recruiter'
+                  router.push(`${base}/candidates/${duplicateCandidate.id}`)
+                }}
+                className="px-4 py-2 bg-white text-red-700 border-2 border-red-400 rounded-lg text-sm font-semibold hover:bg-red-50 transition"
+              >
+                View Existing Candidate →
+              </button>
+            )}
+            <p className="text-xs text-red-600 italic">
+              To submit this candidate, first resolve the duplicate by updating or merging the existing record.
+            </p>
+          </div>
         </div>
       )}
 
@@ -822,13 +869,13 @@ export default function AddCandidateForm({
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Email ID <span className="text-red-500">*</span></label>
               <input type="email" name="email" value={formData.email} onChange={handleChange}
-                className={`input ${formErrors.email || (duplicateWarning && formData.email && !isEditMode) ? 'border-red-500 border-2' : ''}`} required />
+                className={`input ${formErrors.email || isBlockedByDuplicate ? 'border-red-500 border-2' : ''}`} required />
               {formErrors.email && <p className="text-xs text-red-600 mt-1">{formErrors.email}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Mobile Number <span className="text-red-500">*</span></label>
               <input type="tel" name="phone" value={formData.phone} onChange={handleChange}
-                className={`input ${formErrors.phone || (duplicateWarning && formData.phone && !isEditMode) ? 'border-red-500 border-2' : ''}`} required />
+                className={`input ${formErrors.phone || isBlockedByDuplicate ? 'border-red-500 border-2' : ''}`} required />
               {formErrors.phone && <p className="text-xs text-red-600 mt-1">{formErrors.phone}</p>}
             </div>
             <div>
@@ -862,7 +909,11 @@ export default function AddCandidateForm({
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">Job Role <span className="text-red-500">*</span></label>
             <select name="job_id" value={formData.job_id}
-              onChange={(e) => { handleChange(e); const found = jobs.find(j => j.id === e.target.value); setSelectedJobTitle(found?.job_title || '') }}
+              onChange={(e) => {
+                handleChange(e)
+                const found = jobs.find(j => j.id === e.target.value)
+                setSelectedJobTitle(found?.job_title || '')
+              }}
               className={`input ${formErrors.job_id ? 'border-red-500 border-2' : ''}`}
               required disabled={!!preSelectedJobId || !!jobFromUrl}
             >
@@ -1048,29 +1099,53 @@ export default function AddCandidateForm({
               </ul>
             </div>
           )}
+
+          {/*
+            CHANGED: submit button is DISABLED when isBlockedByDuplicate is true.
+            The label clearly communicates why it is blocked — no "Add Anyway" option.
+          */}
           <div className="flex gap-4">
-            <button type="submit" disabled={loading || (!isEditMode && jobs.length === 0)}
-              className={`btn-primary ${duplicateWarning && !isEditMode ? 'bg-orange-600 hover:bg-orange-700' : ''} ${redFlagResult?.hasCritical && !isEditMode ? 'bg-red-600 hover:bg-red-700' : ''}`}
+            <button
+              type="submit"
+              disabled={loading || (!isEditMode && jobs.length === 0) || isBlockedByDuplicate}
+              className={`btn-primary
+                ${isBlockedByDuplicate
+                  ? 'opacity-40 cursor-not-allowed bg-gray-400 hover:bg-gray-400'
+                  : redFlagResult?.hasCritical && !isEditMode
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : ''}
+              `}
+              title={isBlockedByDuplicate ? 'Submission blocked — duplicate candidate detected' : undefined}
             >
               {loading
                 ? (isEditMode ? 'Updating...' : 'Adding...')
-                : isEditMode
-                  ? 'Update Candidate'
-                  : redFlagResult?.hasCritical
-                    ? '⚠️ Submit with Red Flags'
-                    : redFlagResult?.hasWarnings
-                      ? '🟡 Submit with Warnings'
-                      : duplicateWarning
-                        ? 'Add Anyway'
+                : isBlockedByDuplicate
+                  ? '🚫 Blocked — Duplicate Exists'
+                  : isEditMode
+                    ? 'Update Candidate'
+                    : redFlagResult?.hasCritical
+                      ? '⚠️ Submit with Red Flags'
+                      : redFlagResult?.hasWarnings
+                        ? '🟡 Submit with Warnings'
                         : autoFilled
                           ? '💾 Save AI-Parsed Candidate'
                           : 'Add Candidate'}
             </button>
-            <button type="button" onClick={() => router.back()}
-              className="bg-white border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-medium hover:border-gray-400">
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="bg-white border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-medium hover:border-gray-400"
+            >
               Cancel
             </button>
           </div>
+
+          {/* Inline reminder below the button when blocked */}
+          {isBlockedByDuplicate && (
+            <p className="mt-3 text-xs text-red-600 font-medium">
+              ⛔ Submission is blocked because a duplicate record was found. View the existing candidate above to resolve this.
+            </p>
+          )}
         </div>
       </form>
     </div>
