@@ -308,7 +308,7 @@ export default function AttendancePage() {
           user_id: user.id,
           date: today,
           sign_in_time: now.toISOString(),
-          status: 'pending',
+          status: 'present',
           is_late_arrival: isLate,
           is_half_day_in: isHalfDayIn,
           late_count_this_month: lateCount || 0,
