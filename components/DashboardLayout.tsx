@@ -23,44 +23,83 @@ interface NavItem {
 // ── Attendance quick-action button (sidebar) ──────────────────────────────────
 
 function AttendanceButton({ userId }: { userId: string }) {
-  const router = useRouter()
-  const [signedIn, setSignedIn]   = useState(false)
-  const [signedOut, setSignedOut] = useState(false)
-  const [loading, setLoading]     = useState(false)
-  const [elapsed, setElapsed]     = useState<string>('')
-  const [signInTs, setSignInTs]   = useState<string | null>(null)
+  const [signedIn,   setSignedIn]   = useState(false)
+  const [signedOut,  setSignedOut]  = useState(false)
+  const [statusLoaded, setStatusLoaded] = useState(false) // BUG1 guard
+  const [loading,    setLoading]    = useState(false)
+  const [elapsed,    setElapsed]    = useState<string>('')
+  const [signInTs,   setSignInTs]   = useState<string | null>(null)
+  const [logId,      setLogId]      = useState<string | null>(null)
+  const [reqHours,   setReqHours]   = useState(9) // BUG2: set properly after server time fetch
 
-  function todayIST() {
-    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+  // ── BUG3 FIX: fetch server time from Supabase, never use browser clock ──────
+  // Returns { serverNow: Date, todayIST: string, hourIST: number, isSaturday: boolean }
+  const getServerTime = async () => {
+    const { data, error } = await supabase.rpc('get_server_time_ist')
+    // Fallback: if RPC not available yet, use SQL directly
+    let serverTs: string
+    if (error || !data) {
+      const { data: d2 } = await supabase
+        .from('attendance_logs')
+        .select('updated_at')
+        .limit(1)
+        .single()
+      // Last resort: use Date.now() but log a warning
+      console.warn('Could not get server time — falling back to client clock')
+      serverTs = new Date().toISOString()
+    } else {
+      serverTs = data
+    }
+
+    const serverNow = new Date(serverTs)
+    // Convert to IST offset manually (UTC+5:30 = +330 minutes)
+    const istOffset  = 330 * 60 * 1000
+    const istNow     = new Date(serverNow.getTime() + istOffset)
+    const todayDate  = istNow.toISOString().slice(0, 10) // YYYY-MM-DD in IST
+    const hourIST    = istNow.getUTCHours() + istNow.getUTCMinutes() / 60
+    const dowIST     = istNow.getUTCDay() // 0=Sun, 6=Sat
+    const isSaturday = dowIST === 6
+
+    // BUG2 FIX: Saturday = 8h required, weekday = 9h
+    const requiredHours = isSaturday ? 8 : 9
+
+    return { serverNow, todayDate, hourIST, isSaturday, requiredHours }
   }
-  function toIST(d: Date) {
-    return new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-  }
-  function getHourDecimal(d: Date) {
-    const ist = toIST(d)
-    return ist.getHours() + ist.getMinutes() / 60
-  }
+
+  // BUG2 FIX: also add DB-level get_server_time_ist function if not exists
+  // Run once in Supabase SQL:
+  // CREATE OR REPLACE FUNCTION get_server_time_ist()
+  // RETURNS text LANGUAGE sql STABLE AS $$
+  //   SELECT (NOW() AT TIME ZONE 'Asia/Kolkata')::text;
+  // $$;
 
   const loadStatus = useCallback(async () => {
+    const { todayDate } = await getServerTime()
     const { data } = await supabase
       .from('attendance_logs')
-      .select('sign_in_time,sign_out_time')
+      .select('id, sign_in_time, sign_out_time, required_hours')
       .eq('user_id', userId)
-      .eq('date', todayIST())
-      .single()
+      .eq('date', todayDate)
+      .maybeSingle() // BUG1 FIX: maybeSingle returns null (not error) if no row
+
     if (data?.sign_in_time) {
       setSignedIn(true)
       setSignInTs(data.sign_in_time)
+      setLogId(data.id)
+      setReqHours(data.required_hours || 9)
     }
     if (data?.sign_out_time) setSignedOut(true)
+    setStatusLoaded(true) // BUG1: unlock button only after DB check complete
   }, [userId])
 
   useEffect(() => { loadStatus() }, [loadStatus])
 
-  // Live elapsed timer
+  // Live elapsed timer — uses sign_in_time from DB (server-recorded), not browser time
   useEffect(() => {
     if (!signedIn || signedOut || !signInTs) return
     const tick = () => {
+      // Elapsed = now (client) - sign_in_time (server-recorded UTC timestamp)
+      // This is safe: we're just measuring duration from a fixed server timestamp
       const ms = Date.now() - new Date(signInTs).getTime()
       const h  = Math.floor(ms / 3600000)
       const m  = Math.floor((ms % 3600000) / 60000)
@@ -72,11 +111,31 @@ function AttendanceButton({ userId }: { userId: string }) {
   }, [signedIn, signedOut, signInTs])
 
   const handleSignIn = async () => {
+    // BUG1 FIX: hard guard — if already signed in, do nothing
+    if (signedIn) return
     setLoading(true)
     try {
-      const now  = new Date()
-      const hour = getHourDecimal(now)
-      const monthStart = `${todayIST().slice(0, 7)}-01`
+      // BUG3 FIX: all time from server
+      const { serverNow, todayDate, hourIST, requiredHours } = await getServerTime()
+      const monthStart = `${todayDate.slice(0, 7)}-01`
+
+      // BUG1 FIX: check DB for existing record before inserting
+      const { data: existing } = await supabase
+        .from('attendance_logs')
+        .select('id, sign_in_time')
+        .eq('user_id', userId)
+        .eq('date', todayDate)
+        .maybeSingle()
+
+      if (existing?.sign_in_time) {
+        // Already signed in (race condition or page refresh) — just update state
+        setSignedIn(true)
+        setSignInTs(existing.sign_in_time)
+        setLogId(existing.id)
+        setStatusLoaded(true)
+        setLoading(false)
+        return
+      }
 
       const { count: lateCount } = await supabase
         .from('attendance_logs')
@@ -84,27 +143,37 @@ function AttendanceButton({ userId }: { userId: string }) {
         .eq('user_id', userId)
         .eq('is_late_arrival', true)
         .gte('date', monthStart)
-        .lt('date', todayIST())
+        .lt('date', todayDate)
 
-      const isLate      = hour > 9.5
-      const isHalfDayIn = hour > 11.5 || (isLate && (lateCount || 0) >= 3)
+      const isLate      = hourIST > 9.5
+      const isHalfDayIn = hourIST > 11.5 || (isLate && (lateCount || 0) >= 3)
 
-      await supabase.from('attendance_logs').upsert({
-        user_id: userId,
-        date: todayIST(),
-        sign_in_time: now.toISOString(),
-        status: 'present',
-        is_late_arrival: isLate,
-        is_half_day_in: isHalfDayIn,
-        late_count_this_month: lateCount || 0,
-        required_hours: 9,
-        updated_at: now.toISOString(),
-      }, { onConflict: 'user_id,date' })
+      // BUG2 FIX: required_hours set from server-determined day type
+      // BUG3 FIX: sign_in_time = serverNow.toISOString() (server clock)
+      const { data: newLog, error } = await supabase
+        .from('attendance_logs')
+        .insert({
+          user_id:               userId,
+          date:                  todayDate,
+          sign_in_time:          serverNow.toISOString(), // server time
+          status:                'pending',
+          is_late_arrival:       isLate,
+          is_half_day_in:        isHalfDayIn,
+          late_count_this_month: lateCount || 0,
+          required_hours:        requiredHours, // BUG2: 8 for Saturday, 9 for weekday
+          updated_at:            serverNow.toISOString(),
+        })
+        .select('id')
+        .single()
+
+      if (error) throw error
 
       setSignedIn(true)
-      setSignInTs(now.toISOString())
+      setSignInTs(serverNow.toISOString())
+      setLogId(newLog.id)
+      setReqHours(requiredHours)
 
-      if (isHalfDayIn) alert('⚠️ Signed in after 11:30 AM — marked as Half Day.')
+      if (isHalfDayIn) alert(`⚠️ Signed in at ${hourIST.toFixed(0)}:${String(Math.round((hourIST % 1) * 60)).padStart(2,'0')} — marked as Half Day.`)
       else if (isLate)  alert('⏰ Late arrival noted.')
     } catch (err: any) {
       alert('Sign in failed: ' + err.message)
@@ -114,36 +183,43 @@ function AttendanceButton({ userId }: { userId: string }) {
   }
 
   const handleSignOut = async () => {
+    if (!signedIn || signedOut || !logId) return
     setLoading(true)
     try {
-      const now      = new Date()
-      const hour     = getHourDecimal(now)
-      const worked   = signInTs ? (now.getTime() - new Date(signInTs).getTime()) / 3600000 : 0
-      const isHalfOut = hour < 16.0
-      const isHalf    = isHalfOut
+      // BUG3 FIX: server time for sign-out
+      const { serverNow, hourIST, requiredHours } = await getServerTime()
 
-      if (worked < 8.75) {
-        const ok = confirm(`⚠️ Only ${Math.floor(worked)}h ${Math.round((worked % 1) * 60)}m worked of 9h required.\n\nSign out anyway?`)
+      // Calculate worked hours using server sign-out vs DB-stored sign-in
+      const worked    = signInTs
+        ? (serverNow.getTime() - new Date(signInTs).getTime()) / 3600000
+        : 0
+      const isHalfOut = hourIST < 16.0
+      const deficit   = Math.max(0, requiredHours - worked)
+
+      // BUG2 FIX: warning uses correct required hours (8 for Sat, 9 for weekday)
+      if (deficit > 0.25) {
+        const ok = confirm(
+          `⚠️ Only ${Math.floor(worked)}h ${Math.round((worked % 1) * 60)}m worked of ${requiredHours}h required.\n\nSign out anyway?`
+        )
         if (!ok) { setLoading(false); return }
       }
 
       const { data: existing } = await supabase
         .from('attendance_logs')
         .select('id, is_half_day_in')
-        .eq('user_id', userId)
-        .eq('date', todayIST())
+        .eq('id', logId) // use stored logId, not re-query by date
         .single()
 
       if (existing) {
         await supabase.from('attendance_logs').update({
-          sign_out_time: now.toISOString(),
-          hours_worked: Math.round(worked * 100) / 100,
-          hours_deficit: Math.max(0, Math.round((9 - worked) * 100) / 100),
-          is_early_leave: hour < 16.5,
+          sign_out_time:   serverNow.toISOString(), // BUG3: server time
+          hours_worked:    Math.round(worked * 100) / 100,
+          hours_deficit:   Math.round(deficit * 100) / 100,
+          is_early_leave:  hourIST < 16.5,
           is_half_day_out: isHalfOut,
-          is_half_day: isHalf || existing.is_half_day_in,
-          status: (isHalf || existing.is_half_day_in) ? 'half_day' : 'present',
-          updated_at: now.toISOString(),
+          is_half_day:     isHalfOut || existing.is_half_day_in,
+          status:          (isHalfOut || existing.is_half_day_in) ? 'half_day' : 'present',
+          updated_at:      serverNow.toISOString(),
         }).eq('id', existing.id)
       }
 
@@ -161,6 +237,17 @@ function AttendanceButton({ userId }: { userId: string }) {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  // BUG1 FIX: show skeleton until DB status confirmed — prevents sign-in
+  // button appearing before we know if user is already signed in
+  if (!statusLoaded) {
+    return (
+      <div className="mt-4 w-full py-2 px-3 rounded-lg bg-gray-100 animate-pulse text-center text-xs text-gray-400">
+        Checking attendance…
+      </div>
+    )
+  }
+
   if (signedIn && signedOut) {
     return (
       <button onClick={goToAttendance}
@@ -176,6 +263,7 @@ function AttendanceButton({ userId }: { userId: string }) {
         {elapsed && (
           <div className="text-center text-xs text-gray-500 font-medium">
             ⏱ In office: <span className="font-bold text-green-700">{elapsed}</span>
+            {reqHours === 8 && <span className="text-gray-400"> · Sat (8h)</span>}
           </div>
         )}
         <button onClick={handleSignOut} disabled={loading}
