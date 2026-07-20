@@ -42,7 +42,7 @@ function ExitModal({
 
   const fetchOpenCandidates = async () => {
     setLoadingCands(true)
-    const TERMINAL = ['joined','renege','screening_rejected','interview_rejected']
+    const TERMINAL = ['joined','renege','screening_rejected','interview_rejected','offer_rejected','on_hold']
     const { data } = await supabase
       .from('candidates')
       .select('id, full_name, current_stage, jobs(job_title)')
@@ -326,6 +326,7 @@ export default function UsersManagementPage() {
     annual_target:      '',
     target_start_date:  '',
     target_end_date:    '',
+    date_of_birth:      '',
   })
 
   useEffect(() => {
@@ -514,6 +515,7 @@ export default function UsersManagementPage() {
             annual_target:    formData.annual_target    ? parseFloat(formData.annual_target)    : null,
             target_start_date:formData.target_start_date || null,
             target_end_date:  formData.target_end_date  || null,
+            date_of_birth:    formData.date_of_birth    || null,
             hierarchy_level:  getHierarchyLevel(formData.role),
             updated_at:       new Date().toISOString(),
           })
@@ -545,6 +547,7 @@ export default function UsersManagementPage() {
             annual_target:    formData.annual_target    ? parseFloat(formData.annual_target)    : null,
             target_start_date:formData.target_start_date || null,
             target_end_date:  formData.target_end_date  || null,
+            date_of_birth:    formData.date_of_birth    || null,
             hierarchy_level:  getHierarchyLevel(formData.role),
             is_active:        true,
             created_at:       new Date().toISOString(),
@@ -565,7 +568,7 @@ export default function UsersManagementPage() {
   const resetForm = () => setFormData({
     email:'', full_name:'', role:'recruiter', team_id:'', reports_to:'',
     job_title:'', monthly_target:'', quarterly_target:'', annual_target:'',
-    target_start_date:'', target_end_date:'',
+    target_start_date:'', target_end_date:'', date_of_birth:'',
   })
 
   const getHierarchyLevel = (role: string): number => ({
@@ -586,6 +589,7 @@ export default function UsersManagementPage() {
       annual_target:    user.annual_target?.toString()    || '',
       target_start_date:user.target_start_date || '',
       target_end_date:  user.target_end_date   || '',
+      date_of_birth:    user.date_of_birth     || '',
     })
     setShowAddForm(true)
     window.scrollTo({ top:0, behavior:'smooth' })
@@ -692,6 +696,16 @@ export default function UsersManagementPage() {
                     <input type="text" value={formData.job_title}
                       onChange={e => setFormData({ ...formData, job_title: e.target.value })}
                       className="input" placeholder="e.g., Senior Recruiter" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Date of Birth
+                      <span className="ml-2 text-xs text-blue-600 font-normal">(used for Birthday Leave)</span>
+                    </label>
+                    <input type="date" value={formData.date_of_birth}
+                      onChange={e => setFormData({ ...formData, date_of_birth: e.target.value })}
+                      className="input"
+                      max={new Date().toISOString().slice(0, 10)} />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Role *</label>
