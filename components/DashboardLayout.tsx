@@ -93,7 +93,7 @@ function AttendanceButton({ userId }: { userId: string }) {
         user_id: userId,
         date: todayIST(),
         sign_in_time: now.toISOString(),
-        status: 'pending',
+        status: 'present',
         is_late_arrival: isLate,
         is_half_day_in: isHalfDayIn,
         late_count_this_month: lateCount || 0,
