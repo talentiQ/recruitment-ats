@@ -18,7 +18,7 @@ const MAX_LATE_GRACE = 3          // times per month before half-day
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AttendanceStatus = 'present' | 'half_day' | 'absent' | 'leave' | 'lop' | 'holiday' | 'weekend' | 'pending'
+type AttendanceStatus = 'present' | 'half_day' | 'absent' | 'leave' | 'lop' | 'holiday' | 'weekend'
 type LeaveType = 'PL' | 'EL' | 'LOP' | 'BL'
 type Tab = 'today' | 'calendar' | 'leave'
 
@@ -128,7 +128,7 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string; 
   lop:      { label: 'LOP',       bg: '#fdf2f8', color: '#9d174d', dot: '#ec4899' },
   holiday:  { label: 'Holiday',   bg: '#f5f3ff', color: '#6d28d9', dot: '#8b5cf6' },
   weekend:  { label: 'Weekend',   bg: '#f8fafc', color: '#64748b', dot: '#94a3b8' },
-  pending:  { label: 'In Office', bg: '#ecfdf5', color: '#047857', dot: '#10b981' },
+
 }
 
 const LEAVE_LABELS: Record<LeaveType, string> = {
@@ -330,7 +330,7 @@ export default function AttendancePage() {
           user_id: user.id,
           date: today,
           sign_in_time: now.toISOString(),
-          status: 'pending',
+          status: 'present',
           is_late_arrival: isLate,
           is_half_day_in: isHalfDayIn,
           late_count_this_month: lateCount || 0,
@@ -479,7 +479,7 @@ export default function AttendancePage() {
   const isOut     = !!todayLog?.sign_out_time
   const reqHrs    = todayLog?.required_hours || REQUIRED_HOURS_WEEKDAY
   const pct       = elapsed !== null ? Math.min(100, (elapsed / reqHrs) * 100) : 0
-  const statusCfg = todayLog ? (STATUS_CONFIG[todayLog.status] || STATUS_CONFIG.pending) : STATUS_CONFIG.absent
+  const statusCfg = todayLog ? (STATUS_CONFIG[todayLog.status] || STATUS_CONFIG.present) : STATUS_CONFIG.absent
 
   if (loading) return (
     <DashboardLayout>
