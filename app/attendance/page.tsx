@@ -96,8 +96,28 @@ function formatHours(h: number | null): string {
   return `${hrs}h ${mins}m`
 }
 
+// BUG3 FIX: todayIST() for display only — never use for attendance recording
 function todayIST(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+}
+
+// BUG3 + BUG2 FIX: authoritative server time for all attendance writes
+async function getServerTime(sb: ReturnType<typeof import('@/lib/supabase')['supabase']['from']> | any) {
+  const { data, error } = await sb.rpc('get_server_time_ist')
+  const serverTs = (!error && data) ? data : new Date().toISOString()
+  const serverNow = new Date(serverTs)
+  // Convert to IST by adding 330 minutes (UTC+5:30)
+  const istOffset = 330 * 60 * 1000
+  const istNow    = new Date(serverNow.getTime() + istOffset)
+  const todayDate = istNow.toISOString().slice(0, 10)
+  const hourIST   = istNow.getUTCHours() + istNow.getUTCMinutes() / 60
+  const dowIST    = istNow.getUTCDay() // 0=Sun, 6=Sat
+  // BUG2 FIX: 2nd and 4th Saturday = non-working; other Saturday = 8h; weekday = 9h
+  const isSat = dowIST === 6
+  const weekOfMonth = Math.ceil(istNow.getUTCDate() / 7)
+  const isWorkingSat = isSat && ![2, 4].includes(weekOfMonth)
+  const requiredHours = isWorkingSat ? 8 : 9
+  return { serverNow, todayDate, hourIST, isWorkingSat, requiredHours }
 }
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string; dot: string }> = {
@@ -188,13 +208,15 @@ export default function AttendancePage() {
   }
 
   const loadToday = async (userId: string) => {
-    const today = todayIST()
+    // BUG1 FIX: use maybeSingle() so missing record returns null, not error
+    // BUG3 FIX: get today's date from server, not browser
+    const { todayDate } = await getServerTime(supabase)
     const { data } = await supabase
       .from('attendance_logs')
       .select('*')
       .eq('user_id', userId)
-      .eq('date', today)
-      .single()
+      .eq('date', todayDate)
+      .maybeSingle()
     setTodayLog(data || null)
     if (data?.sign_in_time && !data.sign_out_time) {
       const hrs = (Date.now() - new Date(data.sign_in_time).getTime()) / 3600000
@@ -308,7 +330,7 @@ export default function AttendancePage() {
           user_id: user.id,
           date: today,
           sign_in_time: now.toISOString(),
-          status: 'present',
+          status: 'pending',
           is_late_arrival: isLate,
           is_half_day_in: isHalfDayIn,
           late_count_this_month: lateCount || 0,
