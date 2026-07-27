@@ -252,14 +252,15 @@ export default function AttendancePage() {
       const isHalfDayIn = hourIST > HALF_DAY_IN_HOUR || (isLate && (lateCount||0) >= MAX_LATE_GRACE)
 
       // FIX: INSERT (not upsert) — unique constraint catches race conditions
-      // FIX: status = 'pending' is correct for mid-day; sign-out resolves to 'present'/'half_day'
+      // FIX: status = 'present' on sign-in (in office = present by definition)
+      //      sign-out downgrades to 'half_day' only if hours/timing rules apply
       // FIX: required_hours = server-determined (8 for Saturday, 9 for weekday)
       const { data, error } = await supabase
         .from('attendance_logs').insert({
           user_id:               user.id,
           date:                  todayDate,
           sign_in_time:          serverNow.toISOString(),
-          status:                'pending',   // resolved to present/half_day at sign-out
+          status:                'present',   // present from sign-in; sign-out may downgrade to half_day
           is_late_arrival:       isLate,
           is_half_day_in:        isHalfDayIn,
           late_count_this_month: lateCount||0,
