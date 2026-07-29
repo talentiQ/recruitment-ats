@@ -200,7 +200,9 @@ export default function AttendancePage() {
     const days: CalendarDay[] = []
     const cur = new Date(yr, mo-1, 1)
     while (cur.getMonth() === mo-1) {
-      const ds  = cur.toISOString().slice(0,10)
+      // FIX: build date string arithmetically — never use toISOString() which returns UTC
+      // and can shift the date by one day for IST (UTC+5:30)
+      const ds  = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`
       const dow = cur.getDay()
       const isWeekend = dow===0 || (dow===6 && [2,4].includes(Math.ceil(cur.getDate()/7)))
       const log = logMap[ds]
