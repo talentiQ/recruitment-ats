@@ -137,9 +137,9 @@ async function fetchFreedomRewards(sb:ReturnType<typeof createClientComponentCli
     offersData=offers||[]
   }
 
-  const joinedIds=new Set((camCands||[]).filter((c:any)=>c.current_stage==='joined').map((c:any)=>c.id))
+  // joinedIds no longer needed — offer.status is the source of truth (see offer loop below)
 
-  // Stage → bucket mapping
+  // Stage → CV bucket mapping (for counting CVs by pipeline stage)
   const BUCKETS:Record<string,string>={
     screening:'cvSentToClient',interview_scheduled:'cvInterview',interview_completed:'cvInterview',
     documentation:'cvDocumentation',offer_extended:'cvOffer',offer_accepted:'cvOffer',
@@ -152,19 +152,43 @@ async function fetchFreedomRewards(sb:ReturnType<typeof createClientComponentCli
   const mk=(u:any):FreedomRow=>userMap[u.id]||(userMap[u.id]={id:u.id,full_name:u.full_name,role:u.role,cvSentToClient:0,cvInterview:0,cvDocumentation:0,cvOffer:0,cvJoined:0,cvRejected:0,cvRenege:0,totalActiveCVs:0,cvRewardUnits:0,cvRewardAmount:0,offerValue:0,offerRewardAmount:0,offerRewardEligible:false,joiningValue:0,joiningRewardAmount:0,joiningRewardEligible:false,totalReward:0})
   users.forEach(mk)
 
+  // Build candidate map for quick lookup
+  const candMap:Record<string,any>={}
+  ;(camCands||[]).forEach((c:any)=>{ candMap[c.id]=c })
+
+  // CV stage counts (pipeline position for each campaign candidate)
   for(const c of(camCands||[])as any[]){
     const row=userMap[c.assigned_to];if(!row)continue
     row.totalActiveCVs++
     const b=BUCKETS[c.current_stage];if(b)(row as any)[b]++
-    if(c.current_stage==='joined')row.joiningValue+=c.revenue_earned||0
   }
 
+  // Joining value: sum revenue_earned from offers with status='joined'
+  // (more reliable than candidate.current_stage which can lag)
   for(const o of offersData){
-    if(joinedIds.has(o.candidate_id)||o.status!=='accepted')continue
-    const cand=(camCands||[]).find((c:any)=>c.id===o.candidate_id)as any
-    if(!cand)continue
+    if(o.status!=='joined') continue
+    const cand=candMap[o.candidate_id];if(!cand)continue
     const row=userMap[cand.assigned_to];if(!row)continue
-    row.offerValue+=(o.billable_ctc||0)*(o.revenue_percentage||8.33)/100
+    // Use candidate.revenue_earned (already computed by trigger) as source of truth
+    row.joiningValue += cand.revenue_earned || 0
+  }
+
+  // One-reward rule: use offer.status as the source of truth
+  // offer.status = 'joined'   → candidate actually joined → joining reward (via revenue_earned on candidate)
+  // offer.status = 'accepted' → offer accepted, not yet joined → offer reward
+  // Do NOT use candidate.current_stage — it can lag behind offer.status
+  for(const o of offersData){
+    const cand = candMap[o.candidate_id]
+    if(!cand) continue
+    const row = userMap[cand.assigned_to]
+    if(!row) continue
+
+    if(o.status === 'accepted'){
+      // Offer accepted, not yet joined → counts toward offer reward
+      row.offerValue += (o.billable_ctc||0) * (o.revenue_percentage||8.33) / 100
+    }
+    // 'joined' offers are already counted via candidate.revenue_earned in the candidate loop above
+    // No double-counting needed here
   }
 
   for(const row of Object.values(userMap)){
