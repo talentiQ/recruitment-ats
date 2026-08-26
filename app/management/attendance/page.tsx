@@ -38,6 +38,10 @@ interface BalanceRow {
   birthday_leave_granted: boolean; birthday_leave_used: boolean
 }
 
+interface EditingLog {
+  user_id: string; full_name: string; date: string
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function toIST(d: Date) { return new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })) }
@@ -45,6 +49,10 @@ function todayIST() { return new Date().toLocaleDateString('en-CA', { timeZone: 
 function formatTime(ts: string | null) {
   if (!ts) return '—'
   return toIST(new Date(ts)).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+}
+function monthEndDate(month: string) {
+  const [y, m] = month.split('-').map(Number)
+  return new Date(y, m, 0).toISOString().slice(0, 10)
 }
 
 const STATUS_DOT: Record<string, { color: string; bg: string; label: string }> = {
@@ -65,6 +73,8 @@ const ROLE_LABEL: Record<string, string> = {
 const LEAVE_LABELS: Record<string, string> = {
   PL: 'Paid Leave', EL: 'Earned Leave', LOP: 'Loss of Pay', BL: 'Birthday Leave',
 }
+
+const EDITABLE_STATUSES = ['present', 'half_day', 'absent', 'leave', 'lop', 'holiday']
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
@@ -103,6 +113,12 @@ export default function ManagementAttendancePage() {
   // Balances
   const [balances, setBalances] = useState<BalanceRow[]>([])
   const [balanceLoading, setBalanceLoading] = useState(false)
+
+  // ── Edit attendance (management override) ──────────────────────────────────
+  const [editingLog, setEditingLog] = useState<EditingLog | null>(null)
+  const [editForm, setEditForm] = useState({ status: '', sign_in_time: '', sign_out_time: '', notes: '' })
+  const [savingEditLog, setSavingEditLog] = useState(false)
+  const [reportEditDate, setReportEditDate] = useState<Record<string, string>>({})
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -307,6 +323,52 @@ export default function ManagementAttendancePage() {
     if (!error) setLeaveRequests(prev => prev.map(lr => lr.id === id ? { ...lr, status: action } : lr))
   }
 
+  // ── Edit attendance (management override) ──────────────────────────────────
+  const openEditLog = async (userId: string, fullName: string, date: string) => {
+    const { data } = await supabase
+      .from('attendance_logs')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('date', date)
+      .maybeSingle()
+
+    setEditingLog({ user_id: userId, full_name: fullName, date })
+    setEditForm({
+      status: data?.status || 'absent',
+      sign_in_time: data?.sign_in_time ? data.sign_in_time.slice(0, 16) : '',
+      sign_out_time: data?.sign_out_time ? data.sign_out_time.slice(0, 16) : '',
+      notes: '',
+    })
+  }
+
+  const handleSaveEditLog = async () => {
+    if (!editingLog) return
+    setSavingEditLog(true)
+    try {
+      const { error } = await supabase
+        .from('attendance_logs')
+        .upsert({
+          user_id: editingLog.user_id,
+          date: editingLog.date,
+          status: editForm.status,
+          sign_in_time: editForm.sign_in_time ? new Date(editForm.sign_in_time).toISOString() : null,
+          sign_out_time: editForm.sign_out_time ? new Date(editForm.sign_out_time).toISOString() : null,
+          edited_by: user.id,
+          edited_at: new Date().toISOString(),
+          notes: editForm.notes || null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,date' })
+      if (error) throw error
+      setEditingLog(null)
+      if (tab === 'today') loadAll()
+      else if (tab === 'report') loadReport(allMemberIds, reportMonth)
+    } catch (err: any) {
+      alert('Failed to update: ' + err.message)
+    } finally {
+      setSavingEditLog(false)
+    }
+  }
+
   // ── Excel export ──────────────────────────────────────────────────────────
   const exportExcel = async () => {
     const ExcelJS = (await import('exceljs')).default
@@ -356,12 +418,12 @@ export default function ManagementAttendancePage() {
     </DashboardLayout>
   )
 
-  const TCOLS = '170px 70px 100px 90px 90px 120px 80px 80px 80px'
-  const RCOLS = '160px 70px 100px 70px 70px 70px 70px 70px 70px 80px 80px'
+  const TCOLS = '170px 70px 100px 90px 90px 120px 80px 80px 80px 70px'
+  const RCOLS = '160px 70px 100px 70px 70px 70px 70px 70px 70px 80px 80px 130px'
 
   return (
     <DashboardLayout>
-      <div style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 60, fontFamily: "'Inter','Segoe UI',sans-serif" }}>
+      <div style={{ maxWidth: 1240, margin: '0 auto', paddingBottom: 60, fontFamily: "'Inter','Segoe UI',sans-serif" }}>
 
         {/* ── Header ── */}
         <div style={{ background: 'linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%)', borderRadius: 16, padding: '24px 32px', marginBottom: 24, color: '#fff' }}>
@@ -438,6 +500,7 @@ export default function ManagementAttendancePage() {
                 <div style={{ textAlign: 'center' }}>Hours</div>
                 <div style={{ textAlign: 'center' }}>M.Present</div>
                 <div style={{ textAlign: 'center' }}>Late</div>
+                <div style={{ textAlign: 'center' }}>Edit</div>
               </div>
 
               {filteredMembers.map((m, i) => {
@@ -453,6 +516,12 @@ export default function ManagementAttendancePage() {
                     <div style={{ textAlign: 'center', fontSize: 13, color: '#6b7280' }}>{m.hours_worked ? `${Math.floor(m.hours_worked)}h ${Math.round((m.hours_worked - Math.floor(m.hours_worked)) * 60)}m` : '—'}</div>
                     <div style={{ textAlign: 'center', fontWeight: 700, color: '#2563eb', fontSize: 15 }}>{m.present_days + m.half_days * 0.5}</div>
                     <div style={{ textAlign: 'center', fontSize: 13, color: m.late_count > 0 ? '#dc2626' : '#9ca3af', fontWeight: m.late_count > 0 ? 700 : 400 }}>{m.late_count || '—'}</div>
+                    <div style={{ textAlign: 'center' }}>
+                      <button onClick={() => openEditLog(m.user_id, m.full_name, todayIST())}
+                        style={{ fontSize: 11, padding: '3px 8px', border: '1px solid #e5e7eb', borderRadius: 6, background: '#fff', color: '#2563eb', cursor: 'pointer', fontFamily: 'inherit' }}>
+                        ✏️ Edit
+                      </button>
+                    </div>
                   </div>
                 )
               })}
@@ -473,15 +542,21 @@ export default function ManagementAttendancePage() {
               <button onClick={exportExcel} style={{ padding: '9px 18px', background: '#15803d', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>📥 Export Excel</button>
             </div>
 
+            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '10px 16px', fontSize: 13, color: '#2563eb' }}>
+              ✏️ Pick a date next to any member and click Edit to correct a missed sign-in/out for that day.
+            </div>
+
             {reportLoading ? <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>Loading report…</div> : (
               <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: RCOLS, gap: 4, padding: '10px 16px', background: 'linear-gradient(135deg,#0f172a,#1e3a5f)', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   <div>Member</div><div>Role</div><div>Team</div>
                   {['Present','Half','Absent','Leave','LOP','Late','Total Hrs','Eff.Days'].map(h => <div key={h} style={{ textAlign: 'center' }}>{h}</div>)}
+                  <div style={{ textAlign: 'center' }}>Edit Day</div>
                 </div>
 
                 {reportData.map((r, i) => {
                   const eff = r.present_days + r.half_days * 0.5
+                  const pickDate = reportEditDate[r.user_id] || `${reportMonth}-01`
                   return (
                     <div key={r.user_id} style={{ display: 'grid', gridTemplateColumns: RCOLS, gap: 4, alignItems: 'center', padding: '11px 16px', background: i % 2 === 0 ? '#fff' : '#fafafa', borderBottom: '1px solid #f1f5f9' }}>
                       <div style={{ fontWeight: 700, fontSize: 13, color: '#1e293b' }}>{r.full_name}</div>
@@ -495,6 +570,22 @@ export default function ManagementAttendancePage() {
                       <div style={{ textAlign: 'center', fontWeight: 700, color: r.late_count > 2 ? '#dc2626' : r.late_count > 0 ? '#92400e' : '#9ca3af', fontSize: 14 }}>{r.late_count || '—'}</div>
                       <div style={{ textAlign: 'center', fontSize: 12, color: '#6b7280' }}>{r.hours_worked ? Math.round((r.hours_worked as number) * 10) / 10 + 'h' : '—'}</div>
                       <div style={{ textAlign: 'center' }}><span style={{ fontWeight: 800, fontSize: 14, color: eff >= 20 ? '#15803d' : eff >= 15 ? '#2563eb' : '#dc2626' }}>{eff}</span></div>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>
+                        <input
+                          type="date"
+                          value={pickDate}
+                          min={`${reportMonth}-01`}
+                          max={monthEndDate(reportMonth)}
+                          onChange={e => setReportEditDate(prev => ({ ...prev, [r.user_id]: e.target.value }))}
+                          style={{ width: 118, fontSize: 11, padding: '4px 6px', border: '1px solid #e5e7eb', borderRadius: 6, fontFamily: 'inherit' }}
+                        />
+                        <button
+                          onClick={() => openEditLog(r.user_id, r.full_name, pickDate)}
+                          style={{ fontSize: 11, padding: '4px 8px', border: '1px solid #e5e7eb', borderRadius: 6, background: '#fff', color: '#2563eb', cursor: 'pointer', fontFamily: 'inherit' }}
+                        >
+                          ✏️
+                        </button>
+                      </div>
                     </div>
                   )
                 })}
@@ -510,6 +601,7 @@ export default function ManagementAttendancePage() {
                   <div style={{ textAlign: 'center', color: '#fbbf24' }}>{reportData.reduce((s, r) => s + r.late_count, 0) || '—'}</div>
                   <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>—</div>
                   <div style={{ textAlign: 'center', color: '#4ade80' }}>{reportData.reduce((s, r) => s + r.present_days + r.half_days * 0.5, 0)}</div>
+                  <div />
                 </div>
               </div>
             )}
@@ -711,6 +803,50 @@ export default function ManagementAttendancePage() {
         )}
 
       </div>
+
+      {/* ══ EDIT ATTENDANCE MODAL ══ */}
+      {editingLog && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setEditingLog(null)}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 24, width: 400, fontFamily: "'Inter','Segoe UI',sans-serif" }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4, color: '#1e293b' }}>
+              Edit Attendance
+            </div>
+            <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>
+              {editingLog.full_name} · {editingLog.date}
+            </div>
+
+            <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4, color: '#374151' }}>Status</label>
+            <select value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}
+              style={{ width: '100%', padding: 9, border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 12, fontSize: 14, fontFamily: 'inherit' }}>
+              {EDITABLE_STATUSES.map(s => <option key={s} value={s}>{STATUS_DOT[s]?.label || s}</option>)}
+            </select>
+
+            <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4, color: '#374151' }}>Sign In</label>
+            <input type="datetime-local" value={editForm.sign_in_time} onChange={e => setEditForm(f => ({ ...f, sign_in_time: e.target.value }))}
+              style={{ width: '100%', padding: 9, border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 12, fontSize: 14, fontFamily: 'inherit' }} />
+
+            <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4, color: '#374151' }}>Sign Out</label>
+            <input type="datetime-local" value={editForm.sign_out_time} onChange={e => setEditForm(f => ({ ...f, sign_out_time: e.target.value }))}
+              style={{ width: '100%', padding: 9, border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 12, fontSize: 14, fontFamily: 'inherit' }} />
+
+            <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4, color: '#374151' }}>Reason for edit</label>
+            <textarea value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} rows={2}
+              placeholder="e.g. Recruiter forgot to sign out"
+              style={{ width: '100%', padding: 9, border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 16, fontSize: 14, fontFamily: 'inherit', resize: 'vertical' }} />
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setEditingLog(null)}
+                style={{ flex: 1, padding: 10, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', color: '#374151', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Cancel
+              </button>
+              <button onClick={handleSaveEditLog} disabled={savingEditLog}
+                style={{ flex: 1, padding: 10, background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: savingEditLog ? 'not-allowed' : 'pointer', opacity: savingEditLog ? 0.7 : 1, fontFamily: 'inherit' }}>
+                {savingEditLog ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   )
 }
