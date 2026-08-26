@@ -191,12 +191,31 @@ export default function TLInterviewsPage() {
       teamCandidates.forEach((c: any) => { candidateMap[c.id] = c })
       const candidateIds = teamCandidates.map((c: any) => c.id)
 
-      const { data: raw } = await supabaseAdmin
-        .from('interviews')
-        .select('*, recruiter:recruiter_id(full_name)')
-        .in('candidate_id', candidateIds)
-        .order('interview_date', { ascending: true })
-        .order('interview_time', { ascending: true })
+          // Chunk to avoid PostgREST URL length limits when a TL's team has many candidates
+      const CHUNK_SIZE = 150
+      const idChunks: string[][] = []
+      for (let i = 0; i < candidateIds.length; i += CHUNK_SIZE) {
+        idChunks.push(candidateIds.slice(i, i + CHUNK_SIZE))
+      }
+
+      const chunkResults = await Promise.all(
+        idChunks.map(chunk =>
+          supabaseAdmin
+            .from('interviews')
+            .select('*, recruiter:recruiter_id(full_name)')
+            .in('candidate_id', chunk)
+        )
+      )
+
+      const chunkErr = chunkResults.find(r => r.error)
+      if (chunkErr?.error) console.error('Error loading interviews chunk:', chunkErr.error)
+
+      const raw = chunkResults
+        .flatMap(r => r.data || [])
+        .sort((a: any, b: any) => {
+          const dc = (a.interview_date || '').localeCompare(b.interview_date || '')
+          return dc !== 0 ? dc : (a.interview_time || '').localeCompare(b.interview_time || '')
+        })
 
       const mapped: Interview[] = (raw || []).map((iv: any) => {
         const cand        = candidateMap[iv.candidate_id]
