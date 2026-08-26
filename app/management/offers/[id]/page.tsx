@@ -66,6 +66,11 @@ export default function ManagementOfferDetailPage() {
   const [editReportingTo,   setEditReportingTo]   = useState('')
   const [editNotes,         setEditNotes]         = useState('')
 
+  // ── Renege modal state ──────────────────────────────────────────────────────
+  const [showRenegeModal, setShowRenegeModal] = useState(false)
+  const [renegeReason, setRenegeReason]       = useState('')
+  const [savingRenege, setSavingRenege]       = useState(false)
+
   useEffect(() => {
     const userData = localStorage.getItem('user')
     if (!userData) { router.push('/'); return }
@@ -242,6 +247,52 @@ export default function ManagementOfferDetailPage() {
     }
   }
 
+  // ── Mark Renege handler ────────────────────────────────────────────────────
+  const handleMarkRenege = async () => {
+    if (!offer) return
+    setSavingRenege(true)
+    try {
+      // 1. Update offer status — offers table has no renege_date/reason columns.
+      //    trigger_sync_candidate_stage will fire on this status change and
+      //    sync candidate stage on its own.
+      const { error: offerError } = await supabaseAdmin
+        .from('offers')
+        .update({
+          status:     'renege',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', offerId)
+
+      if (offerError) throw offerError
+
+      // 2. Explicitly zero revenue + set renege metadata on candidates.
+      //    current_stage is set here too as a safe fallback alongside
+      //    whatever the offers trigger already does.
+      if (offer.candidates?.id) {
+        const { error: candError } = await supabaseAdmin
+          .from('candidates')
+          .update({
+            current_stage:  'renege',
+            revenue_earned: 0,
+            renege_date:    new Date().toISOString().split('T')[0],
+            renege_reason:  renegeReason || null,
+          })
+          .eq('id', offer.candidates.id)
+
+        if (candError) throw candError
+      }
+
+      setShowRenegeModal(false)
+      setRenegeReason('')
+      await loadOffer()
+    } catch (err: any) {
+      console.error('Renege error:', err)
+      alert('Failed to mark as renege: ' + (err.message || 'Unknown error'))
+    } finally {
+      setSavingRenege(false)
+    }
+  }
+
   const getStatusBadge = (status: string) => {
     const map: Record<string, string> = {
       extended: 'bg-blue-100 text-blue-800',
@@ -299,6 +350,14 @@ export default function ManagementOfferDetailPage() {
             <span className={`px-4 py-2 rounded-full text-sm font-bold ${getStatusBadge(offer.status)}`}>
               {offer.status.toUpperCase()}
             </span>
+            {!editing && !['renege', 'rejected'].includes(offer.status) && (
+              <button
+                onClick={() => setShowRenegeModal(true)}
+                className="px-4 py-2 bg-red-50 border border-red-300 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-100 transition"
+              >
+                ⚠️ Mark Renege
+              </button>
+            )}
             {!editing ? (
               <button
                 onClick={() => setEditing(true)}
@@ -332,6 +391,20 @@ export default function ManagementOfferDetailPage() {
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800 flex items-center gap-2">
             <span>👁️</span>
             <span>Management view — click <strong>Edit Offer</strong> to update any field.</span>
+          </div>
+        )}
+
+        {/* ── Renege banner ── */}
+        {offer.status === 'renege' && (
+          <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4 flex items-center gap-3 text-orange-900">
+            <span className="text-3xl">⚠️</span>
+            <div>
+              <h3 className="font-bold text-lg">Marked as Renege</h3>
+              <p className="text-sm">
+                Revenue for this placement has been set to ₹0.
+                {offer.candidates?.renege_reason && <> Reason: <strong>{offer.candidates.renege_reason}</strong></>}
+              </p>
+            </div>
           </div>
         )}
 
@@ -563,6 +636,41 @@ export default function ManagementOfferDetailPage() {
         )}
 
       </div>
+
+      {/* ══ RENEGE CONFIRMATION MODAL ══ */}
+      {showRenegeModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowRenegeModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-3">
+              <span className="text-3xl">⚠️</span>
+              <h3 className="text-lg font-bold text-gray-900">Mark as Renege</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              This will set the offer and candidate status to <strong>Renege</strong> and zero out
+              the revenue of <strong>₹{displayRevenue}</strong> currently attributed to this placement.
+              This action affects reporting across the platform.
+            </p>
+            <textarea
+              value={renegeReason}
+              onChange={e => setRenegeReason(e.target.value)}
+              rows={3}
+              placeholder="Reason for renege (optional)…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setShowRenegeModal(false)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-semibold rounded-lg hover:bg-gray-200">
+                Cancel
+              </button>
+              <button onClick={handleMarkRenege} disabled={savingRenege}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 disabled:opacity-50">
+                {savingRenege ? 'Saving…' : 'Confirm Renege'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </DashboardLayout>
   )
 }
