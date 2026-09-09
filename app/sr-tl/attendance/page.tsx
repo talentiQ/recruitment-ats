@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import DashboardLayout from '@/components/DashboardLayout'
 
-type Tab = 'today' | 'report' | 'leaves'
+type Tab = 'today' | 'report' | 'leaves' | 'holidays'
 
 interface MemberAttendance {
   user_id: string; full_name: string; role: string
@@ -22,6 +22,13 @@ interface LeaveRequest {
   leave_type: string; from_date: string; to_date: string
   total_days: number; half_day: boolean; reason: string
   status: string; created_at: string
+}
+
+interface Holiday {
+  id: string
+  name: string
+  date: string
+  type: 'national' | 'regional' | 'optional'
 }
 
 function toIST(d: Date) { return new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })) }
@@ -50,6 +57,12 @@ const ROLE_LABEL: Record<string, string> = {
   recruiter: 'Recruiter', team_leader: 'TL', sr_team_leader: 'Sr. TL',
 }
 
+const TYPE_CONFIG = {
+  national: { label: 'National Holiday', bg: '#fef2f2', color: '#dc2626', dot: '#dc2626', border: '#fecaca' },
+  regional: { label: 'Regional Holiday', bg: '#eff6ff', color: '#2563eb', dot: '#2563eb', border: '#bfdbfe' },
+  optional: { label: 'Optional Holiday', bg: '#f5f3ff', color: '#6d28d9', dot: '#a78bfa', border: '#ddd6fe' },
+}
+
 export default function SrTLAttendancePage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
@@ -66,11 +79,22 @@ export default function SrTLAttendancePage() {
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([])
   const [leaveLoading, setLeaveLoading] = useState(false)
 
+  // Holiday state
+  const [holidays, setHolidays] = useState<Holiday[]>([])
+  const [holidayMonth, setHolidayMonth] = useState(() => {
+    const n = new Date()
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [holidayLoading, setHolidayLoading] = useState(false)
+  const [showAddHoliday, setShowAddHoliday] = useState(false)
+  const [newHoliday, setNewHoliday] = useState({ name: '', date: '', type: 'national' as Holiday['type'] })
+  const [savingHoliday, setSavingHoliday] = useState(false)
+
   useEffect(() => {
     const ud = localStorage.getItem('user')
     if (!ud) { router.push('/'); return }
     const u = JSON.parse(ud)
-    if (!['sr_team_leader','management','ops_head','ceo','system_admin'].includes(u.role)) {
+    if (!['sr_team_leader', 'management', 'ops_head', 'ceo', 'system_admin'].includes(u.role)) {
       router.push('/'); return
     }
     setUser(u)
@@ -110,7 +134,7 @@ export default function SrTLAttendancePage() {
       allMembers.forEach((m: any) => { mMap[m.id] = { present: 0, half: 0, absent: 0, leave: 0, lop: 0, late: 0 } })
       ;(monthRes.data || []).forEach((l: any) => {
         if (!mMap[l.user_id]) return
-        if (['present','holiday'].includes(l.status)) mMap[l.user_id].present++
+        if (['present', 'holiday'].includes(l.status)) mMap[l.user_id].present++
         else if (l.status === 'half_day') mMap[l.user_id].half++
         else if (l.status === 'absent')   mMap[l.user_id].absent++
         else if (l.status === 'leave')    mMap[l.user_id].leave++
@@ -151,7 +175,7 @@ export default function SrTLAttendancePage() {
     ids.forEach(id => { agg[id] = { present: 0, half: 0, absent: 0, leave: 0, lop: 0, late: 0, hours: 0 } })
     ;(logsRes.data || []).forEach((l: any) => {
       if (!agg[l.user_id]) return
-      if (['present','holiday'].includes(l.status)) agg[l.user_id].present++
+      if (['present', 'holiday'].includes(l.status)) agg[l.user_id].present++
       else if (l.status === 'half_day') agg[l.user_id].half++
       else if (l.status === 'absent')   agg[l.user_id].absent++
       else if (l.status === 'leave')    agg[l.user_id].leave++
@@ -182,8 +206,43 @@ export default function SrTLAttendancePage() {
     setLeaveLoading(false)
   }, [])
 
+  const loadHolidays = useCallback(async (month: string) => {
+    setHolidayLoading(true)
+    const [yr, mo] = month.split('-').map(Number)
+    const start = `${yr}-${String(mo).padStart(2, '0')}-01`
+    const end = new Date(yr, mo, 0).toISOString().slice(0, 10)
+    const { data } = await supabase
+      .from('holidays')
+      .select('*')
+      .gte('date', start)
+      .lte('date', end)
+      .order('date', { ascending: true })
+    setHolidays(data || [])
+    setHolidayLoading(false)
+  }, [])
+
+  const saveHoliday = async () => {
+    if (!newHoliday.name.trim() || !newHoliday.date) return
+    setSavingHoliday(true)
+    await supabase.from('holidays').insert({
+      name: newHoliday.name.trim(),
+      date: newHoliday.date,
+      type: newHoliday.type,
+    })
+    setNewHoliday({ name: '', date: '', type: 'national' })
+    setShowAddHoliday(false)
+    setSavingHoliday(false)
+    loadHolidays(holidayMonth)
+  }
+
+  const deleteHoliday = async (id: string) => {
+    await supabase.from('holidays').delete().eq('id', id)
+    setHolidays(prev => prev.filter(h => h.id !== id))
+  }
+
   useEffect(() => { if (tab === 'report' && allMemberIds.length) loadReport(allMemberIds, reportMonth) }, [tab, reportMonth, allMemberIds])
   useEffect(() => { if (tab === 'leaves' && allMemberIds.length) loadLeaves(allMemberIds) }, [tab, allMemberIds])
+  useEffect(() => { if (tab === 'holidays') loadHolidays(holidayMonth) }, [tab, holidayMonth])
 
   const todaySummary = {
     signedIn:  members.filter(m => m.sign_in_time).length,
@@ -229,11 +288,24 @@ export default function SrTLAttendancePage() {
   const GCOLS = '180px 70px 90px 90px 110px 80px 80px 80px'
   const RCOLS = '180px 70px 80px 80px 80px 80px 80px 80px 80px 90px'
 
+  // ── Holiday tab helpers (computed inside render so they stay in sync) ──────
+  const [hYr, hMo] = holidayMonth.split('-').map(Number)
+  const hMonthLabel = new Date(hYr, hMo - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+  const daysInMonth = new Date(hYr, hMo, 0).getDate()
+  const firstDow = new Date(hYr, hMo - 1, 1).getDay()
+  const isManagementUser = ['management', 'ops_head', 'ceo', 'system_admin'].includes(user?.role)
+
+  const calCells: (number | null)[] = [
+    ...Array(firstDow).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ]
+  while (calCells.length % 7 !== 0) calCells.push(null)
+
   return (
     <DashboardLayout>
       <div style={{ maxWidth: 1100, margin: '0 auto', paddingBottom: 60, fontFamily: "'Inter','Segoe UI',sans-serif" }}>
 
-        {/* Header */}
+        {/* ── Header ────────────────────────────────────────────────────────── */}
         <div style={{ background: 'linear-gradient(135deg,#0f172a,#1e3a5f)', borderRadius: 16, padding: '24px 32px', marginBottom: 24, color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Sr. Team Leader · Attendance</div>
@@ -242,10 +314,10 @@ export default function SrTLAttendancePage() {
           </div>
           <div style={{ display: 'flex', gap: 20 }}>
             {[
-              { label: 'In Office', value: todaySummary.signedIn, color: '#4ade80' },
+              { label: 'In Office',  value: todaySummary.signedIn,  color: '#4ade80' },
               { label: 'Signed Out', value: todaySummary.signedOut, color: '#93c5fd' },
-              { label: 'On Leave', value: todaySummary.onLeave, color: '#fbbf24' },
-              { label: 'Not In', value: todaySummary.absent, color: '#f87171' },
+              { label: 'On Leave',   value: todaySummary.onLeave,   color: '#fbbf24' },
+              { label: 'Not In',     value: todaySummary.absent,    color: '#f87171' },
             ].map(s => (
               <div key={s.label} style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.value}</div>
@@ -255,12 +327,13 @@ export default function SrTLAttendancePage() {
           </div>
         </div>
 
-        {/* Tabs */}
+        {/* ── Tabs ──────────────────────────────────────────────────────────── */}
         <div style={{ display: 'flex', borderBottom: '2px solid #e5e7eb', marginBottom: 24 }}>
           {([
-            { key: 'today', label: "📍 Today's Attendance" },
-            { key: 'report', label: '📋 Monthly Report' },
-            { key: 'leaves', label: '🏖 Leave Requests' },
+            { key: 'today',    label: "📍 Today's Attendance" },
+            { key: 'report',   label: '📋 Monthly Report' },
+            { key: 'leaves',   label: '🏖 Leave Requests' },
+            { key: 'holidays', label: '🗓 Holiday Calendar' },
           ] as { key: Tab; label: string }[]).map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)}
               style={{ padding: '10px 24px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: 'inherit', color: tab === key ? '#2563eb' : '#6b7280', borderBottom: tab === key ? '2px solid #2563eb' : '2px solid transparent', marginBottom: -2 }}>
@@ -269,7 +342,7 @@ export default function SrTLAttendancePage() {
           ))}
         </div>
 
-        {/* TODAY */}
+        {/* ── TODAY ─────────────────────────────────────────────────────────── */}
         {tab === 'today' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {todaySummary.late > 0 && (
@@ -302,7 +375,7 @@ export default function SrTLAttendancePage() {
           </div>
         )}
 
-        {/* MONTHLY REPORT */}
+        {/* ── MONTHLY REPORT ────────────────────────────────────────────────── */}
         {tab === 'report' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', padding: '14px 20px' }}>
@@ -318,7 +391,7 @@ export default function SrTLAttendancePage() {
               <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: RCOLS, gap: 4, padding: '10px 16px', background: 'linear-gradient(135deg,#0f172a,#1e3a5f)', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   <div>Member</div>
-                  {['Present','Half Day','Absent','Leave','LOP','Late','Total Hrs','Eff. Days'].map(h => <div key={h} style={{ textAlign: 'center' }}>{h}</div>)}
+                  {['Present', 'Half Day', 'Absent', 'Leave', 'LOP', 'Late', 'Total Hrs', 'Eff. Days'].map(h => <div key={h} style={{ textAlign: 'center' }}>{h}</div>)}
                 </div>
                 {reportData.map((r, i) => {
                   const eff = r.present_days + r.half_days * 0.5
@@ -339,6 +412,7 @@ export default function SrTLAttendancePage() {
                     </div>
                   )
                 })}
+                {/* Totals row */}
                 <div style={{ display: 'grid', gridTemplateColumns: RCOLS, gap: 4, alignItems: 'center', padding: '12px 16px', background: 'linear-gradient(135deg,#0f172a,#1e3a5f)', color: '#fff', fontWeight: 800 }}>
                   <div style={{ fontSize: 13 }}>TEAM TOTAL</div>
                   <div style={{ textAlign: 'center', color: '#4ade80' }}>{reportData.reduce((s, r) => s + r.present_days, 0)}</div>
@@ -355,7 +429,7 @@ export default function SrTLAttendancePage() {
           </div>
         )}
 
-        {/* LEAVES */}
+        {/* ── LEAVES ────────────────────────────────────────────────────────── */}
         {tab === 'leaves' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#2563eb' }}>
@@ -366,7 +440,12 @@ export default function SrTLAttendancePage() {
             ) : (
               <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 {leaveRequests.map((lr, i) => {
-                  const sc: Record<string, { bg: string; color: string }> = { pending: { bg: '#fefce8', color: '#92400e' }, approved: { bg: '#f0fdf4', color: '#15803d' }, rejected: { bg: '#fef2f2', color: '#dc2626' }, cancelled: { bg: '#f8fafc', color: '#64748b' } }
+                  const sc: Record<string, { bg: string; color: string }> = {
+                    pending:   { bg: '#fefce8', color: '#92400e' },
+                    approved:  { bg: '#f0fdf4', color: '#15803d' },
+                    rejected:  { bg: '#fef2f2', color: '#dc2626' },
+                    cancelled: { bg: '#f8fafc', color: '#64748b' },
+                  }
                   const s = sc[lr.status] || sc.pending
                   return (
                     <div key={lr.id} style={{ padding: '14px 20px', borderBottom: i < leaveRequests.length - 1 ? '1px solid #f1f5f9' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -386,6 +465,199 @@ export default function SrTLAttendancePage() {
             )}
           </div>
         )}
+
+        {/* ── HOLIDAY CALENDAR ──────────────────────────────────────────────── */}
+        {tab === 'holidays' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* Controls bar */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', padding: '14px 20px', flexWrap: 'wrap', gap: 12 }}>
+              {/* Month navigator */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <button
+                  onClick={() => { const d = new Date(hYr, hMo - 2, 1); setHolidayMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) }}
+                  style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 16 }}>‹</button>
+                <span style={{ fontWeight: 700, fontSize: 16, color: '#1e293b', minWidth: 160, textAlign: 'center' }}>{hMonthLabel}</span>
+                <button
+                  onClick={() => { const d = new Date(hYr, hMo, 1); setHolidayMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) }}
+                  style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 16 }}>›</button>
+              </div>
+
+              {/* Legend + Add button */}
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+                {(['national', 'regional', 'optional'] as Holiday['type'][]).map(t => (
+                  <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#6b7280' }}>
+                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: TYPE_CONFIG[t].dot }} />
+                    {TYPE_CONFIG[t].label}
+                  </div>
+                ))}
+                {isManagementUser && (
+                  <button
+                    onClick={() => setShowAddHoliday(v => !v)}
+                    style={{ padding: '7px 16px', background: '#0f172a', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    {showAddHoliday ? '✕ Cancel' : '+ Add Holiday'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Add holiday form — management only */}
+            {showAddHoliday && isManagementUser && (
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '18px 20px', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 200px' }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Holiday Name</label>
+                  <input
+                    value={newHoliday.name}
+                    onChange={e => setNewHoliday(p => ({ ...p, name: e.target.value }))}
+                    placeholder="e.g. Diwali"
+                    style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', fontSize: 14, fontFamily: 'inherit', outline: 'none' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Date</label>
+                  <input
+                    type="date"
+                    value={newHoliday.date}
+                    onChange={e => setNewHoliday(p => ({ ...p, date: e.target.value }))}
+                    style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', fontSize: 14, fontFamily: 'inherit', outline: 'none' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Type</label>
+                  <select
+                    value={newHoliday.type}
+                    onChange={e => setNewHoliday(p => ({ ...p, type: e.target.value as Holiday['type'] }))}
+                    style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', fontSize: 14, fontFamily: 'inherit', outline: 'none', background: '#fff' }}>
+                    <option value="national">National</option>
+                    <option value="regional">Regional</option>
+                    <option value="optional">Optional</option>
+                  </select>
+                </div>
+                <button
+                  onClick={saveHoliday}
+                  disabled={savingHoliday || !newHoliday.name.trim() || !newHoliday.date}
+                  style={{ padding: '8px 20px', background: savingHoliday ? '#9ca3af' : '#15803d', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: savingHoliday ? 'not-allowed' : 'pointer', fontFamily: 'inherit', height: 38 }}>
+                  {savingHoliday ? 'Saving…' : '✓ Save'}
+                </button>
+              </div>
+            )}
+
+            {holidayLoading ? (
+              <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>Loading…</div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16, alignItems: 'start' }}>
+
+                {/* ── Calendar grid ── */}
+                <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                  {/* Day-of-week headers */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', background: 'linear-gradient(135deg,#0f172a,#1e3a5f)' }}>
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                      <div key={d} style={{ padding: '10px 0', textAlign: 'center', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.6)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{d}</div>
+                    ))}
+                  </div>
+                  {/* Date cells */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 1, background: '#f1f5f9' }}>
+                    {calCells.map((day, idx) => {
+                      if (!day) return <div key={idx} style={{ background: '#fafafa', minHeight: 72 }} />
+                      const dateStr = `${hYr}-${String(hMo).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                      const holiday = holidays.find(h => h.date === dateStr)
+                      const isToday = dateStr === todayIST()
+                      const dow = (firstDow + day - 1) % 7
+                      const isSunday = dow === 0
+                      const cfg = holiday ? TYPE_CONFIG[holiday.type] : null
+
+                      return (
+                        <div key={idx} style={{
+                          background: cfg ? cfg.bg : isSunday ? '#fef9f9' : '#fff',
+                          minHeight: 72,
+                          padding: '8px 10px',
+                          borderLeft: cfg ? `3px solid ${cfg.border}` : 'none',
+                        }}>
+                          <div style={{
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            width: 26, height: 26, borderRadius: '50%',
+                            background: isToday ? '#0f172a' : 'transparent',
+                            color: isToday ? '#fff' : isSunday ? '#ef4444' : '#374151',
+                            fontWeight: isToday ? 800 : 600,
+                            fontSize: 13,
+                          }}>{day}</div>
+                          {holiday && (
+                            <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: cfg!.color, lineHeight: 1.3, wordBreak: 'break-word' }}>
+                              <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: cfg!.dot, marginRight: 3, verticalAlign: 'middle' }} />
+                              {holiday.name}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* ── Holiday list panel ── */}
+                <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: '#1e293b' }}>🗓 Holidays in {hMonthLabel}</div>
+                    <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{holidays.length} holiday{holidays.length !== 1 ? 's' : ''} this month</div>
+                  </div>
+
+                  {holidays.length === 0 ? (
+                    <div style={{ padding: '32px 20px', textAlign: 'center', color: '#9ca3af' }}>
+                      <div style={{ fontSize: 32, marginBottom: 8 }}>🎉</div>
+                      <div style={{ fontSize: 13 }}>No holidays this month</div>
+                    </div>
+                  ) : (
+                    <div>
+                      {holidays.map((h, i) => {
+                        const cfg = TYPE_CONFIG[h.type]
+                        const d = new Date(h.date + 'T00:00:00')
+                        const dayLabel = d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })
+                        return (
+                          <div key={h.id} style={{
+                            padding: '13px 18px',
+                            borderBottom: i < holidays.length - 1 ? '1px solid #f1f5f9' : 'none',
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                            borderLeft: `3px solid ${cfg.dot}`,
+                          }}>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: '#1e293b' }}>{h.name}</div>
+                              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{dayLabel}</div>
+                              <span style={{ fontSize: 10, padding: '1px 7px', borderRadius: 100, background: cfg.bg, color: cfg.color, fontWeight: 700, marginTop: 4, display: 'inline-block' }}>
+                                {cfg.label}
+                              </span>
+                            </div>
+                            {isManagementUser && (
+                              <button
+                                onClick={() => deleteHoliday(h.id)}
+                                title="Delete holiday"
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', fontSize: 16, padding: '4px 8px', borderRadius: 6, lineHeight: 1 }}>
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* Type summary footer */}
+                  <div style={{ padding: '12px 18px', background: '#f8fafc', borderTop: '1px solid #f1f5f9', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                    {(['national', 'regional', 'optional'] as Holiday['type'][]).map(t => {
+                      const count = holidays.filter(h => h.type === t).length
+                      return count > 0 ? (
+                        <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#6b7280' }}>
+                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_CONFIG[t].dot }} />
+                          <span style={{ fontWeight: 700, color: TYPE_CONFIG[t].color }}>{count}</span>&nbsp;{t}
+                        </div>
+                      ) : null
+                    })}
+                  </div>
+                </div>
+
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
     </DashboardLayout>
   )
