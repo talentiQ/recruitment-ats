@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
  ║    jobs         (assigned_recruiters[], client_id …)            ║
  ║    offers       (expected_revenue, billable_ctc …)              ║
  ║    users        (id, full_name, role, reports_to …)             ║
- ║    clients      (id, name)                                      ║
+ ║    clients      (id, company_name)                               ║
  ╚══════════════════════════════════════════════════════════════════╝
 */
 
@@ -62,12 +62,15 @@ interface Job {
   created_at: string
   positions: number
   positions_filled: number
-  client: { id: string; name: string } | null
+  client: { id: string; company_name: string } | null
   _createdMthIdx: number
   candidates: Candidate[]
 }
 
-interface RecruiterUser { id: string; full_name: string; role: string }
+interface RecruiterUser {
+  id: string; full_name: string; role: string
+  monthly_target: number; quarterly_target: number; annual_target: number
+}
 
 // ─── Stage configuration (real candidate stage values) ────────────────────────
 
@@ -124,8 +127,8 @@ const QUARTERS  = [
   { id:'q3', label:'Q3 · Oct–Dec', months:[6,7,8] },
   { id:'q4', label:'Q4 · Jan–Mar', months:[9,10,11] },
 ]
-const FY_LIST       = ['2022-23','2023-24','2024-25','2025-26']
-const DEFAULT_TARGET = 300000  // ₹3 L/month per recruiter fallback
+const FY_LIST        = ['2026-27', '2027-28', '2028-29']
+const DEFAULT_TARGET = 300000  // fallback only if user has no target set in DB
 const ALLOWED_ROLES  = ['team_leader','sr_team_leader','management','ops_head','ceo','system_admin']
 const MGMT_ROLES     = ['management','ops_head','ceo','system_admin']
 
@@ -183,7 +186,7 @@ function LineTip({ active, payload, label }: any) {
 export default function Recruitment360Page() {
   const router = useRouter()
   const [authUser, setAuthUser]     = useState<any>(null)
-  const [fy,       setFy]           = useState('2024-25')
+  const [fy,       setFy]           = useState('2026-27')
   const [qtr,      setQtr]          = useState<string | null>(null)
   const [mth,      setMth]          = useState<number | null>(null)
   const [rid,      setRid]          = useState('all')
@@ -217,7 +220,7 @@ export default function Recruitment360Page() {
 
     if (MGMT_ROLES.includes(u.role)) {
       const res = await supabase
-        .from('users').select('id,full_name,role')
+        .from('users').select('id,full_name,role,monthly_target,quarterly_target,annual_target')
         .in('role', ['recruiter','team_leader','sr_team_leader'])
         .eq('is_active', true).order('full_name')
       data = res.data || []
@@ -226,12 +229,12 @@ export default function Recruitment360Page() {
       const tlIds = (tls || []).map((t: any) => t.id)
       const { data: recs } = await supabase.from('users').select('id').in('reports_to', [u.id, ...tlIds]).eq('is_active', true)
       const allIds = [u.id, ...tlIds, ...(recs || []).map((r: any) => r.id)]
-      const res = await supabase.from('users').select('id,full_name,role').in('id', allIds).eq('is_active', true).order('full_name')
+      const res = await supabase.from('users').select('id,full_name,role,monthly_target,quarterly_target,annual_target').in('id', allIds).eq('is_active', true).order('full_name')
       data = res.data || []
     } else {
       const { data: recs } = await supabase.from('users').select('id').eq('reports_to', u.id).eq('is_active', true)
       const allIds = [u.id, ...(recs || []).map((r: any) => r.id)]
-      const res = await supabase.from('users').select('id,full_name,role').in('id', allIds).eq('is_active', true).order('full_name')
+      const res = await supabase.from('users').select('id,full_name,role,monthly_target,quarterly_target,annual_target').in('id', allIds).eq('is_active', true).order('full_name')
       data = res.data || []
     }
 
@@ -280,7 +283,7 @@ export default function Recruitment360Page() {
       .select(`
         id, job_title, job_code, status, created_at,
         positions, positions_filled,
-        client:clients!client_id (id, name)
+        client:clients!client_id (id, company_name)
       `)
       .eq('is_active', true)
 
@@ -333,7 +336,7 @@ export default function Recruitment360Page() {
     if (extraIds.length > 0) {
       const { data: extraJobs } = await supabase
         .from('jobs')
-        .select('id, job_title, job_code, status, created_at, positions, positions_filled, client:clients!client_id(id, name)')
+        .select('id, job_title, job_code, status, created_at, positions, positions_filled, client:clients!client_id(id, company_name)')
         .in('id', extraIds)
 
       ;(extraJobs || []).forEach((j: any) => {
@@ -398,13 +401,23 @@ export default function Recruitment360Page() {
         .reduce((s, c) => s + (c.revenue_earned ?? 0), 0)
     )
 
-    // Monthly targets (from DB revenue_targets if available, else default)
-    const recIds = rid === 'all' ? recruiters.map(r => r.id) : [rid]
-    const monthlyTarget = MONTHS.map(() => DEFAULT_TARGET * Math.max(recIds.length, 1))
+    // ── Targets from users.monthly_target / quarterly_target / annual_target ──
+    const activeRecs    = rid === 'all' ? recruiters : recruiters.filter(r => r.id === rid)
+    const sumMonthly    = activeRecs.reduce((s, r) => s + (r.monthly_target   ?? 0), 0) || DEFAULT_TARGET
+    const sumQuarterly  = activeRecs.reduce((s, r) => s + (r.quarterly_target ?? 0), 0) || sumMonthly * 3
+    const sumAnnual     = activeRecs.reduce((s, r) => s + (r.annual_target    ?? 0), 0) || sumMonthly * 12
+
+    // Chart bars always use monthly_target per month
+    const monthlyTarget = MONTHS.map(() => sumMonthly)
+
+    // Period-appropriate total target for KPIs and pct
+    const totalTarget =
+      mth !== null ? sumMonthly   :
+      qtr !== null ? sumQuarterly :
+                     sumAnnual
 
     // KPIs
     const totalRevenue = activeMths.reduce((s, mi) => s + monthlyRevenue[mi], 0)
-    const totalTarget  = activeMths.reduce((s, mi) => s + monthlyTarget[mi], 0)
     const pct          = totalTarget > 0 ? (totalRevenue / totalTarget) * 100 : 0
 
     // Chart data (all 12 months, non-active greyed)
@@ -446,12 +459,12 @@ export default function Recruitment360Page() {
       jobsWorked: filtJobs.filter(j => j.candidates.length > 0).length,
       j0, j12, j3p, cvs, sl, iv, ofr, jnd, onHold, renege,
     }
-  }, [candidates, jobs, activeMths, fy, rid, recruiters])
+  }, [candidates, jobs, activeMths, fy, rid, recruiters, mth, qtr])
 
   // ── Candidate drill-down ──────────────────────────────────────────────────
   const drillCands = useMemo(() => {
     const flat = D.filtJobs.flatMap(j =>
-      j.candidates.map(c => ({ ...c, jobTitle: j.job_title, jobClient: j.client?.name ?? '—', jobId: j.id }))
+      j.candidates.map(c => ({ ...c, jobTitle: j.job_title, jobClient: j.client?.company_name ?? '—', jobId: j.id }))
     )
     let list = flat
     if (jid)    list = list.filter(c => c.jobId === jid)
@@ -839,7 +852,7 @@ export default function Recruitment360Page() {
                       <td style={tC({ fontWeight:600, maxWidth:180 })}>
                         <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{job.job_title}</div>
                       </td>
-                      <td style={tC({ color:'#64748b', fontSize:12 })}>{job.client?.name || '—'}</td>
+                      <td style={tC({ color:'#64748b', fontSize:12 })}>{job.client?.company_name || '—'}</td>
                       <td style={tC({ color:'#64748b', whiteSpace:'nowrap', fontSize:12 })}>
                         {new Date(job.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'2-digit'})}
                       </td>
