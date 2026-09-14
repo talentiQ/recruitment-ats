@@ -342,6 +342,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     if (['ceo','ops_head','finance_head'].includes(user.role)) {
       return [
         { name: 'Management Dashboard', href: '/management/dashboard',  icon: '📊', description: 'Executive overview' },
+        { name: 'Recruitment360°', href: '/management/recruitment360',  icon: '📊', description: 'Comprehensive recruitment analytics' },
         { name: 'Pipeline Analytics',   href: '/management/analytics',  icon: '📈', description: 'Company-wide analytics' },
         { name: 'Teams Performance',    href: '/management/teams',       icon: '👥', description: 'All teams & performance' },
         { name: 'Candidates Management',href: '/management/candidates',  icon: '👤', description: 'Manage all candidates' },
