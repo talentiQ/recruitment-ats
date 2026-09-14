@@ -111,7 +111,7 @@ const STAGE_COLOR: Record<string, string> = {
 
 /** 5 milestone funnel — maps your 13 stages to visible stages */
 const FUNNEL = [
-  { id:'sourced',    label:'CV Sourced',     color:'#3b82f6', minRank:0 },
+  { id:'sourced',    label:'Total CVs',      color:'#3b82f6', minRank:0 },  // ALL candidates in period
   { id:'screening',  label:'Screening',      color:'#8b5cf6', minRank:1 },
   { id:'interview',  label:'Interviewed',    color:'#f59e0b', minRank:2 },
   { id:'offer',      label:'Offer Extended', color:'#22c55e', minRank:5 },
@@ -430,7 +430,7 @@ export default function Recruitment360Page() {
       const mc = candidates.filter(c => c._srcMthIdx === mi)
       return {
         month: m,
-        'CV Sourced':  mc.length,
+        'Total CVs':   mc.length,
         'Screening':   mc.filter(c => rank(c.current_stage) >= 1 && c.current_stage !== 'on_hold').length,
         'Interviewed': mc.filter(c => rank(c.current_stage) >= 2 && c.current_stage !== 'on_hold').length,
         'Joined':      mc.filter(c => ['joined','renege'].includes(c.current_stage)).length,
@@ -447,9 +447,10 @@ export default function Recruitment360Page() {
     const sl     = funnelData[1]?.count ?? 0
     const iv     = funnelData[2]?.count ?? 0
     const ofr    = funnelData[3]?.count ?? 0
-    const jnd    = pipelineCands.filter(c => ['joined','renege'].includes(c.current_stage)).length
-    const onHold = pipelineCands.filter(c => c.current_stage === 'on_hold').length
-    const renege = pipelineCands.filter(c => c.current_stage === 'renege').length
+    const jnd             = pipelineCands.filter(c => ['joined','renege'].includes(c.current_stage)).length
+    const effectiveJoined = pipelineCands.filter(c => c.current_stage === 'joined').length   // excludes renege
+    const onHold          = pipelineCands.filter(c => c.current_stage === 'on_hold').length
+    const renege          = pipelineCands.filter(c => c.current_stage === 'renege').length
 
     return {
       pipelineCands, revenueCands, filtJobs,
@@ -457,7 +458,7 @@ export default function Recruitment360Page() {
       funnelData, chartData, trendData,
       jobsAlloc: filtJobs.length,
       jobsWorked: filtJobs.filter(j => j.candidates.length > 0).length,
-      j0, j12, j3p, cvs, sl, iv, ofr, jnd, onHold, renege,
+      j0, j12, j3p, cvs, sl, iv, ofr, jnd, effectiveJoined, onHold, renege,
     }
   }, [candidates, jobs, activeMths, fy, rid, recruiters, mth, qtr])
 
@@ -478,28 +479,33 @@ export default function Recruitment360Page() {
   // ── Auto-insights (using real stage data) ─────────────────────────────────
   const insights = useMemo(() => {
     const out: { t:'success'|'warning'|'danger'; msg:string }[] = []
-    const { pct, cvs, sl, jnd, ofr, j0, j3p, filtJobs, renege, onHold } = D
+    const { pct, cvs, sl, iv, ofr, jnd, effectiveJoined, j0, j3p, filtJobs, renege, onHold } = D
 
     if (pct >= 100) out.push({ t:'success', msg:`Revenue target met — ${fmtPct(pct)} achieved` })
     else if (pct >= 75) out.push({ t:'warning', msg:`${fmtPct(pct)} of target — on track, needs push` })
     else out.push({ t:'danger', msg:`Below target — only ${fmtPct(pct)} of revenue goal met` })
 
-    if (cvs > 0) {
-      const slr = (sl / cvs) * 100
-      if (slr < 30) out.push({ t:'danger',  msg:`Low screening rate ${slr.toFixed(0)}% — review sourcing quality` })
-      else if (slr > 70) out.push({ t:'success', msg:`Strong screening rate ${slr.toFixed(0)}% — quality sourcing` })
+    // Interview Selection Rate (Interview → Offer) — key quality signal
+    if (iv > 0) {
+      const isr = Math.round((ofr / iv) * 100)
+      if (isr < 15) out.push({ t:'danger',  msg:`Low interview selection rate ${isr}% — review candidate fitment or JD alignment` })
+      else if (isr >= 40) out.push({ t:'success', msg:`Strong interview selection rate ${isr}% — quality pipeline` })
+      else out.push({ t:'warning', msg:`Interview selection rate ${isr}% — room to improve candidate quality` })
+    } else if (sl > 0) {
+      out.push({ t:'warning', msg:`${sl} in screening, none interviewed yet — push for client interviews` })
     }
 
     if (j0 > 0) out.push({ t:'danger', msg:`${j0} job${j0>1?'s':''} with 0 CVs — immediate attention needed` })
 
+    // Offer → Effective Join (excludes reneges)
     if (ofr > 0) {
-      const joinRate = (jnd / ofr) * 100
-      if (joinRate < 60) out.push({ t:'warning', msg:`Low offer-to-join rate ${joinRate.toFixed(0)}% — check offer quality` })
+      const joinRate = Math.round((effectiveJoined / ofr) * 100)
+      if (joinRate < 60) out.push({ t:'warning', msg:`Offer-to-join rate ${joinRate}% — check offer quality or candidate expectations` })
     }
 
     if (renege > 0) out.push({ t:'danger', msg:`${renege} renege case${renege>1?'s':''} — review guarantee period follow-ups` })
     if (onHold > 0) out.push({ t:'warning', msg:`${onHold} candidate${onHold>1?'s':''} on hold — action needed` })
-    if (filtJobs.length && j3p > filtJobs.length * 0.6) out.push({ t:'success', msg:`Good coverage — ${j3p} jobs with 3+ CVs` })
+    if (filtJobs.length && j3p > filtJobs.length * 0.6) out.push({ t:'success', msg:`Good job coverage — ${j3p} jobs with 3+ CVs` })
 
     return out.slice(0, 5)
   }, [D])
@@ -614,6 +620,9 @@ export default function Recruitment360Page() {
             <div>
               <div style={{ fontSize:11, color:'rgba(255,255,255,0.4)', marginBottom:3 }}>
                 FY {fy} · {periodLabel} · {rid==='all'?`${recruiters.length} Recruiters`:'Individual'}
+                <span style={{ marginLeft:8, padding:'1px 7px', borderRadius:100, fontSize:10, background:'rgba(74,222,128,0.15)', color:'#4ade80', fontWeight:600 }}>
+                  ● Active only
+                </span>
               </div>
               <div style={{ fontSize:26, fontWeight:800, letterSpacing:'-0.02em' }}>
                 {dataLoading ? 'Loading…' : recName}
@@ -634,14 +643,15 @@ export default function Recruitment360Page() {
 
             <div style={{ display:'flex', gap:18, flexWrap:'wrap', alignItems:'flex-start' }}>
               {([
-                ['CV Sourced',     D.cvs,        '#93c5fd'],
-                ['Screening',      D.sl,          '#c4b5fd'],
-                ['Interviewed',    D.iv,          '#fbbf24'],
-                ['Offer Extended', D.ofr,         '#86efac'],
-                ['Joined',         D.jnd,         '#34d399'],
-                ['On Hold',        D.onHold,      '#fca5a5'],
-                ['Jobs Alloc.',    D.jobsAlloc,   '#7dd3fc'],
-                ['Jobs Worked',    D.jobsWorked,  '#60a5fa'],
+                ['Total CVs',      D.cvs,              '#93c5fd'],
+                ['Screening',      D.sl,               '#c4b5fd'],
+                ['Interviewed',    D.iv,               '#fbbf24'],
+                ['Offer Extended', D.ofr,              '#86efac'],
+                ['Joined',         D.effectiveJoined,  '#34d399'],
+                ['Renege',         D.renege,            '#fca5a5'],
+                ['On Hold',        D.onHold,            '#e9d5ff'],
+                ['Jobs Alloc.',    D.jobsAlloc,         '#7dd3fc'],
+                ['Jobs Worked',    D.jobsWorked,        '#60a5fa'],
               ] as [string,number,string][]).map(([l,v,c]) => (
                 <div key={l} style={{ textAlign:'center', minWidth:62 }}>
                   <div style={{ fontSize:24, fontWeight:800, color:c, lineHeight:1 }}>{v}</div>
@@ -728,20 +738,20 @@ export default function Recruitment360Page() {
             <div style={{ marginTop:'auto', paddingTop:14, borderTop:'1px solid #f1f5f9' }}>
               <div style={{ fontSize:10, fontWeight:700, color:'#64748b', letterSpacing:'0.04em', marginBottom:9 }}>CONVERSION RATES</div>
               {([
-                ['Sourced → Screening', D.sl,  D.cvs],
-                ['Screening → Interview',D.iv,  D.sl],
-                ['Interview → Offer',    D.ofr, D.iv],
-                ['Offer → Joined',       D.jnd, D.ofr],
-              ] as [string,number,number][]).map(([l,n,d2]) => {
-                const p = d2 > 0 ? Math.round((n/d2)*100) : 0
-                const c = p>50?'#22c55e':p>30?'#f59e0b':'#ef4444'
+                ['CV → Screening',         D.sl,               D.cvs,  false],
+                ['Screening → Interview',  D.iv,               D.sl,   false],
+                ['Interview → Offer ★',    D.ofr,              D.iv,   true ],
+                ['Offer → Joined (net)',    D.effectiveJoined,  D.ofr,  false],
+              ] as [string, number, number, boolean][]).map(([l, n, d2, star]) => {
+                const p = d2 > 0 ? Math.round(((n as number) / (d2 as number)) * 100) : 0
+                const c = p > 50 ? '#22c55e' : p > 30 ? '#f59e0b' : '#ef4444'
                 return (
-                  <div key={l} style={{ marginBottom:8 }}>
+                  <div key={l as string} style={{ marginBottom:9 }}>
                     <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
-                      <span style={{ fontSize:11, color:'#64748b' }}>{l}</span>
+                      <span style={{ fontSize:11, color: star ? '#1e293b' : '#64748b', fontWeight: star ? 700 : 400 }}>{l as string}</span>
                       <span style={{ fontSize:11, fontWeight:700, color:c }}>{p}%</span>
                     </div>
-                    <div style={{ height:3, background:'#f1f5f9', borderRadius:2 }}>
+                    <div style={{ height: star ? 5 : 3, background:'#f1f5f9', borderRadius:2 }}>
                       <div style={{ height:'100%', width:`${Math.min(p,100)}%`, background:c, borderRadius:2, transition:'width 0.4s' }} />
                     </div>
                   </div>
@@ -757,7 +767,7 @@ export default function Recruitment360Page() {
             <div>
               <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>Recruitment Funnel</div>
               <div style={{ fontSize:12, color:'#94a3b8' }}>
-                Cumulative: Sourced → Screening → Interviewed → Offer → Joined · click to filter candidates
+                <strong style={{ color:'#3b82f6' }}>Total CVs</strong> = all candidates in period regardless of stage · each bar = candidates who reached or crossed that milestone · click to filter
               </div>
             </div>
             {fStage && (
@@ -967,7 +977,7 @@ export default function Recruitment360Page() {
                   <YAxis allowDecimals={false} tick={{ fontSize:11, fill:'#94a3b8' }} axisLine={false} tickLine={false} />
                   <Tooltip content={<LineTip />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize:12 }} />
-                  <Line type="monotone" dataKey="CV Sourced"  stroke="#3b82f6" strokeWidth={2.5} dot={{ r:4, fill:'#3b82f6',  strokeWidth:0 }} activeDot={{ r:5 }} />
+                  <Line type="monotone" dataKey="Total CVs"  stroke="#3b82f6" strokeWidth={2.5} dot={{ r:4, fill:'#3b82f6',  strokeWidth:0 }} activeDot={{ r:5 }} />
                   <Line type="monotone" dataKey="Screening"  stroke="#8b5cf6" strokeWidth={2.5} dot={{ r:4, fill:'#8b5cf6',  strokeWidth:0 }} activeDot={{ r:5 }} />
                   <Line type="monotone" dataKey="Interviewed"stroke="#f59e0b" strokeWidth={2.5} dot={{ r:4, fill:'#f59e0b',  strokeWidth:0 }} activeDot={{ r:5 }} />
                   <Line type="monotone" dataKey="Joined"     stroke="#10b981" strokeWidth={2.5} dot={{ r:4, fill:'#10b981',  strokeWidth:0 }} activeDot={{ r:5 }} />
