@@ -389,9 +389,13 @@ export default function Recruitment360Page() {
     }))
 
     // Funnel: cumulative "at or beyond each milestone"
+    // Total CVs (minRank 0) → include on_hold (they ARE in the pipeline)
+    // Milestones (minRank > 0) → on_hold rank -1 auto-excludes them — no extra check needed
     const funnelData = FUNNEL.map(ms => ({
       ...ms,
-      count: pipelineCands.filter(c => rank(c.current_stage) >= ms.minRank && c.current_stage !== 'on_hold').length,
+      count: pipelineCands.filter(c =>
+        ms.minRank === 0 ? true : rank(c.current_stage) >= ms.minRank
+      ).length,
     }))
 
     // Monthly revenue (from joined candidates, by join month)
@@ -437,10 +441,12 @@ export default function Recruitment360Page() {
       }
     })
 
-    // Job coverage
+    // Job coverage — volume signal: 5+ CVs; quality signal: 3+ candidates at interview stage
     const j0  = filtJobs.filter(j => j.candidates.length === 0).length
-    const j12 = filtJobs.filter(j => j.candidates.length >= 1 && j.candidates.length <= 2).length
-    const j3p = filtJobs.filter(j => j.candidates.length >= 3).length
+    const j5p = filtJobs.filter(j => j.candidates.length >= 5).length
+    const j3i = filtJobs.filter(j =>
+      j.candidates.filter(c => rank(c.current_stage) >= 2).length >= 3   // 3+ reached interview or beyond
+    ).length
 
     // Summary counts
     const cvs    = funnelData[0]?.count ?? 0
@@ -458,7 +464,7 @@ export default function Recruitment360Page() {
       funnelData, chartData, trendData,
       jobsAlloc: filtJobs.length,
       jobsWorked: filtJobs.filter(j => j.candidates.length > 0).length,
-      j0, j12, j3p, cvs, sl, iv, ofr, jnd, effectiveJoined, onHold, renege,
+      j0, j5p, j3i, cvs, sl, iv, ofr, jnd, effectiveJoined, onHold, renege,
     }
   }, [candidates, jobs, activeMths, fy, rid, recruiters, mth, qtr])
 
@@ -471,7 +477,9 @@ export default function Recruitment360Page() {
     if (jid)    list = list.filter(c => c.jobId === jid)
     if (fStage) {
       const ms = FUNNEL.find(m => m.id === fStage)
-      if (ms) list = list.filter(c => rank(c.current_stage) >= ms.minRank && c.current_stage !== 'on_hold')
+      if (ms) list = list.filter(c =>
+        ms.minRank === 0 ? true : rank(c.current_stage) >= ms.minRank
+      )
     }
     return list
   }, [D.filtJobs, jid, fStage])
@@ -479,7 +487,7 @@ export default function Recruitment360Page() {
   // ── Auto-insights (using real stage data) ─────────────────────────────────
   const insights = useMemo(() => {
     const out: { t:'success'|'warning'|'danger'; msg:string }[] = []
-    const { pct, cvs, sl, iv, ofr, jnd, effectiveJoined, j0, j3p, filtJobs, renege, onHold } = D
+    const { pct, cvs, sl, iv, ofr, jnd, effectiveJoined, j0, j5p, j3i, filtJobs, renege, onHold } = D
 
     if (pct >= 100) out.push({ t:'success', msg:`Revenue target met — ${fmtPct(pct)} achieved` })
     else if (pct >= 75) out.push({ t:'warning', msg:`${fmtPct(pct)} of target — on track, needs push` })
@@ -505,7 +513,8 @@ export default function Recruitment360Page() {
 
     if (renege > 0) out.push({ t:'danger', msg:`${renege} renege case${renege>1?'s':''} — review guarantee period follow-ups` })
     if (onHold > 0) out.push({ t:'warning', msg:`${onHold} candidate${onHold>1?'s':''} on hold — action needed` })
-    if (filtJobs.length && j3p > filtJobs.length * 0.6) out.push({ t:'success', msg:`Good job coverage — ${j3p} jobs with 3+ CVs` })
+    if (filtJobs.length && j3i > 0) out.push({ t:'success', msg:`${j3i} job${j3i>1?'s':''} with 3+ candidates at interview — strong pipeline depth` })
+    else if (filtJobs.length && j5p > 0) out.push({ t:'success', msg:`${j5p} job${j5p>1?'s':''} with 5+ CVs — good sourcing volume` })
 
     return out.slice(0, 5)
   }, [D])
@@ -811,11 +820,11 @@ export default function Recruitment360Page() {
         {/* ── Jobs Coverage ────────────────────────────────────────────────── */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:14, marginBottom:18 }}>
           {([
-            ['Jobs Allocated', D.jobsAlloc,  '#3b82f6','#eff6ff','#bfdbfe','Total assigned'],
-            ['Jobs Worked On', D.jobsWorked, '#8b5cf6','#f5f3ff','#ddd6fe','≥1 CV sourced'],
-            ['0 CVs',          D.j0,          '#ef4444','#fef2f2','#fecaca','No CVs yet'],
-            ['1–2 CVs',        D.j12,         '#f59e0b','#fffbeb','#fde68a','Low coverage'],
-            ['3+ CVs',         D.j3p,         '#22c55e','#f0fdf4','#bbf7d0','Good coverage'],
+            ['Jobs Allocated', D.jobsAlloc,  '#3b82f6','#eff6ff','#bfdbfe','Total assigned to recruiter'],
+            ['0 CVs',          D.j0,          '#ef4444','#fef2f2','#fecaca','No CVs yet — urgent'],
+            ['Jobs Worked On', D.jobsWorked, '#8b5cf6','#f5f3ff','#ddd6fe','≥ 1 CV sourced'],
+            ['5+ CVs',         D.j5p,         '#f59e0b','#fffbeb','#fde68a','Good sourcing volume'],
+            ['3+ Interviewed',  D.j3i,         '#10b981','#f0fdf4','#bbf7d0','Quality signal ★'],
           ] as [string,number,string,string,string,string][]).map(([l,v,c,bg,bd,d]) => (
             <div key={l} style={{ ...card, padding:'16px 18px', background:bg, border:`1px solid ${bd}` }}>
               <div style={{ fontSize:32, fontWeight:800, color:c, lineHeight:1 }}>{v}</div>
