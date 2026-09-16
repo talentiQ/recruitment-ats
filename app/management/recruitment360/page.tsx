@@ -86,7 +86,17 @@ interface OfferEvent {
   fixed_ctc: number | null
   billable_ctc: number | null
   expected_revenue: number | null
-  candidate?: { id: string; full_name: string; current_stage?: string | null; date_sourced?: string | null; date_joined?: string | null; job_id?: string | null } | null
+  candidate?: {
+    id: string
+    full_name: string
+    current_stage?: string | null
+    date_sourced?: string | null
+    date_joined?: string | null
+    job_id?: string | null
+    current_ctc?: number | null
+    billable_ctc?: number | null
+    revenue_earned?: number | null
+  } | null
 }
 
 // ─── Stage configuration (real candidate stage values) ────────────────────────
@@ -404,7 +414,43 @@ export default function Recruitment360Page() {
         // reporting, then D deduplicates candidate_id when counting KPIs.
         const byId = new Map<string, OfferEvent>()
         ;[...offerDateRows, ...joiningDateRows].forEach(o => byId.set(o.id, o))
-        return Array.from(byId.values())
+
+        const offerRows = Array.from(byId.values())
+
+        // IMPORTANT: Do not depend on the PostgREST nested `candidates (...)`
+        // relation for the candidate name. In some Supabase schemas the
+        // relationship is not exposed under the expected name, which leaves
+        // o.candidate empty even though candidate_id is present.
+        // Fetch the candidate records explicitly by candidate_id instead.
+        const candidateIds = [...new Set(
+          offerRows.map(o => o.candidate_id).filter(Boolean) as string[]
+        )]
+
+        if (candidateIds.length > 0) {
+          const candidateMap = new Map<string, any>()
+          const CHUNK = 500
+
+          for (let i = 0; i < candidateIds.length; i += CHUNK) {
+            const ids = candidateIds.slice(i, i + CHUNK)
+            const { data: candidateRows, error: candidateError } = await supabase
+              .from('candidates')
+              .select(`
+                id, full_name, current_stage, assigned_to, job_id,
+                date_sourced, date_joined, current_ctc, revenue_earned
+              `)
+              .in('id', ids)
+
+            if (candidateError) throw candidateError
+            ;(candidateRows || []).forEach((c: any) => candidateMap.set(c.id, c))
+          }
+
+          return offerRows.map(o => ({
+            ...o,
+            candidate: candidateMap.get(o.candidate_id as string) ?? o.candidate ?? null,
+          }))
+        }
+
+        return offerRows
       }
 
       async function fetchRecruiterRenegeCandidates(recruiterId: string) {
