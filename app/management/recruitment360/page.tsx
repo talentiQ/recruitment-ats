@@ -70,6 +70,7 @@ interface Job {
 
 interface RecruiterUser {
   id: string; full_name: string; role: string
+  is_active: boolean
   monthly_target: number; quarterly_target: number; annual_target: number
 }
 
@@ -85,6 +86,7 @@ interface OfferEvent {
   fixed_ctc: number | null
   billable_ctc: number | null
   expected_revenue: number | null
+  candidate?: { id: string; full_name: string; current_stage?: string | null; date_sourced?: string | null; date_joined?: string | null; job_id?: string | null } | null
 }
 
 // ─── Stage configuration (real candidate stage values) ────────────────────────
@@ -219,6 +221,7 @@ export default function Recruitment360Page() {
   const [rid,      setRid]          = useState('all')
   const [fStage,   setFStage]       = useState<string | null>(null)
   const [jid,      setJid]          = useState<string | null>(null)
+  const [joinedDrillOpen, setJoinedDrillOpen] = useState(false)
   const [recruiters,  setRecruiters]  = useState<RecruiterUser[]>([])
   const [candidates,  setCandidates]  = useState<Candidate[]>([])
   const [offers,      setOffers]      = useState<OfferEvent[]>([])
@@ -248,21 +251,21 @@ export default function Recruitment360Page() {
 
     if (MGMT_ROLES.includes(u.role)) {
       const res = await supabase
-        .from('users').select('id,full_name,role,monthly_target,quarterly_target,annual_target')
+        .from('users').select('id,full_name,role,is_active,monthly_target,quarterly_target,annual_target')
         .in('role', ['recruiter','team_leader','sr_team_leader'])
-        .eq('is_active', true).order('full_name')
+        .order('full_name')
       data = res.data || []
     } else if (u.role === 'sr_team_leader') {
-      const { data: tls } = await supabase.from('users').select('id').eq('reports_to', u.id).eq('is_active', true)
+      const { data: tls } = await supabase.from('users').select('id').eq('reports_to', u.id)
       const tlIds = (tls || []).map((t: any) => t.id)
-      const { data: recs } = await supabase.from('users').select('id').in('reports_to', [u.id, ...tlIds]).eq('is_active', true)
+      const { data: recs } = await supabase.from('users').select('id').in('reports_to', [u.id, ...tlIds])
       const allIds = [u.id, ...tlIds, ...(recs || []).map((r: any) => r.id)]
-      const res = await supabase.from('users').select('id,full_name,role,monthly_target,quarterly_target,annual_target').in('id', allIds).eq('is_active', true).order('full_name')
+      const res = await supabase.from('users').select('id,full_name,role,is_active,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
       data = res.data || []
     } else {
-      const { data: recs } = await supabase.from('users').select('id').eq('reports_to', u.id).eq('is_active', true)
+      const { data: recs } = await supabase.from('users').select('id').eq('reports_to', u.id)
       const allIds = [u.id, ...(recs || []).map((r: any) => r.id)]
-      const res = await supabase.from('users').select('id,full_name,role,monthly_target,quarterly_target,annual_target').in('id', allIds).eq('is_active', true).order('full_name')
+      const res = await supabase.from('users').select('id,full_name,role,is_active,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
       data = res.data || []
     }
 
@@ -374,7 +377,8 @@ export default function Recruitment360Page() {
               .select(`
                 id, candidate_id, recruiter_id, job_id,
                 offered_ctc, fixed_ctc, billable_ctc, expected_revenue,
-                offer_date, actual_joining_date, status
+                offer_date, actual_joining_date, status,
+                candidates ( id, full_name, current_stage, date_sourced, date_joined, job_id )
               `)
               .eq('recruiter_id', recruiterId)
               .gte(field, start)
@@ -808,6 +812,53 @@ export default function Recruitment360Page() {
     return list
   }, [D.filtJobs, D.jobs, D.offerCandidateIds, D.joiningCandidateIds, candidates, jid, fStage])
 
+  // ── Joined candidate drill-down ──────────────────────────────────────────
+  // Authoritative source is offers.actual_joining_date. Deduplicate by candidate
+  // so re-issued offers cannot make one joining appear twice.
+  const joinedRows = useMemo(() => {
+    const byCandidate = new Map<string, any>()
+    const recruiterMap = new Map<string, string>(recruiters.map(r => [r.id, r.full_name] as const))
+    const jobMap = new Map<string, Job>(D.jobs.map(j => [j.id, j] as const))
+
+    D.activeJoiningEvents
+      .filter(o => !!o.candidate_id)
+      .forEach(o => {
+        const candidateId = o.candidate_id as string
+        const existing = byCandidate.get(candidateId)
+        const currentTs = o.actual_joining_date ? new Date(o.actual_joining_date).getTime() : 0
+        const existingTs = existing?.actual_joining_date ? new Date(existing.actual_joining_date).getTime() : -1
+        if (!existing || currentTs >= existingTs) {
+          const candidate = candidates.find(c => c.id === candidateId) ?? o.candidate ?? null
+          const jobId = o.job_id ?? candidate?.job_id ?? null
+          const job = jobId ? jobMap.get(jobId) : null
+          byCandidate.set(candidateId, {
+            id: candidateId,
+            full_name: candidate?.full_name ?? o.candidate?.full_name ?? `Candidate ${candidateId.slice(0,8)}`,
+            recruiter_name: recruiterMap.get(o.recruiter_id ?? '') ?? '—',
+            joining_date: o.actual_joining_date,
+            offer_date: o.offer_date,
+            jobTitle: job?.job_title ?? '—',
+            jobClient: job?.client?.company_name ?? '—',
+            jobId,
+            status: normalizeOfferStatus(o.status) ?? o.status ?? 'joined',
+            current_stage: candidate?.current_stage ?? o.candidate?.current_stage ?? '—',
+            current_ctc: candidate?.current_ctc ?? null,
+            revenue_earned: candidate?.revenue_earned ?? null,
+          })
+        }
+      })
+
+    return Array.from(byCandidate.values()).sort((a,b) =>
+      new Date(b.joining_date || 0).getTime() - new Date(a.joining_date || 0).getTime()
+    )
+  }, [D.activeJoiningEvents, D.jobs, candidates, recruiters])
+
+  const onJoinedKpi = () => {
+    setJoinedDrillOpen(v => !v)
+    setJid(null)
+    setFStage(null)
+  }
+
   // ── Auto-insights (using real stage data) ─────────────────────────────────
   const insights = useMemo(() => {
     const out: { t:'success'|'warning'|'danger'; msg:string }[] = []
@@ -853,13 +904,13 @@ export default function Recruitment360Page() {
   }, [D])
 
   // ── Handlers ──────────────────────────────────────────────────────────────
-  const clearAll  = () => { setQtr(null); setMth(null); setFStage(null); setJid(null) }
+  const clearAll  = () => { setQtr(null); setMth(null); setFStage(null); setJid(null); setJoinedDrillOpen(false) }
   const hasFilter = !!(qtr || mth !== null || fStage || jid)
   const onQtr      = (q: string) => { setQtr(qtr===q?null:q); setMth(null) }
   const onMth      = (m: number | null) => { setMth(m); setQtr(null) }
-  const onRec      = (v: string) => { setRid(v); setJid(null); setFStage(null) }
-  const onFunnel   = (sid: string) => { setFStage(fStage===sid?null:sid); setJid(null) }
-  const onJob      = (id: string) => setJid(jid===id?null:id)
+  const onRec      = (v: string) => { setRid(v); setJid(null); setFStage(null); setJoinedDrillOpen(false) }
+  const onFunnel   = (sid: string) => { setFStage(fStage===sid?null:sid); setJid(null); setJoinedDrillOpen(false) }
+  const onJob      = (id: string) => { setJid(jid===id?null:id); setJoinedDrillOpen(false) }
   const onBarClick = (data: any) => {
     if (!data?.activeLabel) return
     const m = MONTHS.indexOf(data.activeLabel)
@@ -873,6 +924,10 @@ export default function Recruitment360Page() {
   }
 
   const recName     = rid==='all' ? 'All Recruiters' : (recruiters.find(r=>r.id===rid)?.full_name ?? '')
+  const recruiterCountActive = recruiters.filter(r => r.role === 'recruiter' && r.is_active).length
+  const recruiterCountInactive = recruiters.filter(r => r.role === 'recruiter' && !r.is_active).length
+  const recruiterCountTotal = recruiterCountActive + recruiterCountInactive
+  const selectedRecruiter = rid !== 'all' ? recruiters.find(r => r.id === rid) : null
   const periodLabel = qtr ? QUARTERS.find(q=>q.id===qtr)?.label : mth!==null ? MONTHS[mth] : 'Full Year'
 
   // ── Style tokens ──────────────────────────────────────────────────────────
@@ -914,7 +969,7 @@ export default function Recruitment360Page() {
             <span><strong>Period:</strong> {periodLabel}</span>
             <span><strong>Generated:</strong> {new Date().toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
           </div>
-          <div className="print-note">Total CVs = CVs sourced in the selected period. Offer / Joined / Renege counts are event-based and sourced from the offers table.</div>
+          <div className="print-note">Recruiter scope includes active and inactive recruiters. Total CVs = CVs sourced in the selected period. Offer / Joined / Renege counts are event-based and sourced from the offers table.</div>
         </div>
 
         {/* ── Title ───────────────────────────────────────────────────────── */}
@@ -967,9 +1022,19 @@ export default function Recruitment360Page() {
               <span style={lbl}>RECRUITER</span>
               <div style={{ display:'flex', gap:10, alignItems:'center' }}>
                 <select value={rid} onChange={e=>onRec(e.target.value)}
-                  style={{ border:'2px solid #3b82f6', borderRadius:8, padding:'7px 14px', fontSize:14, fontFamily:'inherit', outline:'none', cursor:'pointer', fontWeight:700, color:'#1e293b', background:'#fff', minWidth:200 }}>
-                  <option value="all">👥 All Recruiters</option>
-                  {recruiters.map(r => <option key={r.id} value={r.id}>👤 {r.full_name}</option>)}
+                  style={{ border:'2px solid #3b82f6', borderRadius:8, padding:'7px 14px', fontSize:14, fontFamily:'inherit', outline:'none', cursor:'pointer', fontWeight:700, color:'#1e293b', background:'#fff', minWidth:260 }}>
+                  <option value="all">👥 All Recruiters · Active + Inactive</option>
+                  <optgroup label={`Active Recruiters (${recruiterCountActive})`}>
+                    {recruiters.filter(r=>r.role==='recruiter' && r.is_active).map(r => <option key={r.id} value={r.id}>● {r.full_name}</option>)}
+                  </optgroup>
+                  <optgroup label={`Inactive Recruiters (${recruiterCountInactive})`}>
+                    {recruiters.filter(r=>r.role==='recruiter' && !r.is_active).map(r => <option key={r.id} value={r.id}>○ {r.full_name}</option>)}
+                  </optgroup>
+                  {recruiters.filter(r=>r.role!=='recruiter').length > 0 && (
+                    <optgroup label="Team Leaders / Other Reporting Users">
+                      {recruiters.filter(r=>r.role!=='recruiter').map(r => <option key={r.id} value={r.id}>👤 {r.full_name} · {r.role.replaceAll('_',' ')}</option>)}
+                    </optgroup>
+                  )}
                 </select>
                 <button onClick={printReport} className="no-print" style={{ border:'none', borderRadius:8, padding:'9px 16px', fontSize:12, fontFamily:'inherit', fontWeight:800, color:'#fff', background:'#2563eb', cursor:'pointer', whiteSpace:'nowrap' }}>
                   Print PDF Report
@@ -986,9 +1051,9 @@ export default function Recruitment360Page() {
 
             <div>
               <div style={{ fontSize:11, color:'rgba(255,255,255,0.4)', marginBottom:3 }}>
-                FY {fy} · {periodLabel} · {rid==='all'?`${recruiters.length} Recruiters`:'Individual'}
+                FY {fy} · {periodLabel} · {rid==='all'?`${recruiterCountTotal} Recruiters`:'Individual'}
                 <span style={{ marginLeft:8, padding:'1px 7px', borderRadius:100, fontSize:10, background:'rgba(74,222,128,0.15)', color:'#4ade80', fontWeight:600 }}>
-                  ● Active only
+                  ● {recruiterCountActive} Active · {recruiterCountInactive} Inactive
                 </span>
               </div>
               <div style={{ fontSize:26, fontWeight:800, letterSpacing:'-0.02em' }}>
@@ -1020,9 +1085,12 @@ export default function Recruitment360Page() {
                 ['Jobs Alloc.',    D.jobsAlloc,         '#7dd3fc'],
                 ['Jobs Worked',    D.jobsWorked,        '#60a5fa'],
               ] as [string,number,string][]).map(([l,v,c]) => (
-                <div key={l} style={{ textAlign:'center', minWidth:62 }}>
+                <div key={l} onClick={l === 'Joined' ? onJoinedKpi : undefined}
+                  title={l === 'Joined' ? 'Click to view joined candidates' : undefined}
+                  style={{ textAlign:'center', minWidth:62, cursor:l === 'Joined' ? 'pointer' : 'default', padding:'4px 5px', borderRadius:8, background:l === 'Joined' && joinedDrillOpen ? 'rgba(52,211,153,0.12)' : 'transparent' }}>
                   <div style={{ fontSize:24, fontWeight:800, color:c, lineHeight:1 }}>{v}</div>
                   <div style={{ fontSize:10, color:'rgba(255,255,255,0.38)', marginTop:3, lineHeight:1.3 }}>{l}</div>
+                  {l === 'Joined' && <div style={{ fontSize:8, color:'#6ee7b7', marginTop:2 }}>click names</div>}
                 </div>
               ))}
             </div>
@@ -1330,6 +1398,44 @@ export default function Recruitment360Page() {
           </div>
         </div>
 
+        {/* ── Joined Candidate Drill-down ──────────────────────────────────── */}
+        {joinedDrillOpen && (
+          <div className="candidate-drill-card joined-drill-card" style={{ ...card, overflow:'hidden', border:'2px solid #10b981', marginBottom:18 }}>
+            <div style={{ padding:'14px 20px', background:'#ecfdf5', borderBottom:'1px solid #a7f3d0', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <div>
+                <div style={{ fontSize:15, fontWeight:700, color:'#065f46' }}>Joined Candidates</div>
+                <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>{joinedRows.length} unique candidates · sourced from offers.actual_joining_date</div>
+              </div>
+              <button className="no-print" onClick={()=>setJoinedDrillOpen(false)}
+                style={{ background:'none', border:'1px solid #a7f3d0', borderRadius:8, padding:'5px 12px', cursor:'pointer', fontSize:12, fontWeight:600, color:'#047857', fontFamily:'inherit' }}>
+                ✕ Close
+              </button>
+            </div>
+            <div style={{ overflowX:'auto' }}>
+              <table className="report-table" style={{ width:'100%', borderCollapse:'collapse', minWidth:900 }}>
+                <thead><tr>
+                  {['#','Candidate','Recruiter','Job','Client','Joining Date','Offer Date','Current Stage'].map(h=><th key={h} style={tH}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {joinedRows.map((c:any, i:number) => (
+                    <tr key={c.id} style={{ background:i%2===0?'#fff':'#fafafa' }}>
+                      <td style={tC({ textAlign:'center', color:'#94a3b8', fontSize:11 })}>{i+1}</td>
+                      <td style={tC({ fontWeight:700, color:'#0f172a' })}>{c.full_name}</td>
+                      <td style={tC({ fontSize:12 })}>{c.recruiter_name}</td>
+                      <td style={tC({ color:'#64748b', fontSize:12 })}>{c.jobTitle}</td>
+                      <td style={tC({ color:'#64748b', fontSize:12 })}>{c.jobClient}</td>
+                      <td style={tC({ color:'#047857', fontWeight:700, whiteSpace:'nowrap', fontSize:12 })}>{c.joining_date ? new Date(c.joining_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'2-digit'}) : '—'}</td>
+                      <td style={tC({ color:'#64748b', whiteSpace:'nowrap', fontSize:12 })}>{c.offer_date ? new Date(c.offer_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'2-digit'}) : '—'}</td>
+                      <td style={tC({ fontSize:12 })}>{STAGE_LABEL[c.current_stage] ?? c.current_stage}</td>
+                    </tr>
+                  ))}
+                  {!joinedRows.length && <tr><td colSpan={8} style={{ padding:36, textAlign:'center', color:'#9ca3af' }}>No joining records found for the selected period.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* ── Candidate Drill-down ─────────────────────────────────────────── */}
         {(jid || fStage) && (
           <div className="candidate-drill-card" style={{ ...card, overflow:'hidden', border:'2px solid #3b82f6', marginBottom:18 }}>
@@ -1494,7 +1600,8 @@ export default function Recruitment360Page() {
             .revenue-chart-card,
             .insights-card,
             .jobs-table-card,
-            .candidate-drill-card {
+            .candidate-drill-card,
+            .joined-drill-card {
               break-inside:avoid !important;
               page-break-inside:avoid !important;
               box-shadow:none !important;
