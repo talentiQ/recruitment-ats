@@ -48,6 +48,7 @@ interface Candidate {
   revenue_month: string | null
   revenue_year: number | null
   is_renege: boolean
+  renege_date: string | null
   drop_off_stage: string | null
   // computed
   _srcMthIdx: number
@@ -70,6 +71,20 @@ interface Job {
 interface RecruiterUser {
   id: string; full_name: string; role: string
   monthly_target: number; quarterly_target: number; annual_target: number
+}
+
+interface OfferEvent {
+  id: string
+  candidate_id: string | null
+  recruiter_id: string | null
+  job_id: string | null
+  offer_date: string
+  actual_joining_date: string | null
+  status: string | null
+  offered_ctc: number | null
+  fixed_ctc: number | null
+  billable_ctc: number | null
+  expected_revenue: number | null
 }
 
 // ─── Stage configuration (real candidate stage values) ────────────────────────
@@ -194,6 +209,7 @@ export default function Recruitment360Page() {
   const [jid,      setJid]          = useState<string | null>(null)
   const [recruiters,  setRecruiters]  = useState<RecruiterUser[]>([])
   const [candidates,  setCandidates]  = useState<Candidate[]>([])
+  const [offers,      setOffers]      = useState<OfferEvent[]>([])
   const [jobs,        setJobs]        = useState<Job[]>([])
   const [authLoading, setAuthLoading] = useState(true)
   const [dataLoading, setDataLoading] = useState(false)
@@ -282,7 +298,7 @@ export default function Recruitment360Page() {
               date_sourced, date_joined, date_dropped,
               current_ctc, offered_fixed, billable_ctc,
               revenue_earned, revenue_month, revenue_year,
-              is_renege, drop_off_stage
+              is_renege, renege_date, drop_off_stage
             `)
             .eq('assigned_to', recruiterId)
             .gte('date_sourced', start)
@@ -313,7 +329,7 @@ export default function Recruitment360Page() {
               date_sourced, date_joined,
               current_ctc, billable_ctc,
               revenue_earned, revenue_month, revenue_year,
-              is_renege
+              is_renege, renege_date
             `)
             .eq('assigned_to', recruiterId)
             .gte('date_joined', start)
@@ -333,31 +349,109 @@ export default function Recruitment360Page() {
         return rows
       }
 
+      async function fetchRecruiterOffers(recruiterId: string) {
+        const PAGE_SIZE_OFFERS = 1000
+
+        async function fetchOfferWindow(field: 'offer_date' | 'actual_joining_date') {
+          const rows: OfferEvent[] = []
+          let from = 0
+
+          while (true) {
+            const { data, error } = await supabase
+              .from('offers')
+              .select(`
+                id, candidate_id, recruiter_id, job_id,
+                offered_ctc, fixed_ctc, billable_ctc, expected_revenue,
+                offer_date, actual_joining_date, status
+              `)
+              .eq('recruiter_id', recruiterId)
+              .gte(field, start)
+              .lte(field, end)
+              .range(from, from + PAGE_SIZE_OFFERS - 1)
+
+            if (error) throw error
+            const page = (data || []) as OfferEvent[]
+            rows.push(...page)
+            if (page.length < PAGE_SIZE_OFFERS) break
+            from += PAGE_SIZE_OFFERS
+          }
+
+          return rows
+        }
+
+        const [offerDateRows, joiningDateRows] = await Promise.all([
+          fetchOfferWindow('offer_date'),
+          fetchOfferWindow('actual_joining_date'),
+        ])
+
+        // One candidate can have multiple offers. Keep every offer event for
+        // reporting, then D deduplicates candidate_id when counting KPIs.
+        const byId = new Map<string, OfferEvent>()
+        ;[...offerDateRows, ...joiningDateRows].forEach(o => byId.set(o.id, o))
+        return Array.from(byId.values())
+      }
+
+      async function fetchRecruiterRenegeCandidates(recruiterId: string) {
+        const rows: any[] = []
+        let from = 0
+
+        while (true) {
+          const { data, error } = await supabase
+            .from('candidates')
+            .select(`
+              id, full_name, current_stage, assigned_to, job_id,
+              date_sourced, date_joined, date_dropped,
+              current_ctc, offered_fixed, billable_ctc,
+              revenue_earned, revenue_month, revenue_year,
+              is_renege, renege_date, drop_off_stage
+            `)
+            .eq('assigned_to', recruiterId)
+            .eq('current_stage', 'renege')
+            .not('renege_date', 'is', null)
+            .gte('renege_date', start)
+            .lte('renege_date', end)
+            .range(from, from + PAGE_SIZE - 1)
+
+          if (error) throw error
+          const page = data || []
+          rows.push(...page)
+          if (page.length < PAGE_SIZE) break
+          from += PAGE_SIZE
+        }
+
+        return rows
+      }
+
       // Fetch each recruiter's data independently. For one recruiter this is
       // exactly the same dataset used by the individual report; for All this
       // produces a literal concatenation of those individual datasets.
       const recruiterResults = await Promise.all(
         recIds.map(async recruiterId => {
-          const [pipelineRows, revenueRows] = await Promise.all([
+          const [pipelineRows, revenueRows, renegeRows, recruiterOffers] = await Promise.all([
             fetchRecruiterCandidates(recruiterId),
             fetchRecruiterRevenueCandidates(recruiterId),
+            fetchRecruiterRenegeCandidates(recruiterId),
+            fetchRecruiterOffers(recruiterId),
           ])
 
-          // A candidate can qualify for both queries. Deduplicate ONLY within
-          // this recruiter's dataset; never deduplicate across recruiters.
+          // A candidate can qualify for multiple event/cohort queries. Deduplicate
+          // ONLY within this recruiter's candidate dataset; never across recruiters.
           const byId = new Map<string, any>()
           pipelineRows.forEach(c => byId.set(c.id, c))
-          revenueRows.forEach(c => {
-            if (!byId.has(c.id)) byId.set(c.id, c)
-          })
+          revenueRows.forEach(c => { if (!byId.has(c.id)) byId.set(c.id, c) })
+          renegeRows.forEach(c => { if (!byId.has(c.id)) byId.set(c.id, c) })
 
-          return Array.from(byId.values())
+          return {
+            candidates: Array.from(byId.values()),
+            offers: recruiterOffers,
+          }
         })
       )
 
       // IMPORTANT: no global Map/dedup here.
       // All Recruiters = sum of individual recruiter datasets.
-      const allCandRaw = recruiterResults.flat()
+      const allCandRaw = recruiterResults.flatMap(r => r.candidates)
+      const allOffers = recruiterResults.flatMap(r => r.offers)
 
       const enrichedCands: Candidate[] = allCandRaw.map(c => ({
         ...c,
@@ -449,10 +543,12 @@ export default function Recruitment360Page() {
       }
 
       setCandidates(enrichedCands)
+      setOffers(allOffers)
       setJobs(enrichedJobs)
     } catch (error) {
       console.error('Recruitment360 data load failed:', error)
       setCandidates([])
+      setOffers([])
       setJobs([])
     } finally {
       setDataLoading(false)
@@ -519,16 +615,6 @@ export default function Recruitment360Page() {
     const totalCvs = stageSum
     const cvs = totalCvs
 
-    // Funnel: cumulative "at or beyond each milestone"
-    // Total CVs (minRank 0) → include on_hold (they ARE in the pipeline)
-    // Milestones (minRank > 0) → on_hold rank -1 auto-excludes them — no extra check needed
-    const funnelData = FUNNEL.map(ms => ({
-      ...ms,
-      count: ms.minRank === 0
-        ? cvs
-        : pipelineCands.filter(c => rank(c.current_stage) >= ms.minRank).length,
-    }))
-
     // Monthly revenue (from joined candidates, by join month)
     const monthlyRevenue = MONTHS.map((_, mi) =>
       candidates
@@ -560,15 +646,63 @@ export default function Recruitment360Page() {
       month: m, revenue: monthlyRevenue[mi], target: monthlyTarget[mi], inFilter: activeMths.includes(mi),
     }))
 
-    // Trend data (by sourced month)
+    // Event-based hiring metrics. Offers and joinings are deliberately NOT
+    // tied to date_sourced. A candidate sourced in March can be offered in March
+    // and join in April; those events belong to different reporting periods.
+    const activeOfferEvents = offers.filter(o => {
+      const idx = toMthIdx(o.offer_date, getFYRange(fy).startYear)
+      return idx >= 0 && activeMths.includes(idx)
+    })
+    const activeJoiningEvents = offers.filter(o => {
+      if (!o.actual_joining_date) return false
+      const idx = toMthIdx(o.actual_joining_date, getFYRange(fy).startYear)
+      return idx >= 0 && activeMths.includes(idx)
+    })
+
+    // Count unique candidates, not offer rows, so revised/reissued offers do not
+    // inflate the Offer KPI. Attribution comes from offers.recruiter_id.
+    const uniqueOfferCandidateIds = new Set(
+      activeOfferEvents.map(o => o.candidate_id).filter(Boolean) as string[]
+    )
+    const uniqueJoiningCandidateIds = new Set(
+      activeJoiningEvents.map(o => o.candidate_id).filter(Boolean) as string[]
+    )
+
+    const renegeCands = candidates.filter(c => {
+      if (!c.renege_date) return false
+      const idx = toMthIdx(c.renege_date, getFYRange(fy).startYear)
+      return idx >= 0 && activeMths.includes(idx)
+    })
+    const uniqueRenegeCandidateIds = new Set(renegeCands.map(c => c.id))
+
+    // Recruitment funnel uses the correct source for each milestone:
+    // Total/Screening/Interview = sourced-CV cohort; Offer/Joining = actual
+    // offer/joining events. These event metrics can legitimately come from
+    // candidates sourced in a previous financial year.
+    const sl = pipelineCands.filter(c => rank(c.current_stage) >= 1 && c.current_stage !== 'on_hold').length
+    const iv = pipelineCands.filter(c => rank(c.current_stage) >= 2 && c.current_stage !== 'on_hold').length
+    const funnelData = FUNNEL.map(ms => ({
+      ...ms,
+      count:
+        ms.id === 'sourced' ? cvs :
+        ms.id === 'screening' ? sl :
+        ms.id === 'interview' ? iv :
+        ms.id === 'offer' ? uniqueOfferCandidateIds.size :
+        ms.id === 'joined' ? uniqueJoiningCandidateIds.size : 0,
+    }))
+
+    // Trend: sourcing activity follows date_sourced; joining activity follows
+    // actual_joining_date from offers. This keeps the chart semantically correct.
     const trendData = MONTHS.map((m, mi) => {
       const mc = candidates.filter(c => c._srcMthIdx === mi)
+      const joins = offers.filter(o => o.actual_joining_date && toMthIdx(o.actual_joining_date, getFYRange(fy).startYear) === mi)
+      const uniqueJoins = new Set(joins.map(o => o.candidate_id).filter(Boolean))
       return {
         month: m,
         'Total CVs':   mc.length,
         'Screening':   mc.filter(c => rank(c.current_stage) >= 1 && c.current_stage !== 'on_hold').length,
         'Interviewed': mc.filter(c => rank(c.current_stage) >= 2 && c.current_stage !== 'on_hold').length,
-        'Joined':      mc.filter(c => ['joined','renege'].includes(c.current_stage)).length,
+        'Joined':      uniqueJoins.size,
       }
     })
 
@@ -580,16 +714,15 @@ export default function Recruitment360Page() {
     ).length
 
     // Summary counts
-    const sl               = funnelData[1]?.count ?? 0
-    const iv               = funnelData[2]?.count ?? 0
-    const ofr              = funnelData[3]?.count ?? 0
-    const effectiveJoined  = pipelineCands.filter(c => c.current_stage === 'joined').length
+    const ofr              = uniqueOfferCandidateIds.size
+    const effectiveJoined  = uniqueJoiningCandidateIds.size
     const onHold           = stageCounts.on_hold ?? 0
-    const renege           = stageCounts.renege ?? 0
+    const renege           = uniqueRenegeCandidateIds.size
     const jnd              = effectiveJoined + renege
 
     return {
-      pipelineCands, revenueCands, filtJobs,
+      pipelineCands, revenueCands, filtJobs, jobs, offers, activeOfferEvents, activeJoiningEvents,
+      offerCandidateIds: [...uniqueOfferCandidateIds], joiningCandidateIds: [...uniqueJoiningCandidateIds],
       totalRevenue, totalTarget, pct,
       funnelData, chartData, trendData,
       stageCounts, stageSum, totalCvs,
@@ -597,23 +730,39 @@ export default function Recruitment360Page() {
       jobsWorked: filtJobs.filter(j => j.candidates.length > 0).length,
       j0, j5p, j3i, cvs, sl, iv, ofr, jnd, effectiveJoined, onHold, renege,
     }
-  }, [candidates, jobs, activeMths, rid, recruiters, mth, qtr])
+  }, [candidates, offers, jobs, activeMths, rid, recruiters, mth, qtr, fy])
 
   // ── Candidate drill-down ──────────────────────────────────────────────────
   const drillCands = useMemo(() => {
-    const flat = D.filtJobs.flatMap(j =>
-      j.candidates.map(c => ({ ...c, jobTitle: j.job_title, jobClient: j.client?.company_name ?? '—', jobId: j.id }))
-    )
-    let list = flat
-    if (jid)    list = list.filter(c => c.jobId === jid)
-    if (fStage) {
-      const ms = FUNNEL.find(m => m.id === fStage)
-      if (ms) list = list.filter(c =>
-        ms.minRank === 0 ? true : rank(c.current_stage) >= ms.minRank
-      )
+    const makeRow = (c: Candidate) => {
+      const job = D.jobs.find(j => j.id === c.job_id)
+      return { ...c, jobTitle: job?.job_title ?? '—', jobClient: job?.client?.company_name ?? '—', jobId: c.job_id }
     }
+
+    let list: any[]
+
+    // Event-based funnel stages need event-based drill-down. Pipeline stages
+    // continue to use the sourced-CV cohort.
+    if (fStage === 'offer') {
+      const ids = new Set(D.offerCandidateIds)
+      list = candidates.filter(c => ids.has(c.id)).map(makeRow)
+    } else if (fStage === 'joined') {
+      const ids = new Set(D.joiningCandidateIds)
+      list = candidates.filter(c => ids.has(c.id)).map(makeRow)
+    } else {
+      const flat = D.filtJobs.flatMap(j =>
+        j.candidates.map(c => ({ ...c, jobTitle: j.job_title, jobClient: j.client?.company_name ?? '—', jobId: j.id }))
+      )
+      list = flat
+      if (fStage) {
+        const ms = FUNNEL.find(m => m.id === fStage)
+        if (ms) list = list.filter(c => ms.minRank === 0 ? true : rank(c.current_stage) >= ms.minRank)
+      }
+    }
+
+    if (jid) list = list.filter(c => c.jobId === jid)
     return list
-  }, [D.filtJobs, jid, fStage])
+  }, [D.filtJobs, D.jobs, D.offerCandidateIds, D.joiningCandidateIds, candidates, jid, fStage])
 
   // ── Auto-insights (using real stage data) ─────────────────────────────────
   const insights = useMemo(() => {
@@ -968,7 +1117,7 @@ export default function Recruitment360Page() {
             <div>
               <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>Recruitment Funnel</div>
               <div style={{ fontSize:12, color:'#94a3b8' }}>
-                <strong style={{ color:'#3b82f6' }}>Pipeline CVs</strong> = unique candidates in period · top Total CVs KPI is the sum of individual recruiter Total CVs
+                <strong style={{ color:'#3b82f6' }}>CV metrics</strong> use date_sourced; Offer & Joining metrics use actual event dates from offers
               </div>
             </div>
             {fStage && (
@@ -1014,11 +1163,11 @@ export default function Recruitment360Page() {
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', gap:12, marginBottom:14 }}>
             <div>
               <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>Current Stage Breakdown</div>
-              <div style={{ fontSize:12, color:'#94a3b8' }}>Exclusive current-stage counts · used to identify pipeline bottlenecks</div>
+              <div style={{ fontSize:12, color:'#94a3b8' }}>Exclusive current-stage counts for CVs sourced in the selected period · used to identify pipeline bottlenecks</div>
             </div>
             <div style={{ textAlign:'right' }}>
               <div style={{ fontSize:18, fontWeight:800, color:'#2563eb' }}>{D.totalCvs} Total CVs</div>
-              <div style={{ fontSize:10, color:'#94a3b8', marginTop:2 }}>Stage-sum total</div>
+              <div style={{ fontSize:10, color:'#94a3b8', marginTop:2 }}>Sourced-CV cohort total</div>
             </div>
           </div>
           <div className="stage-breakdown-grid" style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10 }}>
@@ -1113,8 +1262,12 @@ export default function Recruitment360Page() {
                       <td style={tC({ textAlign:'center', fontWeight:800, color:'#3b82f6', fontSize:15 })}>{cds.length}</td>
                       <td style={tC({ textAlign:'center', fontWeight:700, color:'#6366f1' })}>{cnt(1)}</td>
                       <td style={tC({ textAlign:'center', fontWeight:700, color:'#f59e0b' })}>{cnt(2)}</td>
-                      <td style={tC({ textAlign:'center', fontWeight:700, color:'#22c55e' })}>{cnt(5)}</td>
-                      <td style={tC({ textAlign:'center', fontWeight:700, color:'#10b981' })}>{cds.filter(c=>['joined','renege'].includes(c.current_stage)).length}</td>
+                      <td style={tC({ textAlign:'center', fontWeight:700, color:'#22c55e' })}>
+                        {new Set(D.activeOfferEvents.filter(o => o.job_id === job.id && o.candidate_id).map(o => o.candidate_id)).size}
+                      </td>
+                      <td style={tC({ textAlign:'center', fontWeight:700, color:'#10b981' })}>
+                        {new Set(D.activeJoiningEvents.filter(o => o.job_id === job.id && o.candidate_id).map(o => o.candidate_id)).size}
+                      </td>
                       <td style={tC({ color:'#64748b', whiteSpace:'nowrap', fontSize:12 })}>
                         {cds.length > 0
                           ? new Date(Math.max(...cds.map(c => new Date(c.date_sourced||0).getTime()))).toLocaleDateString('en-IN',{day:'numeric',month:'short'})
@@ -1142,8 +1295,8 @@ export default function Recruitment360Page() {
                   {jid && !fStage
                     ? `Candidates — ${D.filtJobs.find(j=>j.id===jid)?.job_title ?? 'Job'}`
                     : fStage && !jid
-                    ? `Candidates — "${FUNNEL.find(m=>m.id===fStage)?.label}" milestone and beyond`
-                    : `"${FUNNEL.find(m=>m.id===fStage)?.label}" in ${D.filtJobs.find(j=>j.id===jid)?.job_title ?? ''}`}
+                    ? `Candidates — ${FUNNEL.find(m=>m.id===fStage)?.label}`
+                    : `${FUNNEL.find(m=>m.id===fStage)?.label} in ${D.filtJobs.find(j=>j.id===jid)?.job_title ?? ''}`}
                 </div>
                 <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>{drillCands.length} candidates</div>
               </div>
@@ -1203,7 +1356,7 @@ export default function Recruitment360Page() {
         <div style={{ ...card, padding:'20px 24px' }}>
           <div style={{ fontSize:15, fontWeight:700, color:'#1e293b', marginBottom:3 }}>Monthly Activity Trend</div>
           <div style={{ fontSize:12, color:'#94a3b8', marginBottom:14 }}>
-            Based on date_sourced · tracks candidate pipeline activity month by month
+            CV activity uses date_sourced; Joinings use actual_joining_date from offers
           </div>
           {dataLoading
             ? <div style={{ height:200, display:'flex', alignItems:'center', justifyContent:'center', color:'#94a3b8' }}>Loading…</div>
