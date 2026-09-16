@@ -635,11 +635,13 @@ export default function Recruitment360Page() {
     // Pipeline candidates = sourced in active months
     const pipelineCands = candidates.filter(c => activeMths.includes(c._srcMthIdx))
 
-    // Revenue candidates = joined in FY (any month or filtered months)
+    // Revenue candidates = ONLY candidates whose current stage is Joined.
+    // Renege candidates are intentionally excluded from all joined/revenue
+    // reporting so the Joined picture remains a clean net-joined view.
     const revenueCands = candidates.filter(c =>
       c._jndMthIdx >= 0 &&
       activeMths.includes(c._jndMthIdx) &&
-      ['joined','renege'].includes(c.current_stage) &&
+      c.current_stage === 'joined' &&
       (c.revenue_earned ?? 0) > 0
     )
 
@@ -659,7 +661,13 @@ export default function Recruitment360Page() {
     const activeJoiningEvents = offers.filter(o => {
       if (!o.actual_joining_date) return false
       const idx = toMthIdx(o.actual_joining_date, getFYRange(fy).startYear)
-      return idx >= 0 && activeMths.includes(idx)
+      if (idx < 0 || !activeMths.includes(idx)) return false
+
+      // Joined reporting is strictly based on the candidate's current_stage.
+      // This removes Renege cases from every joining metric/drill-down that
+      // consumes activeJoiningEvents.
+      const candidate = candidates.find(c => c.id === o.candidate_id) ?? o.candidate ?? null
+      return candidate?.current_stage === 'joined'
     })
 
     // ── Stage breakdown ─────────────────────────────────────────────────────
@@ -699,9 +707,10 @@ export default function Recruitment360Page() {
     )
     const offerAcceptedIds = offerIdsByStatus(['offer_accepted'])
     const offerRejectedIds = offerIdsByStatus(['offer_rejected'])
+    // Joined = unique candidates with an actual joining date AND
+    // current_stage === 'joined'. Renege candidates are excluded.
     const offerJoinedIds = new Set(
       activeJoiningEvents
-        .filter(o => normalizeOfferStatus(o.status) === 'joined' || !!o.actual_joining_date)
         .map(o => o.candidate_id)
         .filter(Boolean) as string[]
     )
@@ -723,7 +732,7 @@ export default function Recruitment360Page() {
     // Monthly revenue (from joined candidates, by join month)
     const monthlyRevenue = MONTHS.map((_, mi) =>
       candidates
-        .filter(c => c._jndMthIdx === mi && ['joined','renege'].includes(c.current_stage) && (c.revenue_earned ?? 0) > 0)
+        .filter(c => c._jndMthIdx === mi && c.current_stage === 'joined' && (c.revenue_earned ?? 0) > 0)
         .reduce((s, c) => s + (c.revenue_earned ?? 0), 0)
     )
 
@@ -810,7 +819,9 @@ export default function Recruitment360Page() {
     const effectiveJoined  = uniqueJoiningCandidateIds.size
     const onHold           = stageCounts.on_hold ?? 0
     const renege           = offerRenegeIds.size
-    const jnd              = effectiveJoined + renege
+    // Joined is net joined only. Renege remains a separate KPI and is never
+    // added back into the Joined total.
+    const jnd              = effectiveJoined
 
     return {
       pipelineCands, revenueCands, filtJobs, jobs, offers, activeOfferEvents, activeJoiningEvents,
