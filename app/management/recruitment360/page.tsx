@@ -807,6 +807,69 @@ export default function Recruitment360Page() {
       }
     })
 
+    // ── Management BI Intelligence ───────────────────────────────────────────
+    // Keep this layer intentionally small: eight decision-useful metrics.
+    // Denominators follow the same cohort/event rules as the main report.
+    const selectedJobs = filtJobs.length
+    const recruiterCount = Math.max(1, activeRecs.length)
+
+    // Working days in the selected FY / quarter / month.
+    // Saturday and Sunday are excluded; public holidays are not assumed because
+    // the ATS has no holiday calendar table.
+    const periodDates = (() => {
+      const { start: fyStart, end: fyEnd } = getFYRange(fy)
+      const rangeStart = mth !== null
+        ? new Date(fyYear(fy) + (mth >= 9 ? 1 : 0), mth >= 9 ? mth - 9 : mth + 3, 1)
+        : qtr
+          ? new Date(fyYear(fy) + (qtr === 'q4' ? 1 : 0), qtr === 'q1' ? 3 : qtr === 'q2' ? 6 : qtr === 'q3' ? 9 : 0, 1)
+          : new Date(`${fyStart}T00:00:00`)
+      const rangeEnd = mth !== null
+        ? new Date(rangeStart.getFullYear(), rangeStart.getMonth() + 1, 0)
+        : qtr
+          ? new Date(rangeStart.getFullYear(), rangeStart.getMonth() + 3, 0)
+          : new Date(`${fyEnd}T00:00:00`)
+
+      let workingDays = 0
+      const d = new Date(rangeStart)
+      while (d <= rangeEnd) {
+        const day = d.getDay()
+        if (day !== 0 && day !== 6) workingDays++
+        d.setDate(d.getDate() + 1)
+      }
+      return workingDays
+    })()
+
+    const totalInterviews = pipelineCands.filter(c =>
+      rank(c.current_stage) >= 2 && c.current_stage !== 'on_hold'
+    ).length
+
+    const bi = {
+      cvsPerWorkingDay: periodDates > 0 ? cvs / periodDates : 0,
+      cvsPerJob: selectedJobs > 0 ? cvs / selectedJobs : 0,
+      jobsPerRecruiter: recruiterCount > 0 ? selectedJobs / recruiterCount : 0,
+      jobCoverage: selectedJobs > 0
+        ? (filtJobs.filter(j => j.candidates.length > 0).length / selectedJobs) * 100
+        : 0,
+      cvToInterview: cvs > 0 ? (totalInterviews / cvs) * 100 : 0,
+      cvToOffer: cvs > 0 ? (uniqueOfferCandidateIds.size / cvs) * 100 : 0,
+      cvToJoin: cvs > 0 ? (uniqueJoiningCandidateIds.size / cvs) * 100 : 0,
+      offerToJoin: uniqueOfferCandidateIds.size > 0
+        ? (uniqueJoiningCandidateIds.size / uniqueOfferCandidateIds.size) * 100
+        : 0,
+      interviewsPerCv: totalInterviews > 0 ? cvs / totalInterviews : 0,
+      offersPerCv: uniqueOfferCandidateIds.size > 0 ? cvs / uniqueOfferCandidateIds.size : 0,
+      joinsPerCv: uniqueJoiningCandidateIds.size > 0 ? cvs / uniqueJoiningCandidateIds.size : 0,
+      offersPerJoin: uniqueJoiningCandidateIds.size > 0
+        ? uniqueOfferCandidateIds.size / uniqueJoiningCandidateIds.size
+        : 0,
+      workingDays: periodDates,
+      selectedJobs,
+      recruiterCount,
+      activeJobs: filtJobs.filter(j => j.candidates.length > 0).length,
+      totalInterviews,
+    }
+
+
     // Job coverage — volume signal: 5+ CVs; quality signal: 3+ candidates at interview stage
     const j0  = filtJobs.filter(j => j.candidates.length === 0).length
     const j5p = filtJobs.filter(j => j.candidates.length >= 5).length
@@ -834,6 +897,7 @@ export default function Recruitment360Page() {
       jobsAlloc: filtJobs.length,
       jobsWorked: filtJobs.filter(j => j.candidates.length > 0).length,
       j0, j5p, j3i, cvs, sl, iv, ofr, jnd, effectiveJoined, onHold, renege,
+      bi,
     }
   }, [candidates, offers, jobs, activeMths, rid, recruiters, mth, qtr, fy])
 
@@ -1379,6 +1443,40 @@ export default function Recruitment360Page() {
               <div style={{ fontSize:11, color:'#64748b', marginTop:2 }}>{d}</div>
             </div>
           ))}
+        </div>
+
+        {/* ── Management Intelligence ───────────────────────────────────────── */}
+        <div style={{ ...card, marginBottom:18 }}>
+          <div style={{ padding:'16px 20px 12px', borderBottom:'1px solid #f1f5f9' }}>
+            <div style={{ fontSize:15, fontWeight:800, color:'#1e293b' }}>Management Intelligence</div>
+            <div style={{ fontSize:12, color:'#94a3b8', marginTop:3 }}>
+              Productivity & funnel efficiency · {D.bi.workingDays} working days in selected period
+            </div>
+          </div>
+
+          <div style={{
+            display:'grid',
+            gridTemplateColumns:'repeat(4, minmax(0, 1fr))',
+            gap:1,
+            background:'#f1f5f9',
+          }}>
+            {[
+              ['CVs / Working Day', D.bi.cvsPerWorkingDay.toFixed(1), `${D.cvs} CVs ÷ ${D.bi.workingDays} days`],
+              ['CVs / Job', D.bi.cvsPerJob.toFixed(1), `${D.cvs} CVs ÷ ${D.bi.selectedJobs} jobs`],
+              ['Jobs / Recruiter', D.bi.jobsPerRecruiter.toFixed(1), `${D.bi.selectedJobs} jobs ÷ ${D.bi.recruiterCount} recruiters`],
+              ['Job Coverage', fmtPct(D.bi.jobCoverage), `${D.bi.activeJobs} of ${D.bi.selectedJobs} jobs active`],
+              ['CV → Interview', fmtPct(D.bi.cvToInterview), `${D.bi.totalInterviews} interviews from ${D.cvs} CVs`],
+              ['CV → Offer', fmtPct(D.bi.cvToOffer), `${D.offerCandidateIds.length} offers from ${D.cvs} CVs`],
+              ['CV → Join', fmtPct(D.bi.cvToJoin), `${D.joiningCandidateIds.length} joins from ${D.cvs} CVs`],
+              ['Offer → Join', fmtPct(D.bi.offerToJoin), `${D.joiningCandidateIds.length} joins from ${D.offerCandidateIds.length} offers`],
+            ].map(([label, value, sub]) => (
+              <div key={label} style={{ background:'#fff', padding:'15px 17px', minWidth:0 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:'#64748b', textTransform:'uppercase', letterSpacing:'.04em' }}>{label}</div>
+                <div style={{ fontSize:24, lineHeight:1.15, fontWeight:800, color:'#0f172a', marginTop:6 }}>{value}</div>
+                <div style={{ fontSize:10, color:'#94a3b8', marginTop:5, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{sub}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* ── Jobs Table ───────────────────────────────────────────────────── */}
