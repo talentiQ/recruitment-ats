@@ -247,113 +247,216 @@ export default function Recruitment360Page() {
   async function loadData(currentFy: string, currentRid: string, recs: RecruiterUser[]) {
     if (!recs.length) return
     setDataLoading(true)
-    const { start, end, startYear } = getFYRange(currentFy)
-    const recIds = currentRid === 'all' ? recs.map(r => r.id) : [currentRid]
 
-    // ── Query A: Candidates sourced this FY (pipeline view)
-    let pipeQ = supabase
-      .from('candidates')
-      .select(`
-        id, full_name, current_stage, assigned_to, job_id,
-        date_sourced, date_joined, date_dropped,
-        current_ctc, offered_fixed, billable_ctc,
-        revenue_earned, revenue_month, revenue_year,
-        is_renege, drop_off_stage
-      `)
-      .gte('date_sourced', start)
-      .lte('date_sourced', end)
-      .in('assigned_to', recIds)
+    try {
+      const { start, end, startYear } = getFYRange(currentFy)
+      const recIds = currentRid === 'all' ? recs.map(r => r.id) : [currentRid]
 
-    // ── Query B: Candidates who JOINED this FY (revenue view — may be sourced in prior FY)
-    let revQ = supabase
-      .from('candidates')
-      .select(`
-        id, full_name, current_stage, assigned_to, job_id,
-        date_sourced, date_joined, current_ctc, billable_ctc,
-        revenue_earned, revenue_month, revenue_year, is_renege
-      `)
-      .gte('date_joined', start)
-      .lte('date_joined', end)
-      .in('assigned_to', recIds)
-      .in('current_stage', ['joined', 'renege'])
+      /*
+       * BUSINESS RULE — ONE SOURCE OF TRUTH
+       * ------------------------------------
+       * A recruiter report is based on candidates whose assigned_to is that
+       * recruiter and whose date_sourced falls in the selected FY.
+       *
+       * The All Recruiters report MUST be the arithmetic sum of those same
+       * recruiter reports. Therefore we deliberately fetch recruiter data
+       * independently instead of using one large `.in('assigned_to', ids)`
+       * query. Supabase/PostgREST can return a limited number of rows for a
+       * large combined query, which previously made the All view smaller than
+       * the sum of the individual reports.
+       *
+       * We also paginate each recruiter query so one busy recruiter cannot be
+       * truncated by the API row limit.
+       */
+      const PAGE_SIZE = 1000
 
-    // ── Query C: Jobs allocated to recruiter (via assigned_recruiters array)
-    let jobQ = supabase
-      .from('jobs')
-      .select(`
-        id, job_title, job_code, status, created_at,
-        positions, positions_filled,
-        client:clients!client_id (id, company_name)
-      `)
-      .eq('is_active', true)
+      async function fetchRecruiterCandidates(recruiterId: string) {
+        const rows: any[] = []
+        let from = 0
 
-    if (currentRid !== 'all') {
-      // Filter jobs assigned to this specific recruiter
-      jobQ = jobQ.contains('assigned_recruiters', [currentRid])
-    } else {
-      // For "all", use created_at in FY range to limit scope
-      jobQ = jobQ.gte('created_at', start).lte('created_at', end)
-    }
+        while (true) {
+          const { data, error } = await supabase
+            .from('candidates')
+            .select(`
+              id, full_name, current_stage, assigned_to, job_id,
+              date_sourced, date_joined, date_dropped,
+              current_ctc, offered_fixed, billable_ctc,
+              revenue_earned, revenue_month, revenue_year,
+              is_renege, drop_off_stage
+            `)
+            .eq('assigned_to', recruiterId)
+            .gte('date_sourced', start)
+            .lte('date_sourced', end)
+            .range(from, from + PAGE_SIZE - 1)
 
-    const [pipeRes, revRes, jobsRes] = await Promise.all([pipeQ, revQ, jobQ])
+          if (error) throw error
 
-    // Merge pipeline + revenue candidates (dedup by id)
-    const candMap = new Map<string, any>()
-    ;(pipeRes.data || []).forEach(c => candMap.set(c.id, c))
-    ;(revRes.data  || []).forEach(c => { if (!candMap.has(c.id)) candMap.set(c.id, c) })
-    const allCandRaw = Array.from(candMap.values())
+          const page = data || []
+          rows.push(...page)
 
-    // Enrich candidates
-    const enrichedCands: Candidate[] = allCandRaw.map(c => ({
-      ...c,
-      _srcMthIdx: toMthIdx(c.date_sourced, startYear),
-      _jndMthIdx: toMthIdx(c.date_joined,  startYear),
-    }))
+          if (page.length < PAGE_SIZE) break
+          from += PAGE_SIZE
+        }
 
-    // Build job→candidate map
-    const jobCandMap = new Map<string, Candidate[]>()
-    enrichedCands.forEach(c => {
-      const arr = jobCandMap.get(c.job_id) ?? []
-      arr.push(c)
-      jobCandMap.set(c.job_id, arr)
-    })
+        return rows
+      }
 
-    // Enrich allocated jobs
-    const rawJobs = jobsRes.data || []
-    const enrichedJobs: Job[] = rawJobs.map((j: any) => ({
-      id: j.id, job_title: j.job_title, job_code: j.job_code,
-      status: j.status, created_at: j.created_at,
-      positions: j.positions ?? 1, positions_filled: j.positions_filled ?? 0,
-      client: j.client ?? null,
-      _createdMthIdx: toMthIdx(j.created_at, startYear),
-      candidates: jobCandMap.get(j.id) ?? [],
-    }))
+      async function fetchRecruiterRevenueCandidates(recruiterId: string) {
+        const rows: any[] = []
+        let from = 0
 
-    // Add jobs that have candidates but weren't in the allocated list
-    const allocatedIds = new Set(rawJobs.map((j: any) => j.id))
-    const extraIds = [...new Set(enrichedCands.map(c => c.job_id).filter(id => !allocatedIds.has(id)))]
+        while (true) {
+          const { data, error } = await supabase
+            .from('candidates')
+            .select(`
+              id, full_name, current_stage, assigned_to, job_id,
+              date_sourced, date_joined,
+              current_ctc, billable_ctc,
+              revenue_earned, revenue_month, revenue_year,
+              is_renege
+            `)
+            .eq('assigned_to', recruiterId)
+            .gte('date_joined', start)
+            .lte('date_joined', end)
+            .in('current_stage', ['joined', 'renege'])
+            .range(from, from + PAGE_SIZE - 1)
 
-    if (extraIds.length > 0) {
-      const { data: extraJobs } = await supabase
-        .from('jobs')
-        .select('id, job_title, job_code, status, created_at, positions, positions_filled, client:clients!client_id(id, company_name)')
-        .in('id', extraIds)
+          if (error) throw error
 
-      ;(extraJobs || []).forEach((j: any) => {
-        enrichedJobs.push({
-          id: j.id, job_title: j.job_title, job_code: j.job_code,
-          status: j.status, created_at: j.created_at,
-          positions: j.positions ?? 1, positions_filled: j.positions_filled ?? 0,
-          client: j.client ?? null,
-          _createdMthIdx: toMthIdx(j.created_at, startYear),
-          candidates: jobCandMap.get(j.id) ?? [],
+          const page = data || []
+          rows.push(...page)
+
+          if (page.length < PAGE_SIZE) break
+          from += PAGE_SIZE
+        }
+
+        return rows
+      }
+
+      // Fetch each recruiter's data independently. For one recruiter this is
+      // exactly the same dataset used by the individual report; for All this
+      // produces a literal concatenation of those individual datasets.
+      const recruiterResults = await Promise.all(
+        recIds.map(async recruiterId => {
+          const [pipelineRows, revenueRows] = await Promise.all([
+            fetchRecruiterCandidates(recruiterId),
+            fetchRecruiterRevenueCandidates(recruiterId),
+          ])
+
+          // A candidate can qualify for both queries. Deduplicate ONLY within
+          // this recruiter's dataset; never deduplicate across recruiters.
+          const byId = new Map<string, any>()
+          pipelineRows.forEach(c => byId.set(c.id, c))
+          revenueRows.forEach(c => {
+            if (!byId.has(c.id)) byId.set(c.id, c)
+          })
+
+          return Array.from(byId.values())
         })
-      })
-    }
+      )
 
-    setCandidates(enrichedCands)
-    setJobs(enrichedJobs)
-    setDataLoading(false)
+      // IMPORTANT: no global Map/dedup here.
+      // All Recruiters = sum of individual recruiter datasets.
+      const allCandRaw = recruiterResults.flat()
+
+      const enrichedCands: Candidate[] = allCandRaw.map(c => ({
+        ...c,
+        _srcMthIdx: toMthIdx(c.date_sourced, startYear),
+        _jndMthIdx: toMthIdx(c.date_joined, startYear),
+      }))
+
+      // ── Query C: Jobs allocated to recruiter (via assigned_recruiters array)
+      let jobQ = supabase
+        .from('jobs')
+        .select(`
+          id, job_title, job_code, status, created_at,
+          positions, positions_filled,
+          client:clients!client_id (id, company_name)
+        `)
+        .eq('is_active', true)
+
+      if (currentRid !== 'all') {
+        jobQ = jobQ.contains('assigned_recruiters', [currentRid])
+      } else {
+        // All Recruiters: initially load FY jobs. Candidate-linked jobs that
+        // are outside this allocation query are added below.
+        jobQ = jobQ.gte('created_at', start).lte('created_at', end)
+      }
+
+      const { data: rawJobs, error: jobsError } = await jobQ
+      if (jobsError) throw jobsError
+
+      // Build job → candidate map from the same authoritative candidate set.
+      const jobCandMap = new Map<string, Candidate[]>()
+      enrichedCands.forEach(c => {
+        const arr = jobCandMap.get(c.job_id) ?? []
+        arr.push(c)
+        jobCandMap.set(c.job_id, arr)
+      })
+
+      const enrichedJobs: Job[] = (rawJobs || []).map((j: any) => ({
+        id: j.id,
+        job_title: j.job_title,
+        job_code: j.job_code,
+        status: j.status,
+        created_at: j.created_at,
+        positions: j.positions ?? 1,
+        positions_filled: j.positions_filled ?? 0,
+        client: j.client ?? null,
+        _createdMthIdx: toMthIdx(j.created_at, startYear),
+        candidates: jobCandMap.get(j.id) ?? [],
+      }))
+
+      // Add candidate-linked jobs not returned by the allocation query.
+      const allocatedIds = new Set((rawJobs || []).map((j: any) => j.id))
+      const extraIds = [...new Set(
+        enrichedCands
+          .map(c => c.job_id)
+          .filter(id => id && !allocatedIds.has(id))
+      )]
+
+      if (extraIds.length > 0) {
+        // Supabase .in() has practical parameter limits, so fetch in chunks.
+        const EXTRA_CHUNK = 500
+        for (let i = 0; i < extraIds.length; i += EXTRA_CHUNK) {
+          const chunk = extraIds.slice(i, i + EXTRA_CHUNK)
+          const { data: extraJobs, error: extraJobsError } = await supabase
+            .from('jobs')
+            .select(`
+              id, job_title, job_code, status, created_at,
+              positions, positions_filled,
+              client:clients!client_id(id, company_name)
+            `)
+            .in('id', chunk)
+
+          if (extraJobsError) throw extraJobsError
+
+          ;(extraJobs || []).forEach((j: any) => {
+            enrichedJobs.push({
+              id: j.id,
+              job_title: j.job_title,
+              job_code: j.job_code,
+              status: j.status,
+              created_at: j.created_at,
+              positions: j.positions ?? 1,
+              positions_filled: j.positions_filled ?? 0,
+              client: j.client ?? null,
+              _createdMthIdx: toMthIdx(j.created_at, startYear),
+              candidates: jobCandMap.get(j.id) ?? [],
+            })
+          })
+        }
+      }
+
+      setCandidates(enrichedCands)
+      setJobs(enrichedJobs)
+    } catch (error) {
+      console.error('Recruitment360 data load failed:', error)
+      setCandidates([])
+      setJobs([])
+    } finally {
+      setDataLoading(false)
+    }
   }
 
   // Reload when FY or recruiter changes
@@ -388,14 +491,42 @@ export default function Recruitment360Page() {
       candidates: j.candidates.filter(c => activeMths.includes(c._srcMthIdx)),
     }))
 
+    // ── Exclusive current-stage counts — SINGLE SOURCE OF TRUTH ────────────
+    // Every candidate in pipelineCands has exactly one current_stage, so the
+    // sum of these buckets MUST equal Total CVs.
+    const stageCounts: Record<string, number> = {}
+    Object.keys(STAGE_LABEL).forEach(stage => { stageCounts[stage] = 0 })
+
+    pipelineCands.forEach(c => {
+      const stage = c.current_stage
+      if (STAGE_LABEL[stage]) {
+        stageCounts[stage] += 1
+      } else {
+        // Keep unexpected/null stages visible in the total rather than silently
+        // dropping them. This protects the business KPI from schema drift.
+        stageCounts.unknown = (stageCounts.unknown ?? 0) + 1
+      }
+    })
+
+    const stageSum = Object.values(stageCounts).reduce((sum, count) => sum + count, 0)
+
+    // CRITICAL BUSINESS RULE:
+    // Total CVs is NOT a cumulative funnel number. It is the sum of all
+    // exclusive current-stage buckets. Because loadData fetches each
+    // recruiter's dataset independently and concatenates them without global
+    // deduplication, All Recruiters is exactly the sum of the individual
+    // recruiter reports.
+    const totalCvs = stageSum
+    const cvs = totalCvs
+
     // Funnel: cumulative "at or beyond each milestone"
     // Total CVs (minRank 0) → include on_hold (they ARE in the pipeline)
     // Milestones (minRank > 0) → on_hold rank -1 auto-excludes them — no extra check needed
     const funnelData = FUNNEL.map(ms => ({
       ...ms,
-      count: pipelineCands.filter(c =>
-        ms.minRank === 0 ? true : rank(c.current_stage) >= ms.minRank
-      ).length,
+      count: ms.minRank === 0
+        ? cvs
+        : pipelineCands.filter(c => rank(c.current_stage) >= ms.minRank).length,
     }))
 
     // Monthly revenue (from joined candidates, by join month)
@@ -449,24 +580,24 @@ export default function Recruitment360Page() {
     ).length
 
     // Summary counts
-    const cvs    = funnelData[0]?.count ?? 0
-    const sl     = funnelData[1]?.count ?? 0
-    const iv     = funnelData[2]?.count ?? 0
-    const ofr    = funnelData[3]?.count ?? 0
-    const jnd             = pipelineCands.filter(c => ['joined','renege'].includes(c.current_stage)).length
-    const effectiveJoined = pipelineCands.filter(c => c.current_stage === 'joined').length   // excludes renege
-    const onHold          = pipelineCands.filter(c => c.current_stage === 'on_hold').length
-    const renege          = pipelineCands.filter(c => c.current_stage === 'renege').length
+    const sl               = funnelData[1]?.count ?? 0
+    const iv               = funnelData[2]?.count ?? 0
+    const ofr              = funnelData[3]?.count ?? 0
+    const effectiveJoined  = pipelineCands.filter(c => c.current_stage === 'joined').length
+    const onHold           = stageCounts.on_hold ?? 0
+    const renege           = stageCounts.renege ?? 0
+    const jnd              = effectiveJoined + renege
 
     return {
       pipelineCands, revenueCands, filtJobs,
       totalRevenue, totalTarget, pct,
       funnelData, chartData, trendData,
+      stageCounts, stageSum, totalCvs,
       jobsAlloc: filtJobs.length,
       jobsWorked: filtJobs.filter(j => j.candidates.length > 0).length,
       j0, j5p, j3i, cvs, sl, iv, ofr, jnd, effectiveJoined, onHold, renege,
     }
-  }, [candidates, jobs, activeMths, fy, rid, recruiters, mth, qtr])
+  }, [candidates, jobs, activeMths, rid, recruiters, mth, qtr])
 
   // ── Candidate drill-down ──────────────────────────────────────────────────
   const drillCands = useMemo(() => {
@@ -487,7 +618,18 @@ export default function Recruitment360Page() {
   // ── Auto-insights (using real stage data) ─────────────────────────────────
   const insights = useMemo(() => {
     const out: { t:'success'|'warning'|'danger'; msg:string }[] = []
-    const { pct, cvs, sl, iv, ofr, jnd, effectiveJoined, j0, j5p, j3i, filtJobs, renege, onHold } = D
+    const { pct, cvs, sl, iv, ofr, jnd, effectiveJoined, j0, j5p, j3i, filtJobs, renege, onHold, stageCounts } = D
+
+    // Recruiter-effort bottleneck: CVs are still sitting at the earliest
+    // exclusive stages and have not progressed into screening/interview.
+    const stuckAtSourcing = (stageCounts.sourced ?? 0) + (stageCounts.screening ?? 0)
+
+    if (stuckAtSourcing > 0) {
+      out.push({
+        t: stuckAtSourcing >= Math.max(5, Math.ceil(cvs * 0.15)) ? 'danger' : 'warning',
+        msg: `${stuckAtSourcing} CV${stuckAtSourcing === 1 ? '' : 's'} stuck at CV Sourced / Screening — recruiter efforts need follow-up`
+      })
+    }
 
     if (pct >= 100) out.push({ t:'success', msg:`Revenue target met — ${fmtPct(pct)} achieved` })
     else if (pct >= 75) out.push({ t:'warning', msg:`${fmtPct(pct)} of target — on track, needs push` })
@@ -499,8 +641,6 @@ export default function Recruitment360Page() {
       if (isr < 15) out.push({ t:'danger',  msg:`Low interview selection rate ${isr}% — review candidate fitment or JD alignment` })
       else if (isr >= 40) out.push({ t:'success', msg:`Strong interview selection rate ${isr}% — quality pipeline` })
       else out.push({ t:'warning', msg:`Interview selection rate ${isr}% — room to improve candidate quality` })
-    } else if (sl > 0) {
-      out.push({ t:'warning', msg:`${sl} in screening, none interviewed yet — push for client interviews` })
     }
 
     if (j0 > 0) out.push({ t:'danger', msg:`${j0} job${j0>1?'s':''} with 0 CVs — immediate attention needed` })
@@ -533,6 +673,12 @@ export default function Recruitment360Page() {
     if (m >= 0) onMth(mth === m ? null : m)
   }
 
+  // Opens the browser print dialog. Choose "Save as PDF" for the PDF report.
+  const printReport = () => {
+    window.dispatchEvent(new Event('resize'))
+    setTimeout(() => window.print(), 250)
+  }
+
   const recName     = rid==='all' ? 'All Recruiters' : (recruiters.find(r=>r.id===rid)?.full_name ?? '')
   const periodLabel = qtr ? QUARTERS.find(q=>q.id===qtr)?.label : mth!==null ? MONTHS[mth] : 'Full Year'
 
@@ -556,16 +702,30 @@ export default function Recruitment360Page() {
     <DashboardLayout>
       <div style={{ display:'flex', justifyContent:'center', alignItems:'center', height:300 }}>
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
+
+
       </div>
     </DashboardLayout>
   )
 
   return (
     <DashboardLayout>
-      <div style={{ maxWidth:1240, margin:'0 auto', paddingBottom:60, fontFamily:"'Inter','Segoe UI',sans-serif" }}>
+      <div className="recruitment360-print-root" style={{ maxWidth:1240, margin:'0 auto', paddingBottom:60, fontFamily:"'Inter','Segoe UI',sans-serif" }}>
+
+        <div className="print-only-header">
+          <div className="print-brand">Recruitment<span>360°</span> · TalentIQ ATS</div>
+          <div className="print-report-title">Recruitment Performance Report</div>
+          <div className="print-meta">
+            <span><strong>Recruiter:</strong> {recName}</span>
+            <span><strong>Financial Year:</strong> {fy}</span>
+            <span><strong>Period:</strong> {periodLabel}</span>
+            <span><strong>Generated:</strong> {new Date().toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+          </div>
+          <div className="print-note">Total CVs = sum of the individual Total CVs for the selected recruiters. Current-stage breakdown is shown separately for pipeline diagnosis.</div>
+        </div>
 
         {/* ── Title ───────────────────────────────────────────────────────── */}
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', flexWrap:'wrap', gap:8, marginBottom:20 }}>
+        <div className="no-print" style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', flexWrap:'wrap', gap:8, marginBottom:20 }}>
           <div>
             <h1 style={{ margin:0, fontSize:22, fontWeight:800, color:'#0f172a', letterSpacing:'-0.03em' }}>
               Recruitment<span style={{ color:'#3b82f6' }}>360°</span>
@@ -580,7 +740,7 @@ export default function Recruitment360Page() {
         </div>
 
         {/* ── Filter Bar ──────────────────────────────────────────────────── */}
-        <div style={{ ...card, padding:'16px 20px', marginBottom:18 }}>
+        <div className="no-print" style={{ ...card, padding:'16px 20px', marginBottom:18 }}>
           <div style={{ display:'flex', gap:20, flexWrap:'wrap', alignItems:'flex-end' }}>
 
             <div>
@@ -612,11 +772,16 @@ export default function Recruitment360Page() {
 
             <div style={{ marginLeft:'auto' }}>
               <span style={lbl}>RECRUITER</span>
-              <select value={rid} onChange={e=>onRec(e.target.value)}
-                style={{ border:'2px solid #3b82f6', borderRadius:8, padding:'7px 14px', fontSize:14, fontFamily:'inherit', outline:'none', cursor:'pointer', fontWeight:700, color:'#1e293b', background:'#fff', minWidth:200 }}>
-                <option value="all">👥 All Recruiters</option>
-                {recruiters.map(r => <option key={r.id} value={r.id}>👤 {r.full_name}</option>)}
-              </select>
+              <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+                <select value={rid} onChange={e=>onRec(e.target.value)}
+                  style={{ border:'2px solid #3b82f6', borderRadius:8, padding:'7px 14px', fontSize:14, fontFamily:'inherit', outline:'none', cursor:'pointer', fontWeight:700, color:'#1e293b', background:'#fff', minWidth:200 }}>
+                  <option value="all">👥 All Recruiters</option>
+                  {recruiters.map(r => <option key={r.id} value={r.id}>👤 {r.full_name}</option>)}
+                </select>
+                <button onClick={printReport} className="no-print" style={{ border:'none', borderRadius:8, padding:'9px 16px', fontSize:12, fontFamily:'inherit', fontWeight:800, color:'#fff', background:'#2563eb', cursor:'pointer', whiteSpace:'nowrap' }}>
+                  Print PDF Report
+                </button>
+              </div>
             </div>
 
           </div>
@@ -673,10 +838,10 @@ export default function Recruitment360Page() {
         </div>
 
         {/* ── Revenue Chart + Insights ─────────────────────────────────────── */}
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 290px', gap:18, marginBottom:18 }}>
+        <div className="revenue-insights-grid" style={{ display:'grid', gridTemplateColumns:'1fr 290px', gap:18, marginBottom:18 }}>
 
           {/* Bar Chart */}
-          <div style={{ ...card, padding:'20px 24px' }}>
+          <div className="revenue-chart-card" style={{ ...card, padding:'20px 24px' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
               <div>
                 <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>Revenue vs Target</div>
@@ -692,27 +857,54 @@ export default function Recruitment360Page() {
             {dataLoading
               ? <div style={{ height:260, display:'flex', alignItems:'center', justifyContent:'center', color:'#94a3b8' }}>Loading…</div>
               : (
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={D.chartData} barGap={3} barCategoryGap="30%" onClick={onBarClick} style={{ cursor:'pointer' }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                    <XAxis dataKey="month" tick={{ fontSize:11, fill:'#94a3b8' }} axisLine={false} tickLine={false} />
-                    <YAxis tickFormatter={fmtL} tick={{ fontSize:11, fill:'#94a3b8' }} axisLine={false} tickLine={false} width={52} />
-                    <Tooltip content={<BarTip />} cursor={{ fill:'rgba(59,130,246,0.05)' }} />
-                    <Bar dataKey="target" name="Target" radius={[3,3,0,0]}>
-                      {D.chartData.map((_, i) => <Cell key={i} fill={mth===i?'#bfdbfe':'#e2e8f0'} />)}
-                    </Bar>
-                    <Bar dataKey="revenue" name="Revenue" radius={[3,3,0,0]}>
-                      {D.chartData.map((e, i) => (
-                        <Cell key={i} fill={
-                          mth===i       ? '#1d4ed8' :
-                          !e.inFilter   ? '#cbd5e1' :
-                          e.revenue >= e.target        ? '#22c55e' :
-                          e.revenue >= e.target * 0.75 ? '#f59e0b' : '#ef4444'
-                        } />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                <>
+                  {/* Screen version: responsive. */}
+                  <div className="screen-chart">
+                    <ResponsiveContainer width="100%" height={260}>
+                      <BarChart data={D.chartData} barGap={3} barCategoryGap="30%" onClick={onBarClick} style={{ cursor:'pointer' }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                        <XAxis dataKey="month" tick={{ fontSize:11, fill:'#94a3b8' }} axisLine={false} tickLine={false} />
+                        <YAxis tickFormatter={fmtL} tick={{ fontSize:11, fill:'#94a3b8' }} axisLine={false} tickLine={false} width={52} />
+                        <Tooltip content={<BarTip />} cursor={{ fill:'rgba(59,130,246,0.05)' }} />
+                        <Bar dataKey="target" name="Target" radius={[3,3,0,0]}>
+                          {D.chartData.map((_, i) => <Cell key={i} fill={mth===i?'#bfdbfe':'#e2e8f0'} />)}
+                        </Bar>
+                        <Bar dataKey="revenue" name="Revenue" radius={[3,3,0,0]}>
+                          {D.chartData.map((e, i) => (
+                            <Cell key={i} fill={
+                              mth===i       ? '#1d4ed8' :
+                              !e.inFilter   ? '#cbd5e1' :
+                              e.revenue >= e.target        ? '#22c55e' :
+                              e.revenue >= e.target * 0.75 ? '#f59e0b' : '#ef4444'
+                            } />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Print version: fixed dimensions so Recharts does not collapse under print media. */}
+                  <div className="print-fixed-chart">
+                    <BarChart width={720} height={230} data={D.chartData} barGap={3} barCategoryGap="30%">
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                      <XAxis dataKey="month" tick={{ fontSize:9, fill:'#64748b' }} axisLine={false} tickLine={false} />
+                      <YAxis tickFormatter={fmtL} tick={{ fontSize:9, fill:'#64748b' }} axisLine={false} tickLine={false} width={48} />
+                      <Bar dataKey="target" name="Target" radius={[3,3,0,0]}>
+                        {D.chartData.map((_, i) => <Cell key={i} fill={mth===i?'#bfdbfe':'#e2e8f0'} />)}
+                      </Bar>
+                      <Bar dataKey="revenue" name="Revenue" radius={[3,3,0,0]}>
+                        {D.chartData.map((e, i) => (
+                          <Cell key={i} fill={
+                            mth===i       ? '#1d4ed8' :
+                            !e.inFilter   ? '#cbd5e1' :
+                            e.revenue >= e.target        ? '#22c55e' :
+                            e.revenue >= e.target * 0.75 ? '#f59e0b' : '#ef4444'
+                          } />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </div>
+                </>
               )
             }
             <div style={{ display:'flex', gap:14, marginTop:8, justifyContent:'center' }}>
@@ -725,7 +917,7 @@ export default function Recruitment360Page() {
           </div>
 
           {/* Insights + Conversion Rates */}
-          <div style={{ ...card, padding:'18px', display:'flex', flexDirection:'column' }}>
+          <div className="insights-card" style={{ ...card, padding:'18px', display:'flex', flexDirection:'column' }}>
             <div style={{ fontSize:15, fontWeight:700, color:'#1e293b', marginBottom:12 }}>Key Insights</div>
             <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
               {insights.map((ins, i) => {
@@ -776,7 +968,7 @@ export default function Recruitment360Page() {
             <div>
               <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>Recruitment Funnel</div>
               <div style={{ fontSize:12, color:'#94a3b8' }}>
-                <strong style={{ color:'#3b82f6' }}>Total CVs</strong> = all candidates in period regardless of stage · each bar = candidates who reached or crossed that milestone · click to filter
+                <strong style={{ color:'#3b82f6' }}>Pipeline CVs</strong> = unique candidates in period · top Total CVs KPI is the sum of individual recruiter Total CVs
               </div>
             </div>
             {fStage && (
@@ -817,6 +1009,43 @@ export default function Recruitment360Page() {
           }
         </div>
 
+        {/* ── Current Stage Breakdown ───────────────────────────────────────── */}
+        <div style={{ ...card, padding:'20px 24px', marginBottom:18 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', gap:12, marginBottom:14 }}>
+            <div>
+              <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>Current Stage Breakdown</div>
+              <div style={{ fontSize:12, color:'#94a3b8' }}>Exclusive current-stage counts · used to identify pipeline bottlenecks</div>
+            </div>
+            <div style={{ textAlign:'right' }}>
+              <div style={{ fontSize:18, fontWeight:800, color:'#2563eb' }}>{D.totalCvs} Total CVs</div>
+              <div style={{ fontSize:10, color:'#94a3b8', marginTop:2 }}>Stage-sum total</div>
+            </div>
+          </div>
+          <div className="stage-breakdown-grid" style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10 }}>
+            {Object.keys(STAGE_LABEL).map(stage => {
+              const count = D.stageCounts[stage] ?? 0
+              return (
+                <div key={stage} style={{ border:'1px solid #e2e8f0', borderRadius:10, padding:'11px 13px', background:'#f8fafc' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8 }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:'#64748b' }}>{STAGE_LABEL[stage]}</span>
+                    <span style={{ width:9, height:9, borderRadius:'50%', background:STAGE_COLOR[stage] ?? '#64748b', flexShrink:0 }} />
+                  </div>
+                  <div style={{ fontSize:22, fontWeight:800, color:'#1e293b', marginTop:5 }}>{count}</div>
+                </div>
+              )
+            })}
+            {(D.stageCounts.unknown ?? 0) > 0 && (
+              <div style={{ border:'1px solid #fecaca', borderRadius:10, padding:'11px 13px', background:'#fff7f7' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8 }}>
+                  <span style={{ fontSize:11, fontWeight:700, color:'#b91c1c' }}>Unknown / Unmapped</span>
+                  <span style={{ width:9, height:9, borderRadius:'50%', background:'#ef4444', flexShrink:0 }} />
+                </div>
+                <div style={{ fontSize:22, fontWeight:800, color:'#991b1b', marginTop:5 }}>{D.stageCounts.unknown}</div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* ── Jobs Coverage ────────────────────────────────────────────────── */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:14, marginBottom:18 }}>
           {([
@@ -835,7 +1064,7 @@ export default function Recruitment360Page() {
         </div>
 
         {/* ── Jobs Table ───────────────────────────────────────────────────── */}
-        <div style={{ ...card, overflow:'hidden', marginBottom:18 }}>
+        <div className="jobs-table-card" style={{ ...card, overflow:'hidden', marginBottom:18 }}>
           <div style={{ padding:'16px 20px', borderBottom:'1px solid #f1f5f9', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
             <div>
               <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>Job-wise Performance</div>
@@ -844,7 +1073,7 @@ export default function Recruitment360Page() {
             <span style={{ fontSize:13, color:'#64748b', fontWeight:600 }}>{D.filtJobs.length} jobs</span>
           </div>
           <div style={{ overflowX:'auto' }}>
-            <table style={{ width:'100%', borderCollapse:'collapse', minWidth:1040 }}>
+            <table className="report-table" style={{ width:'100%', borderCollapse:'collapse', minWidth:1040 }}>
               <thead>
                 <tr>
                   {['Job Code','Title','Client','Created','Status','Positions','CVs Sourced',
@@ -906,7 +1135,7 @@ export default function Recruitment360Page() {
 
         {/* ── Candidate Drill-down ─────────────────────────────────────────── */}
         {(jid || fStage) && (
-          <div style={{ ...card, overflow:'hidden', border:'2px solid #3b82f6', marginBottom:18 }}>
+          <div className="candidate-drill-card" style={{ ...card, overflow:'hidden', border:'2px solid #3b82f6', marginBottom:18 }}>
             <div style={{ padding:'14px 20px', background:'#eff6ff', borderBottom:'1px solid #bfdbfe', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
               <div>
                 <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>
@@ -918,13 +1147,13 @@ export default function Recruitment360Page() {
                 </div>
                 <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>{drillCands.length} candidates</div>
               </div>
-              <button onClick={()=>{ setJid(null); setFStage(null) }}
+              <button className="no-print" onClick={()=>{ setJid(null); setFStage(null) }}
                 style={{ background:'none', border:'1px solid #bfdbfe', borderRadius:8, padding:'5px 12px', cursor:'pointer', fontSize:12, fontWeight:600, color:'#3b82f6', fontFamily:'inherit' }}>
                 ✕ Close
               </button>
             </div>
             <div style={{ overflowX:'auto' }}>
-              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+              <table className="report-table" style={{ width:'100%', borderCollapse:'collapse' }}>
                 <thead>
                   <tr>
                     {['Candidate','Current Stage','Job','Client','Date Sourced','Date Joined','Current CTC','Revenue Earned'].map(h=>(
@@ -979,22 +1208,152 @@ export default function Recruitment360Page() {
           {dataLoading
             ? <div style={{ height:200, display:'flex', alignItems:'center', justifyContent:'center', color:'#94a3b8' }}>Loading…</div>
             : (
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={D.trendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fontSize:11, fill:'#94a3b8' }} axisLine={false} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{ fontSize:11, fill:'#94a3b8' }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<LineTip />} />
-                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize:12 }} />
-                  <Line type="monotone" dataKey="Total CVs"  stroke="#3b82f6" strokeWidth={2.5} dot={{ r:4, fill:'#3b82f6',  strokeWidth:0 }} activeDot={{ r:5 }} />
-                  <Line type="monotone" dataKey="Screening"  stroke="#8b5cf6" strokeWidth={2.5} dot={{ r:4, fill:'#8b5cf6',  strokeWidth:0 }} activeDot={{ r:5 }} />
-                  <Line type="monotone" dataKey="Interviewed"stroke="#f59e0b" strokeWidth={2.5} dot={{ r:4, fill:'#f59e0b',  strokeWidth:0 }} activeDot={{ r:5 }} />
-                  <Line type="monotone" dataKey="Joined"     stroke="#10b981" strokeWidth={2.5} dot={{ r:4, fill:'#10b981',  strokeWidth:0 }} activeDot={{ r:5 }} />
-                </LineChart>
-              </ResponsiveContainer>
+              <>
+                {/* Screen version: responsive. */}
+                <div className="screen-chart">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={D.trendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                      <XAxis dataKey="month" tick={{ fontSize:11, fill:'#94a3b8' }} axisLine={false} tickLine={false} />
+                      <YAxis allowDecimals={false} tick={{ fontSize:11, fill:'#94a3b8' }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<LineTip />} />
+                      <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize:12 }} />
+                      <Line type="monotone" dataKey="Total CVs" stroke="#3b82f6" strokeWidth={2.5} dot={{ r:4, fill:'#3b82f6', strokeWidth:0 }} activeDot={{ r:5 }} />
+                      <Line type="monotone" dataKey="Screening" stroke="#8b5cf6" strokeWidth={2.5} dot={{ r:4, fill:'#8b5cf6', strokeWidth:0 }} activeDot={{ r:5 }} />
+                      <Line type="monotone" dataKey="Interviewed" stroke="#f59e0b" strokeWidth={2.5} dot={{ r:4, fill:'#f59e0b', strokeWidth:0 }} activeDot={{ r:5 }} />
+                      <Line type="monotone" dataKey="Joined" stroke="#10b981" strokeWidth={2.5} dot={{ r:4, fill:'#10b981', strokeWidth:0 }} activeDot={{ r:5 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Print version: fixed dimensions so the chart is rendered reliably in PDF. */}
+                <div className="print-fixed-chart">
+                  <LineChart width={720} height={190} data={D.trendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                    <XAxis dataKey="month" tick={{ fontSize:9, fill:'#64748b' }} axisLine={false} tickLine={false} />
+                    <YAxis allowDecimals={false} tick={{ fontSize:9, fill:'#64748b' }} axisLine={false} tickLine={false} />
+                    <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize:9 }} />
+                    <Line type="monotone" dataKey="Total CVs" stroke="#3b82f6" strokeWidth={2} dot={{ r:3, fill:'#3b82f6', strokeWidth:0 }} />
+                    <Line type="monotone" dataKey="Screening" stroke="#8b5cf6" strokeWidth={2} dot={{ r:3, fill:'#8b5cf6', strokeWidth:0 }} />
+                    <Line type="monotone" dataKey="Interviewed" stroke="#f59e0b" strokeWidth={2} dot={{ r:3, fill:'#f59e0b', strokeWidth:0 }} />
+                    <Line type="monotone" dataKey="Joined" stroke="#10b981" strokeWidth={2} dot={{ r:3, fill:'#10b981', strokeWidth:0 }} />
+                  </LineChart>
+                </div>
+              </>
             )
           }
         </div>
+
+        <style>{`
+          .print-only-header { display:none; }
+          .print-fixed-chart { display:none; }
+
+          @media print {
+            @page { size: A4 portrait; margin: 10mm; }
+
+            html, body {
+              width: 100% !important;
+              min-width: 0 !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #fff !important;
+            }
+
+            /* Print only this report, not the DashboardLayout chrome/sidebar. */
+            body * { visibility: hidden !important; }
+            .recruitment360-print-root,
+            .recruitment360-print-root * { visibility: visible !important; }
+
+            .recruitment360-print-root {
+              position: absolute !important;
+              left: 0 !important;
+              top: 0 !important;
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              font-family: Arial, Helvetica, sans-serif !important;
+              color: #1e293b !important;
+            }
+
+            .no-print { display:none !important; }
+            .print-only-header {
+              display:block !important;
+              margin-bottom:14px !important;
+              padding-bottom:10px !important;
+              border-bottom:2px solid #1e3a5f !important;
+            }
+            .print-brand { font-size:9px !important; font-weight:700 !important; color:#64748b !important; letter-spacing:.04em !important; text-transform:uppercase !important; }
+            .print-brand span { color:#2563eb !important; }
+            .print-report-title { font-size:22px !important; font-weight:800 !important; color:#0f172a !important; margin-top:3px !important; }
+            .print-meta { display:grid !important; grid-template-columns:repeat(2,1fr) !important; gap:3px 18px !important; margin-top:7px !important; font-size:9px !important; color:#475569 !important; }
+            .print-note { margin-top:7px !important; font-size:8px !important; color:#64748b !important; }
+
+            .revenue-insights-grid {
+              grid-template-columns:1fr !important;
+              gap:10px !important;
+              margin-bottom:10px !important;
+            }
+            .revenue-chart-card,
+            .insights-card,
+            .jobs-table-card,
+            .candidate-drill-card {
+              break-inside:avoid !important;
+              page-break-inside:avoid !important;
+              box-shadow:none !important;
+            }
+            .revenue-chart-card { padding:12px 14px !important; }
+            .screen-chart { display:none !important; }
+            .print-fixed-chart {
+              display:block !important;
+              width:100% !important;
+              height:230px !important;
+              overflow:hidden !important;
+            }
+            .print-fixed-chart > svg {
+              display:block !important;
+              width:100% !important;
+              max-width:100% !important;
+              height:auto !important;
+            }
+            .revenue-chart-card .print-fixed-chart { height:230px !important; }
+            .insights-card { padding:12px 14px !important; }
+
+            .stage-breakdown-grid { grid-template-columns:repeat(4,1fr) !important; gap:6px !important; }
+            .stage-breakdown-grid > div { padding:7px 8px !important; }
+
+            .report-table {
+              min-width:0 !important;
+              width:100% !important;
+              table-layout:fixed !important;
+              font-size:7px !important;
+            }
+            .report-table th,
+            .report-table td {
+              padding:5px 4px !important;
+              font-size:7px !important;
+              line-height:1.25 !important;
+              overflow-wrap:anywhere !important;
+            }
+            .report-table th {
+              white-space:normal !important;
+              background:#f8fafc !important;
+              -webkit-print-color-adjust:exact !important;
+              print-color-adjust:exact !important;
+            }
+            .report-table thead { display:table-header-group !important; }
+            .report-table tr { break-inside:avoid !important; page-break-inside:avoid !important; }
+            .jobs-table-card > div:nth-child(2),
+            .candidate-drill-card > div:nth-child(2) { overflow:visible !important; }
+
+            /* Prevent responsive SVGs from exceeding the printable width. */
+            .recharts-wrapper { max-width:100% !important; overflow:visible !important; }
+            .recharts-surface { max-width:100% !important; }
+
+            /* Keep the report compact and readable on A4. */
+            .recruitment360-print-root > div { margin-bottom:10px !important; }
+          }
+        `}</style>
 
       </div>
     </DashboardLayout>
