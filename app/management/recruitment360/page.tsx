@@ -72,6 +72,7 @@ interface RecruiterUser {
   id: string; full_name: string; role: string
   is_active: boolean
   monthly_target: number; quarterly_target: number; annual_target: number
+  target_start_date?: string | null
 }
 
 interface OfferEvent {
@@ -261,7 +262,7 @@ export default function Recruitment360Page() {
 
     if (MGMT_ROLES.includes(u.role)) {
       const res = await supabase
-        .from('users').select('id,full_name,role,is_active,monthly_target,quarterly_target,annual_target')
+        .from('users').select('id,full_name,role,is_active,target_start_date,monthly_target,quarterly_target,annual_target')
         .in('role', ['recruiter','team_leader','sr_team_leader'])
         .order('full_name')
       data = res.data || []
@@ -270,12 +271,12 @@ export default function Recruitment360Page() {
       const tlIds = (tls || []).map((t: any) => t.id)
       const { data: recs } = await supabase.from('users').select('id').in('reports_to', [u.id, ...tlIds])
       const allIds = [u.id, ...tlIds, ...(recs || []).map((r: any) => r.id)]
-      const res = await supabase.from('users').select('id,full_name,role,is_active,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
+      const res = await supabase.from('users').select('id,full_name,role,is_active,target_start_date,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
       data = res.data || []
     } else {
       const { data: recs } = await supabase.from('users').select('id').eq('reports_to', u.id)
       const allIds = [u.id, ...(recs || []).map((r: any) => r.id)]
-      const res = await supabase.from('users').select('id,full_name,role,is_active,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
+      const res = await supabase.from('users').select('id,full_name,role,is_active,target_start_date,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
       data = res.data || []
     }
 
@@ -813,10 +814,11 @@ export default function Recruitment360Page() {
     const selectedJobs = filtJobs.length
     const recruiterCount = Math.max(1, activeRecs.length)
 
-    // Working days in the selected FY / quarter / month.
-    // Saturday and Sunday are excluded; public holidays are not assumed because
-    // the ATS has no holiday calendar table.
-    const periodDates = (() => {
+    // Recruiter working-day equivalent — real-time and tenure-aware.
+    // Each recruiter contributes only for the overlap of: recruiter tenure,
+    // selected reporting period, and TODAY. We use the agreed business
+    // equivalent of 22 working days per 30 calendar days.
+    const selectedPeriod = (() => {
       const { start: fyStart, end: fyEnd } = getFYRange(fy)
       const rangeStart = mth !== null
         ? new Date(fyYear(fy) + (mth >= 9 ? 1 : 0), mth >= 9 ? mth - 9 : mth + 3, 1)
@@ -829,22 +831,40 @@ export default function Recruitment360Page() {
           ? new Date(rangeStart.getFullYear(), rangeStart.getMonth() + 3, 0)
           : new Date(`${fyEnd}T00:00:00`)
 
-      let workingDays = 0
-      const d = new Date(rangeStart)
-      while (d <= rangeEnd) {
-        const day = d.getDay()
-        if (day !== 0 && day !== 6) workingDays++
-        d.setDate(d.getDate() + 1)
-      }
-      return workingDays
+      // Use the browser's local date so the report is genuinely real-time.
+      const today = new Date()
+      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+      const effectiveEnd = rangeEnd < todayStart ? rangeEnd : todayStart
+      return { rangeStart, rangeEnd, effectiveEnd }
     })()
+
+    const recruiterWorkingDays = activeRecs.reduce((sum, recruiter) => {
+      // A missing target_start_date means tenure cannot be established reliably;
+      // exclude that recruiter from the denominator rather than inventing tenure.
+      if (!recruiter.target_start_date) return sum
+
+      const startDate = new Date(`${recruiter.target_start_date}T00:00:00`)
+      const effectiveStart = startDate > selectedPeriod.rangeStart
+        ? startDate
+        : selectedPeriod.rangeStart
+
+      if (effectiveStart > selectedPeriod.effectiveEnd) return sum
+
+      const calendarDays = Math.floor(
+        (selectedPeriod.effectiveEnd.getTime() - effectiveStart.getTime()) / 86400000
+      ) + 1
+
+      return sum + (calendarDays * 22 / 30)
+    }, 0)
+
+    const recruitersWithStartDate = activeRecs.filter(r => !!r.target_start_date).length
 
     const totalInterviews = pipelineCands.filter(c =>
       rank(c.current_stage) >= 2 && c.current_stage !== 'on_hold'
     ).length
 
     const bi = {
-      cvsPerWorkingDay: periodDates > 0 ? cvs / periodDates : 0,
+      cvsPerWorkingDay: recruiterWorkingDays > 0 ? cvs / recruiterWorkingDays : 0,
       cvsPerJob: selectedJobs > 0 ? cvs / selectedJobs : 0,
       jobsPerRecruiter: recruiterCount > 0 ? selectedJobs / recruiterCount : 0,
       jobCoverage: selectedJobs > 0
@@ -862,7 +882,8 @@ export default function Recruitment360Page() {
       offersPerJoin: uniqueJoiningCandidateIds.size > 0
         ? uniqueOfferCandidateIds.size / uniqueJoiningCandidateIds.size
         : 0,
-      workingDays: periodDates,
+      workingDays: recruiterWorkingDays,
+      recruitersWithStartDate,
       selectedJobs,
       recruiterCount,
       activeJobs: filtJobs.filter(j => j.candidates.length > 0).length,
@@ -1450,7 +1471,10 @@ export default function Recruitment360Page() {
           <div style={{ padding:'16px 20px 12px', borderBottom:'1px solid #f1f5f9' }}>
             <div style={{ fontSize:15, fontWeight:800, color:'#1e293b' }}>Management Intelligence</div>
             <div style={{ fontSize:12, color:'#94a3b8', marginTop:3 }}>
-              Productivity & funnel efficiency · {D.bi.workingDays} working days in selected period
+              Productivity & funnel efficiency · {D.bi.workingDays.toFixed(1)} recruiter-days elapsed (through today)
+            </div>
+            <div style={{ fontSize:10, color:'#cbd5e1', marginTop:3 }}>
+              Tenure-based: 22 working days per 30 calendar days · {D.bi.recruitersWithStartDate}/{D.bi.recruiterCount} recruiters with start date
             </div>
           </div>
 
@@ -1461,7 +1485,7 @@ export default function Recruitment360Page() {
             background:'#f1f5f9',
           }}>
             {[
-              ['CVs / Working Day', D.bi.cvsPerWorkingDay.toFixed(1), `${D.cvs} CVs ÷ ${D.bi.workingDays} days`],
+              ['CVs / Working Day', D.bi.cvsPerWorkingDay.toFixed(1), `${D.cvs} CVs ÷ ${D.bi.workingDays.toFixed(1)} recruiter-days`],
               ['CVs / Job', D.bi.cvsPerJob.toFixed(1), `${D.cvs} CVs ÷ ${D.bi.selectedJobs} jobs`],
               ['Jobs / Recruiter', D.bi.jobsPerRecruiter.toFixed(1), `${D.bi.selectedJobs} jobs ÷ ${D.bi.recruiterCount} recruiters`],
               ['Job Coverage', fmtPct(D.bi.jobCoverage), `${D.bi.activeJobs} of ${D.bi.selectedJobs} jobs active`],
