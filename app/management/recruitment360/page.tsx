@@ -166,6 +166,18 @@ const fmtPct = (v: number) => `${Math.round(v)}%`
 const tclr   = (p: number) => p >= 100 ? '#22c55e' : p >= 75 ? '#f59e0b' : '#ef4444'
 const rank   = (s: string) => STAGE_RANK[s] ?? -1
 
+// Offer status is authoritative for all offer/placement stages.
+// The Offers & Placements module uses these exact status values.
+const normalizeOfferStatus = (status: string | null | undefined) => {
+  const s = String(status ?? '').trim().toLowerCase()
+  if (s === 'extended') return 'offer_extended'
+  if (s === 'accepted') return 'offer_accepted'
+  if (s === 'rejected') return 'offer_rejected'
+  if (s === 'joined') return 'joined'
+  if (s === 'renege') return 'renege'
+  return null
+}
+
 // ─── Custom Tooltips ──────────────────────────────────────────────────────────
 
 function BarTip({ active, payload, label }: any) {
@@ -587,32 +599,75 @@ export default function Recruitment360Page() {
       candidates: j.candidates.filter(c => activeMths.includes(c._srcMthIdx)),
     }))
 
-    // ── Exclusive current-stage counts — SINGLE SOURCE OF TRUTH ────────────
-    // Every candidate in pipelineCands has exactly one current_stage, so the
-    // sum of these buckets MUST equal Total CVs.
+    // Event-based hiring metrics. Offers and joinings are deliberately NOT
+    // tied to date_sourced. A candidate sourced in March can be offered in March
+    // and join in April; those events belong to different reporting periods.
+    const activeOfferEvents = offers.filter(o => {
+      const idx = toMthIdx(o.offer_date, getFYRange(fy).startYear)
+      return idx >= 0 && activeMths.includes(idx)
+    })
+    const activeJoiningEvents = offers.filter(o => {
+      if (!o.actual_joining_date) return false
+      const idx = toMthIdx(o.actual_joining_date, getFYRange(fy).startYear)
+      return idx >= 0 && activeMths.includes(idx)
+    })
+
+    // ── Stage breakdown ─────────────────────────────────────────────────────
+    // CV pipeline stages come from candidates.current_stage.
+    // Offer / placement stages MUST come from offers.status so this section
+    // agrees with the KPI header and the Offers & Placements module.
+    //
+    // Important: offer events are not mutually exclusive with CV pipeline
+    // stages. Therefore this is a diagnostic breakdown, not a decomposition
+    // whose individual cards should be added to obtain Total CVs.
     const stageCounts: Record<string, number> = {}
     Object.keys(STAGE_LABEL).forEach(stage => { stageCounts[stage] = 0 })
 
+    // Candidate-side stages only. Offer-related stages are deliberately
+    // excluded here and replaced by authoritative offer-table counts below.
+    const OFFER_STAGE_IDS = new Set(['offer_extended','offer_accepted','offer_rejected','joined','renege'])
     pipelineCands.forEach(c => {
       const stage = c.current_stage
-      if (STAGE_LABEL[stage]) {
+      if (STAGE_LABEL[stage] && !OFFER_STAGE_IDS.has(stage)) {
         stageCounts[stage] += 1
-      } else {
-        // Keep unexpected/null stages visible in the total rather than silently
-        // dropping them. This protects the business KPI from schema drift.
+      } else if (!STAGE_LABEL[stage]) {
         stageCounts.unknown = (stageCounts.unknown ?? 0) + 1
       }
     })
 
-    const stageSum = Object.values(stageCounts).reduce((sum, count) => sum + count, 0)
+    // Same event definitions used by the KPI header / funnel.
+    // Offer Extended = unique candidates with an offer event in the period.
+    const offerIdsByStatus = (statuses: string[]) => new Set(
+      activeOfferEvents
+        .filter(o => statuses.includes(normalizeOfferStatus(o.status) ?? ''))
+        .map(o => o.candidate_id)
+        .filter(Boolean) as string[]
+    )
 
-    // CRITICAL BUSINESS RULE:
-    // Total CVs is NOT a cumulative funnel number. It is the sum of all
-    // exclusive current-stage buckets. Because loadData fetches each
-    // recruiter's dataset independently and concatenates them without global
-    // deduplication, All Recruiters is exactly the sum of the individual
-    // recruiter reports.
-    const totalCvs = stageSum
+    const offerExtendedIds = new Set(
+      activeOfferEvents.map(o => o.candidate_id).filter(Boolean) as string[]
+    )
+    const offerAcceptedIds = offerIdsByStatus(['offer_accepted'])
+    const offerRejectedIds = offerIdsByStatus(['offer_rejected'])
+    const offerJoinedIds = new Set(
+      activeJoiningEvents
+        .filter(o => normalizeOfferStatus(o.status) === 'joined' || !!o.actual_joining_date)
+        .map(o => o.candidate_id)
+        .filter(Boolean) as string[]
+    )
+    const offerRenegeIds = offerIdsByStatus(['renege'])
+
+    stageCounts.offer_extended = offerExtendedIds.size
+    stageCounts.offer_accepted = offerAcceptedIds.size
+    stageCounts.offer_rejected = offerRejectedIds.size
+    stageCounts.joined = offerJoinedIds.size
+    stageCounts.renege = offerRenegeIds.size
+
+    // Total CVs remains the sourced-CV cohort total.
+    // Do NOT sum this diagnostic breakdown because a candidate can legitimately
+    // appear in a CV stage and also have an offer/joining event in the period.
+    const stageSum = Object.values(stageCounts).reduce((sum, count) => sum + count, 0)
+    const totalCvs = pipelineCands.length
     const cvs = totalCvs
 
     // Monthly revenue (from joined candidates, by join month)
@@ -645,19 +700,6 @@ export default function Recruitment360Page() {
     const chartData = MONTHS.map((m, mi) => ({
       month: m, revenue: monthlyRevenue[mi], target: monthlyTarget[mi], inFilter: activeMths.includes(mi),
     }))
-
-    // Event-based hiring metrics. Offers and joinings are deliberately NOT
-    // tied to date_sourced. A candidate sourced in March can be offered in March
-    // and join in April; those events belong to different reporting periods.
-    const activeOfferEvents = offers.filter(o => {
-      const idx = toMthIdx(o.offer_date, getFYRange(fy).startYear)
-      return idx >= 0 && activeMths.includes(idx)
-    })
-    const activeJoiningEvents = offers.filter(o => {
-      if (!o.actual_joining_date) return false
-      const idx = toMthIdx(o.actual_joining_date, getFYRange(fy).startYear)
-      return idx >= 0 && activeMths.includes(idx)
-    })
 
     // Count unique candidates, not offer rows, so revised/reissued offers do not
     // inflate the Offer KPI. Attribution comes from offers.recruiter_id.
@@ -717,7 +759,7 @@ export default function Recruitment360Page() {
     const ofr              = uniqueOfferCandidateIds.size
     const effectiveJoined  = uniqueJoiningCandidateIds.size
     const onHold           = stageCounts.on_hold ?? 0
-    const renege           = uniqueRenegeCandidateIds.size
+    const renege           = offerRenegeIds.size
     const jnd              = effectiveJoined + renege
 
     return {
@@ -726,6 +768,8 @@ export default function Recruitment360Page() {
       totalRevenue, totalTarget, pct,
       funnelData, chartData, trendData,
       stageCounts, stageSum, totalCvs,
+      offerExtendedIds: [...offerExtendedIds], offerAcceptedIds: [...offerAcceptedIds],
+      offerRejectedIds: [...offerRejectedIds], offerRenegeIds: [...offerRenegeIds],
       jobsAlloc: filtJobs.length,
       jobsWorked: filtJobs.filter(j => j.candidates.length > 0).length,
       j0, j5p, j3i, cvs, sl, iv, ofr, jnd, effectiveJoined, onHold, renege,
@@ -870,7 +914,7 @@ export default function Recruitment360Page() {
             <span><strong>Period:</strong> {periodLabel}</span>
             <span><strong>Generated:</strong> {new Date().toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
           </div>
-          <div className="print-note">Total CVs = sum of the individual Total CVs for the selected recruiters. Current-stage breakdown is shown separately for pipeline diagnosis.</div>
+          <div className="print-note">Total CVs = CVs sourced in the selected period. Offer / Joined / Renege counts are event-based and sourced from the offers table.</div>
         </div>
 
         {/* ── Title ───────────────────────────────────────────────────────── */}
@@ -1158,16 +1202,16 @@ export default function Recruitment360Page() {
           }
         </div>
 
-        {/* ── Current Stage Breakdown ───────────────────────────────────────── */}
+        {/* ── Pipeline & Placement Breakdown ───────────────────────────────────── */}
         <div style={{ ...card, padding:'20px 24px', marginBottom:18 }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', gap:12, marginBottom:14 }}>
             <div>
-              <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>Current Stage Breakdown</div>
-              <div style={{ fontSize:12, color:'#94a3b8' }}>Exclusive current-stage counts for CVs sourced in the selected period · used to identify pipeline bottlenecks</div>
+              <div style={{ fontSize:15, fontWeight:700, color:'#1e293b' }}>Pipeline & Placement Breakdown</div>
+              <div style={{ fontSize:12, color:'#94a3b8' }}>CV stages use candidates.current_stage; Offer / Joined / Renege stages use the offers table for the selected period</div>
             </div>
             <div style={{ textAlign:'right' }}>
               <div style={{ fontSize:18, fontWeight:800, color:'#2563eb' }}>{D.totalCvs} Total CVs</div>
-              <div style={{ fontSize:10, color:'#94a3b8', marginTop:2 }}>Sourced-CV cohort total</div>
+              <div style={{ fontSize:10, color:'#94a3b8', marginTop:2 }}>CVs sourced in selected period</div>
             </div>
           </div>
           <div className="stage-breakdown-grid" style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10 }}>
