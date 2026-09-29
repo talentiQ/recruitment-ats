@@ -13,6 +13,8 @@ type Tab = 'today' | 'report' | 'leaves' | 'holidays' | 'balances'
 interface MemberRow {
   user_id: string; full_name: string; role: string; team_name: string
   sign_in_time: string | null; sign_out_time: string | null
+  sign_in_location: AttendanceLocation | null
+  sign_out_location: AttendanceLocation | null
   status: string | null; hours_worked: number | null
   is_late_arrival: boolean; is_half_day: boolean
   present_days: number; half_days: number; absent_days: number
@@ -53,6 +55,62 @@ function formatTime(ts: string | null) {
 function monthEndDate(month: string) {
   const [y, m] = month.split('-').map(Number)
   return new Date(y, m, 0).toISOString().slice(0, 10)
+}
+
+interface AttendanceLocation {
+  latitude: number
+  longitude: number
+  accuracy: number | null
+  capturedAt: string | null
+}
+
+function formatDistance(meters: number | null): string {
+  if (meters === null || !Number.isFinite(meters)) return '—'
+  if (meters < 1000) return `${Math.round(meters)} m`
+  return `${(meters / 1000).toFixed(1)} km`
+}
+
+function mapsUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lng}`)}`
+}
+
+function locationLabel(location: AttendanceLocation | null): string {
+  if (!location) return 'Location not captured'
+  return `📍 ${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`
+}
+
+function LocationCell({
+  location,
+  title,
+}: {
+  location: AttendanceLocation | null
+  title: string
+}) {
+  if (!location) {
+    return <span style={{ fontSize: 11, color: '#9ca3af' }}>—</span>
+  }
+
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        📍 Location captured
+      </div>
+      <a
+        href={mapsUrl(location.latitude, location.longitude)}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`${title}: ${location.latitude}, ${location.longitude}${location.accuracy != null ? ` ±${Math.round(location.accuracy)}m` : ''}`}
+        style={{ fontSize: 10, color: '#2563eb', textDecoration: 'none', fontWeight: 600 }}
+      >
+        View Map
+      </a>
+      {location.accuracy != null && (
+        <div style={{ fontSize: 9, color: '#94a3b8' }}>
+          ±{Math.round(location.accuracy)}m
+        </div>
+      )}
+    </div>
+  )
 }
 
 const STATUS_DOT: Record<string, { color: string; bg: string; label: string }> = {
@@ -156,7 +214,7 @@ export default function ManagementAttendancePage() {
       const monthStart = `${today.slice(0, 7)}-01`
 
       const [logsRes, monthRes] = await Promise.all([
-        supabase.from('attendance_logs').select('*').in('user_id', ids).eq('date', today),
+        supabase.from('attendance_logs').select('user_id,sign_in_time,sign_out_time,sign_in_latitude,sign_in_longitude,sign_in_accuracy,sign_in_location_time,sign_out_latitude,sign_out_longitude,sign_out_accuracy,sign_out_location_time,status,hours_worked,is_late_arrival,is_half_day').in('user_id', ids).eq('date', today),
         supabase.from('attendance_logs').select('user_id,status,is_late_arrival')
           .in('user_id', ids).gte('date', monthStart).lte('date', today),
       ])
@@ -181,6 +239,16 @@ export default function ManagementAttendancePage() {
           user_id: u.id, full_name: u.full_name, role: u.role,
           team_name: (u.teams as any)?.name || '—',
           sign_in_time: log?.sign_in_time || null, sign_out_time: log?.sign_out_time || null,
+          sign_in_location: log?.sign_in_latitude != null && log?.sign_in_longitude != null ? {
+            latitude: Number(log.sign_in_latitude), longitude: Number(log.sign_in_longitude),
+            accuracy: log.sign_in_accuracy != null ? Number(log.sign_in_accuracy) : null,
+            capturedAt: log.sign_in_location_time || null,
+          } : null,
+          sign_out_location: log?.sign_out_latitude != null && log?.sign_out_longitude != null ? {
+            latitude: Number(log.sign_out_latitude), longitude: Number(log.sign_out_longitude),
+            accuracy: log.sign_out_accuracy != null ? Number(log.sign_out_accuracy) : null,
+            capturedAt: log.sign_out_location_time || null,
+          } : null,
           status: log?.status || null, hours_worked: log?.hours_worked || null,
           is_late_arrival: log?.is_late_arrival || false, is_half_day: log?.is_half_day || false,
           present_days: ms.present || 0, half_days: ms.half || 0,
@@ -223,7 +291,9 @@ export default function ManagementAttendancePage() {
     setReportData((usersRes.data || []).map((u: any) => ({
       user_id: u.id, full_name: u.full_name, role: u.role,
       team_name: (u.teams as any)?.name || '—',
-      sign_in_time: null, sign_out_time: null, status: null,
+      sign_in_time: null, sign_out_time: null,
+      sign_in_location: null, sign_out_location: null,
+      status: null,
       hours_worked: agg[u.id]?.hours || 0,
       is_late_arrival: false, is_half_day: false,
       present_days: agg[u.id]?.present || 0, half_days: agg[u.id]?.half || 0,
@@ -418,7 +488,7 @@ export default function ManagementAttendancePage() {
     </DashboardLayout>
   )
 
-  const TCOLS = '170px 70px 100px 90px 90px 120px 80px 80px 80px 70px'
+  const TCOLS = '150px 60px 90px 82px 82px 110px 70px 105px 105px 70px 70px 60px'
   const RCOLS = '160px 70px 100px 70px 70px 70px 70px 70px 70px 80px 80px 130px'
 
   return (
@@ -498,6 +568,8 @@ export default function ManagementAttendancePage() {
                 <div>Member</div><div>Role</div><div>Team</div>
                 <div>Sign In</div><div>Sign Out</div><div>Status</div>
                 <div style={{ textAlign: 'center' }}>Hours</div>
+                <div style={{ textAlign: 'center' }}>Sign-In Location</div>
+                <div style={{ textAlign: 'center' }}>Sign-Out Location</div>
                 <div style={{ textAlign: 'center' }}>M.Present</div>
                 <div style={{ textAlign: 'center' }}>Late</div>
                 <div style={{ textAlign: 'center' }}>Edit</div>
@@ -514,7 +586,9 @@ export default function ManagementAttendancePage() {
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#dc2626' }}>{formatTime(m.sign_out_time)}</div>
                     <div><span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 100, fontWeight: 700, background: sc.bg, color: sc.color }}>{m.is_late_arrival ? '⏰ ' : ''}{m.is_half_day ? '½ ' : ''}{sc.label}</span></div>
                     <div style={{ textAlign: 'center', fontSize: 13, color: '#6b7280' }}>{m.hours_worked ? `${Math.floor(m.hours_worked)}h ${Math.round((m.hours_worked - Math.floor(m.hours_worked)) * 60)}m` : '—'}</div>
-                    <div style={{ textAlign: 'center', fontWeight: 700, color: '#2563eb', fontSize: 15 }}>{m.present_days + m.half_days * 0.5}</div>
+                    <LocationCell location={m.sign_in_location} title={`${m.full_name} Sign In`} />
+                     <LocationCell location={m.sign_out_location} title={`${m.full_name} Sign Out`} />
+                     <div style={{ textAlign: 'center', fontWeight: 700, color: '#2563eb', fontSize: 15 }}>{m.present_days + m.half_days * 0.5}</div>
                     <div style={{ textAlign: 'center', fontSize: 13, color: m.late_count > 0 ? '#dc2626' : '#9ca3af', fontWeight: m.late_count > 0 ? 700 : 400 }}>{m.late_count || '—'}</div>
                     <div style={{ textAlign: 'center' }}>
                       <button onClick={() => openEditLog(m.user_id, m.full_name, todayIST())}

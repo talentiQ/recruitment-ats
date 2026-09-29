@@ -20,6 +20,87 @@ interface NavItem {
   badge?: string
 }
 
+// ── Mandatory attendance geolocation ───────────────────────────────────────────
+interface GeoLocation {
+  latitude: number
+  longitude: number
+  accuracy: number
+  capturedAt: string
+}
+
+const MAX_LOCATION_ACCURACY_METERS = 200
+
+function getCurrentLocation(): Promise<GeoLocation> {
+  return new Promise((resolve, reject) => {
+    console.log('[Attendance GPS] Starting location request')
+
+    if (typeof window === 'undefined') {
+      reject(new Error('Location can only be requested in the browser.'))
+      return
+    }
+
+    if (!window.isSecureContext) {
+      reject(
+        new Error(
+          'Location requires a secure HTTPS connection. Please open Talent IQ using HTTPS.'
+        )
+      )
+      return
+    }
+
+    if (!navigator.geolocation) {
+      reject(
+        new Error(
+          'Geolocation is not supported by this browser or device.'
+        )
+      )
+      return
+    }
+
+    console.log('[Attendance GPS] navigator.geolocation available')
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        console.log('[Attendance GPS] Location received:', position.coords)
+
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          capturedAt: new Date(position.timestamp).toISOString(),
+        })
+      },
+      (error) => {
+        console.error('[Attendance GPS] Location error:', error)
+
+        let message = 'Unable to get your location.'
+
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            message =
+              'Location permission is required to mark attendance. Please allow location access for this website and try again.'
+            break
+          case error.POSITION_UNAVAILABLE:
+            message =
+              'Your current location could not be determined. Please enable GPS/location services and try again.'
+            break
+          case error.TIMEOUT:
+            message =
+              'Location request timed out. Please try again.'
+            break
+        }
+
+        reject(new Error(message))
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      }
+    )
+  })
+}
+
 // ── Attendance quick-action button (sidebar) ──────────────────────────────────
 
 function AttendanceButton({ userId }: { userId: string }) {
@@ -39,14 +120,10 @@ function AttendanceButton({ userId }: { userId: string }) {
     // Fallback: if RPC not available yet, use SQL directly
     let serverTs: string
     if (error || !data) {
-      const { data: d2 } = await supabase
-        .from('attendance_logs')
-        .select('updated_at')
-        .limit(1)
-        .single()
-      // Last resort: use Date.now() but log a warning
-      console.warn('Could not get server time — falling back to client clock')
-      serverTs = new Date().toISOString()
+      console.error('Could not get authoritative server time:', error)
+      throw new Error(
+        'Could not get the authoritative server time. Please try again.'
+      )
     } else {
       serverTs = data
     }
@@ -74,22 +151,61 @@ function AttendanceButton({ userId }: { userId: string }) {
   // $$;
 
   const loadStatus = useCallback(async () => {
-    const { todayDate } = await getServerTime()
-    const { data } = await supabase
-      .from('attendance_logs')
-      .select('id, sign_in_time, sign_out_time, required_hours')
-      .eq('user_id', userId)
-      .eq('date', todayDate)
-      .maybeSingle() // BUG1 FIX: maybeSingle returns null (not error) if no row
+    // Always reset local attendance state before reading the DB.
+    // Prevents stale attendance state when the user/session changes.
+    setSignedIn(false)
+    setSignedOut(false)
+    setSignInTs(null)
+    setLogId(null)
+    setElapsed('')
+    setReqHours(9)
+    setStatusLoaded(false)
 
-    if (data?.sign_in_time) {
-      setSignedIn(true)
-      setSignInTs(data.sign_in_time)
-      setLogId(data.id)
-      setReqHours(data.required_hours || 9)
+    try {
+      const { todayDate, requiredHours } = await getServerTime()
+
+      const { data, error } = await supabase
+        .from('attendance_logs')
+        .select('id, sign_in_time, sign_out_time, required_hours')
+        .eq('user_id', userId)
+        .eq('date', todayDate)
+        .maybeSingle()
+
+      if (error) throw error
+
+      if (!data) {
+        setStatusLoaded(true)
+        return
+      }
+
+      if (data.sign_in_time) {
+        setSignedIn(true)
+        setSignInTs(data.sign_in_time)
+        setLogId(data.id)
+        setReqHours(data.required_hours || requiredHours)
+      }
+
+      if (data.sign_out_time) {
+        setSignedOut(true)
+      }
+
+      setStatusLoaded(true)
+    } catch (error: any) {
+      console.error('Attendance status load failed:', error)
+
+      setSignedIn(false)
+      setSignedOut(false)
+      setSignInTs(null)
+      setLogId(null)
+      setElapsed('')
+      setReqHours(9)
+      setStatusLoaded(true)
+
+      alert(
+        'Unable to load attendance status: ' +
+        (error?.message || 'Unknown error')
+      )
     }
-    if (data?.sign_out_time) setSignedOut(true)
-    setStatusLoaded(true) // BUG1: unlock button only after DB check complete
   }, [userId])
 
   useEffect(() => { loadStatus() }, [loadStatus])
@@ -111,29 +227,59 @@ function AttendanceButton({ userId }: { userId: string }) {
   }, [signedIn, signedOut, signInTs])
 
   const handleSignIn = async () => {
-    // BUG1 FIX: hard guard — if already signed in, do nothing
+    // Hard guard — if already signed in, do nothing.
     if (signedIn) return
+
     setLoading(true)
+
     try {
-      // BUG3 FIX: all time from server
-      const { serverNow, todayDate, hourIST, requiredHours } = await getServerTime()
+      // ─────────────────────────────────────────────
+      // STEP 1: Mandatory GPS capture
+      // This MUST happen before attendance is inserted.
+      // ─────────────────────────────────────────────
+      let location: GeoLocation
+
+      try {
+        location = await getCurrentLocation()
+      } catch (locationError: any) {
+        alert(locationError.message)
+        return
+      }
+
+      // Reject very inaccurate readings.
+      if (location.accuracy > MAX_LOCATION_ACCURACY_METERS) {
+        alert(
+          `Location accuracy is too low (${Math.round(location.accuracy)}m).\\n\\n` +
+          `Please enable GPS/location services and try again from an area with a better GPS signal.`
+        )
+        return
+      }
+
+      // ─────────────────────────────────────────────
+      // STEP 2: Authoritative server time
+      // ─────────────────────────────────────────────
+      const { serverNow, todayDate, hourIST, requiredHours } =
+        await getServerTime()
+
       const monthStart = `${todayDate.slice(0, 7)}-01`
 
-      // BUG1 FIX: check DB for existing record before inserting
+      // ─────────────────────────────────────────────
+      // STEP 3: Check DB for existing attendance
+      // ─────────────────────────────────────────────
       const { data: existing } = await supabase
         .from('attendance_logs')
-        .select('id, sign_in_time')
+        .select('id, sign_in_time, sign_out_time, required_hours')
         .eq('user_id', userId)
         .eq('date', todayDate)
         .maybeSingle()
 
       if (existing?.sign_in_time) {
-        // Already signed in (race condition or page refresh) — just update state
         setSignedIn(true)
+        setSignedOut(Boolean(existing.sign_out_time))
         setSignInTs(existing.sign_in_time)
         setLogId(existing.id)
+        setReqHours(existing.required_hours || requiredHours)
         setStatusLoaded(true)
-        setLoading(false)
         return
       }
 
@@ -145,22 +291,34 @@ function AttendanceButton({ userId }: { userId: string }) {
         .gte('date', monthStart)
         .lt('date', todayDate)
 
-      const isLate      = hourIST > 9.5
-      const isHalfDayIn = hourIST > 11.5 || (isLate && (lateCount || 0) >= 3)
+      const isLate =
+        hourIST > 9.5
 
-      // BUG2 FIX: required_hours set from server-determined day type
-      // BUG3 FIX: sign_in_time = serverNow.toISOString() (server clock)
+      const isHalfDayIn =
+        hourIST > 11.5 ||
+        (isLate && (lateCount || 0) >= 3)
+
+      // ─────────────────────────────────────────────
+      // STEP 4: Insert attendance + GPS data
+      // ─────────────────────────────────────────────
       const { data: newLog, error } = await supabase
         .from('attendance_logs')
         .insert({
           user_id:               userId,
           date:                  todayDate,
-          sign_in_time:          serverNow.toISOString(), // server time
+          sign_in_time:          serverNow.toISOString(),
           status:                'present',
           is_late_arrival:       isLate,
           is_half_day_in:        isHalfDayIn,
           late_count_this_month: lateCount || 0,
-          required_hours:        requiredHours, // BUG2: 8 for Saturday, 9 for weekday
+          required_hours:       requiredHours,
+
+          // Sign-in location
+          sign_in_latitude:      location.latitude,
+          sign_in_longitude:     location.longitude,
+          sign_in_accuracy:      location.accuracy,
+          sign_in_location_time: location.capturedAt,
+
           updated_at:            serverNow.toISOString(),
         })
         .select('id')
@@ -173,8 +331,15 @@ function AttendanceButton({ userId }: { userId: string }) {
       setLogId(newLog.id)
       setReqHours(requiredHours)
 
-      if (isHalfDayIn) alert(`⚠️ Signed in at ${hourIST.toFixed(0)}:${String(Math.round((hourIST % 1) * 60)).padStart(2,'0')} — marked as Half Day.`)
-      else if (isLate)  alert('⏰ Late arrival noted.')
+      if (isHalfDayIn) {
+        alert(
+          `Signed in at ${hourIST.toFixed(0)}:${String(
+            Math.round((hourIST % 1) * 60)
+          ).padStart(2, '0')} — marked as Half Day.`
+        )
+      } else if (isLate) {
+        alert('Late arrival noted.')
+      }
     } catch (err: any) {
       alert('Sign in failed: ' + err.message)
     } finally {
@@ -184,46 +349,90 @@ function AttendanceButton({ userId }: { userId: string }) {
 
   const handleSignOut = async () => {
     if (!signedIn || signedOut || !logId) return
+
     setLoading(true)
+
     try {
-      // BUG3 FIX: server time for sign-out
-      const { serverNow, hourIST, requiredHours } = await getServerTime()
+      // ─────────────────────────────────────────────
+      // STEP 1: Mandatory GPS capture
+      // ─────────────────────────────────────────────
+      let location: GeoLocation
 
-      // Calculate worked hours using server sign-out vs DB-stored sign-in
-      const worked    = signInTs
-        ? (serverNow.getTime() - new Date(signInTs).getTime()) / 3600000
-        : 0
+      try {
+        location = await getCurrentLocation()
+      } catch (locationError: any) {
+        alert(locationError.message)
+        return
+      }
+
+      if (location.accuracy > MAX_LOCATION_ACCURACY_METERS) {
+        alert(
+          `Location accuracy is too low (${Math.round(location.accuracy)}m).\\n\\n` +
+          `Please enable GPS/location services and try again.`
+        )
+        return
+      }
+
+      // ─────────────────────────────────────────────
+      // STEP 2: Authoritative server time
+      // ─────────────────────────────────────────────
+      const { serverNow, hourIST, requiredHours } =
+        await getServerTime()
+
+      const worked =
+        signInTs
+          ? (serverNow.getTime() - new Date(signInTs).getTime()) / 3600000
+          : 0
+
       const isHalfOut = hourIST < 16.0
-      const deficit   = Math.max(0, requiredHours - worked)
+      const deficit = Math.max(0, requiredHours - worked)
 
-      // BUG2 FIX: warning uses correct required hours (8 for Sat, 9 for weekday)
       if (deficit > 0.25) {
         const ok = confirm(
-          `⚠️ Only ${Math.floor(worked)}h ${Math.round((worked % 1) * 60)}m worked of ${requiredHours}h required.\n\nSign out anyway?`
+          `Only ${Math.floor(worked)}h ${Math.round(
+            (worked % 1) * 60
+          )}m worked of ${requiredHours}h required.\\n\\nSign out anyway?`
         )
-        if (!ok) { setLoading(false); return }
+
+        if (!ok) return
       }
 
       const { data: existing } = await supabase
         .from('attendance_logs')
         .select('id, is_half_day_in')
-        .eq('id', logId) // use stored logId, not re-query by date
+        .eq('id', logId)
         .single()
 
       if (existing) {
-        await supabase.from('attendance_logs').update({
-          sign_out_time:   serverNow.toISOString(), // BUG3: server time
-          hours_worked:    Math.round(worked * 100) / 100,
-          hours_deficit:   Math.round(deficit * 100) / 100,
-          is_early_leave:  hourIST < 16.5,
-          is_half_day_out: isHalfOut,
-          is_half_day:     isHalfOut || existing.is_half_day_in,
-          status:          (isHalfOut || existing.is_half_day_in) ? 'half_day' : 'present',
-          updated_at:      serverNow.toISOString(),
-        }).eq('id', existing.id)
+        const { error } = await supabase
+          .from('attendance_logs')
+          .update({
+            sign_out_time:   serverNow.toISOString(),
+            hours_worked:    Math.round(worked * 100) / 100,
+            hours_deficit:   Math.round(deficit * 100) / 100,
+            is_early_leave:  hourIST < 16.5,
+            is_half_day_out: isHalfOut,
+            is_half_day:     isHalfOut || existing.is_half_day_in,
+            status:
+              isHalfOut || existing.is_half_day_in
+                ? 'half_day'
+                : 'present',
+
+            // Sign-out location
+            sign_out_latitude:      location.latitude,
+            sign_out_longitude:     location.longitude,
+            sign_out_accuracy:      location.accuracy,
+            sign_out_location_time: location.capturedAt,
+
+            updated_at: serverNow.toISOString(),
+          })
+          .eq('id', existing.id)
+
+        if (error) throw error
       }
 
-      setSignedOut(true)
+      // Re-read Supabase so the UI is driven by the saved attendance record.
+      await loadStatus()
     } catch (err: any) {
       alert('Sign out failed: ' + err.message)
     } finally {
@@ -299,29 +508,67 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   useEffect(() => {
     const userData = localStorage.getItem('user')
-    if (!userData) { router.push('/'); return }
-    const parsedUser = JSON.parse(userData)
-    setUser(parsedUser)
 
-    if (parsedUser?.id && typeof window !== 'undefined') {
-      try {
-        const chrome = (window as any).chrome
-        if (chrome?.storage?.local) {
-          chrome.storage.local.set({ supabase_user_id: parsedUser.id })
+    if (!userData) {
+      setUser(null)
+      router.replace('/')
+      return
+    }
+
+    try {
+      const parsedUser = JSON.parse(userData)
+
+      if (!parsedUser?.id) {
+        localStorage.removeItem('user')
+        setUser(null)
+        router.replace('/')
+        return
+      }
+
+      setUser(parsedUser)
+
+      if (typeof window !== 'undefined') {
+        try {
+          const chrome = (window as any).chrome
+
+          if (chrome?.storage?.local) {
+            chrome.storage.local.set({
+              supabase_user_id: parsedUser.id
+            })
+          }
+        } catch {
+          // Extension not installed.
         }
-      } catch { /* extension not installed */ }
+      }
+    } catch {
+      localStorage.removeItem('user')
+      setUser(null)
+      router.replace('/')
     }
   }, [router])
 
   const handleLogout = () => {
+    // Clear React state immediately.
+    setUser(null)
+
+    // Clear stored application session.
     localStorage.removeItem('user')
+
+    // Clear extension user reference if present.
     if (typeof window !== 'undefined') {
       try {
         const chrome = (window as any).chrome
-        if (chrome?.storage?.local) chrome.storage.local.remove('supabase_user_id')
-      } catch { /* safe to ignore */ }
+
+        if (chrome?.storage?.local) {
+          chrome.storage.local.remove('supabase_user_id')
+        }
+      } catch {
+        // Safe to ignore.
+      }
     }
-    router.push('/')
+
+    // Replace history entry so Back does not return to the authenticated page.
+    router.replace('/')
   }
 
   const getNavigationItems = (): NavItem[] => {

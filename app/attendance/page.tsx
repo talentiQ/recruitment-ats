@@ -61,6 +61,58 @@ function formatHours(h: number|null): string {
   return `${hrs}h ${mins}m`
 }
 
+// ─── Geo Location ─────────────────────────────────────────────────────────────
+interface GeoLocation {
+  latitude: number
+  longitude: number
+  accuracy: number
+  capturedAt: string
+}
+
+const MAX_LOCATION_ACCURACY_METERS = 200
+
+function getCurrentLocation(): Promise<GeoLocation> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Location services are not supported by this device/browser.'))
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          capturedAt: new Date(position.timestamp).toISOString(),
+        })
+      },
+      (error) => {
+        let message = 'Unable to get your location.'
+
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            message = 'Location permission is required to mark attendance.'
+            break
+          case error.POSITION_UNAVAILABLE:
+            message = 'Your current location could not be determined. Please enable GPS/location services and try again.'
+            break
+          case error.TIMEOUT:
+            message = 'Location request timed out. Please try again.'
+            break
+        }
+
+        reject(new Error(message))
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      }
+    )
+  })
+}
+
 // Display-only — never used for attendance recording
 function todayDisplay(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
@@ -69,7 +121,15 @@ function todayDisplay(): string {
 // FIX: Server time — authoritative IST clock, never trust browser
 async function getServerTime() {
   const { data, error } = await supabase.rpc('get_server_time_ist')
-  const serverTs  = (!error && data) ? (data as string) : new Date().toISOString()
+
+  if (error || !data) {
+    console.error('Could not get authoritative server time:', error)
+    throw new Error(
+      'Could not get the authoritative server time. Please try again.'
+    )
+  }
+
+  const serverTs  = data as string
   const serverNow = new Date(serverTs)
   // IST = UTC+5:30
   const istOffset = 330 * 60 * 1000
@@ -229,55 +289,103 @@ export default function AttendancePage() {
   const handleSignIn = async () => {
     if (!user) return
     setActionLoading(true)
+
     try {
-      // FIX: server time always
+      // ─────────────────────────────────────────────
+      // STEP 1: Mandatory location capture
+      // ─────────────────────────────────────────────
+      let location: GeoLocation
+
+      try {
+        location = await getCurrentLocation()
+      } catch (locationError: any) {
+        alert(locationError.message)
+        return
+      }
+
+      // Reject very inaccurate GPS readings.
+      if (location.accuracy > MAX_LOCATION_ACCURACY_METERS) {
+        alert(
+          `Location accuracy is too low (${Math.round(location.accuracy)}m).\n\n` +
+          `Please enable GPS/location services and try again from an area with a better GPS signal.`
+        )
+        return
+      }
+
+      // ─────────────────────────────────────────────
+      // STEP 2: Authoritative server time
+      // ─────────────────────────────────────────────
       const { serverNow, todayDate, hourIST, requiredHours } = await getServerTime()
       const monthStart = `${todayDate.slice(0,7)}-01`
 
-      // FIX: check DB before inserting — prevents duplicate sign-ins
+      // ─────────────────────────────────────────────
+      // STEP 3: Check DB before inserting
+      // ─────────────────────────────────────────────
       const { data: existing } = await supabase
-        .from('attendance_logs').select('id,sign_in_time')
-        .eq('user_id', user.id).eq('date', todayDate).maybeSingle()
+        .from('attendance_logs')
+        .select('id,sign_in_time')
+        .eq('user_id', user.id)
+        .eq('date', todayDate)
+        .maybeSingle()
 
       if (existing?.sign_in_time) {
         await loadToday(user.id)
-        setActionLoading(false)
         return
       }
 
       const { count: lateCount } = await supabase
-        .from('attendance_logs').select('*',{count:'exact',head:true})
-        .eq('user_id', user.id).eq('is_late_arrival', true)
-        .gte('date', monthStart).lt('date', todayDate)
+        .from('attendance_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('is_late_arrival', true)
+        .gte('date', monthStart)
+        .lt('date', todayDate)
 
       const isLate      = hourIST > GRACE_END_HOUR
-      const isHalfDayIn = hourIST > HALF_DAY_IN_HOUR || (isLate && (lateCount||0) >= MAX_LATE_GRACE)
+      const isHalfDayIn = hourIST > HALF_DAY_IN_HOUR || (isLate && (lateCount || 0) >= MAX_LATE_GRACE)
 
-      // FIX: INSERT (not upsert) — unique constraint catches race conditions
-      // FIX: status = 'present' on sign-in (in office = present by definition)
-      //      sign-out downgrades to 'half_day' only if hours/timing rules apply
-      // FIX: required_hours = server-determined (8 for Saturday, 9 for weekday)
+      // ─────────────────────────────────────────────
+      // STEP 4: Insert attendance + location
+      // ─────────────────────────────────────────────
       const { data, error } = await supabase
-        .from('attendance_logs').insert({
+        .from('attendance_logs')
+        .insert({
           user_id:               user.id,
           date:                  todayDate,
           sign_in_time:          serverNow.toISOString(),
-          status:                'present',   // present from sign-in; sign-out may downgrade to half_day
+          status:                'present',
           is_late_arrival:       isLate,
           is_half_day_in:        isHalfDayIn,
-          late_count_this_month: lateCount||0,
+          late_count_this_month: lateCount || 0,
           required_hours:        requiredHours,
+
+          // Sign-in location
+          sign_in_latitude:      location.latitude,
+          sign_in_longitude:     location.longitude,
+          sign_in_accuracy:      location.accuracy,
+          sign_in_location_time: location.capturedAt,
+
           sign_in_ip:            null,
           updated_at:            serverNow.toISOString(),
-        }).select().single()
+        })
+        .select()
+        .single()
 
       if (error) {
-        if (error.code === '23505') { await loadToday(user.id); return } // race condition
+        if (error.code === '23505') {
+          await loadToday(user.id)
+          return
+        }
         throw error
       }
+
       setTodayLog(data)
-      if (isHalfDayIn)  alert(`⚠️ Signed in at ${formatTime(serverNow.toISOString())} — marked as Half Day.`)
-      else if (isLate)  alert(`⏰ Late arrival. ${MAX_LATE_GRACE-(lateCount||0)} grace arrivals remaining this month.`)
+
+      if (isHalfDayIn) {
+        alert(`Signed in at ${formatTime(serverNow.toISOString())} — marked as Half Day.`)
+      } else if (isLate) {
+        alert(`Late arrival. ${MAX_LATE_GRACE-(lateCount||0)} grace arrivals remaining this month.`)
+      }
     } catch (err: any) {
       alert('Sign in failed: ' + err.message)
     } finally {
@@ -289,8 +397,31 @@ export default function AttendancePage() {
   const handleSignOut = async () => {
     if (!user || !todayLog) return
     setActionLoading(true)
+
     try {
-      // FIX: server time for sign-out timestamp
+      // ─────────────────────────────────────────────
+      // STEP 1: Mandatory location capture
+      // ─────────────────────────────────────────────
+      let location: GeoLocation
+
+      try {
+        location = await getCurrentLocation()
+      } catch (locationError: any) {
+        alert(locationError.message)
+        return
+      }
+
+      if (location.accuracy > MAX_LOCATION_ACCURACY_METERS) {
+        alert(
+          `Location accuracy is too low (${Math.round(location.accuracy)}m).\n\n` +
+          `Please enable GPS/location services and try again.`
+        )
+        return
+      }
+
+      // ─────────────────────────────────────────────
+      // STEP 2: Authoritative server time
+      // ─────────────────────────────────────────────
       const { serverNow, todayDate, hourIST } = await getServerTime()
       const workedHrs = (serverNow.getTime() - new Date(todayLog.sign_in_time!).getTime()) / 3600000
       const reqHrs    = todayLog.required_hours
@@ -299,12 +430,17 @@ export default function AttendancePage() {
       const monthStart   = `${todayDate.slice(0,7)}-01`
 
       let halfDayOut = isHalfDayOut
+
       if (isEarlyLeave && !isHalfDayOut) {
         const { count: earlyCount } = await supabase
-          .from('attendance_logs').select('*',{count:'exact',head:true})
-          .eq('user_id', user.id).eq('is_early_leave', true)
-          .gte('date', monthStart).lt('date', todayDate)
-        if ((earlyCount||0) >= MAX_LATE_GRACE) halfDayOut = true
+          .from('attendance_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .eq('is_early_leave', true)
+          .gte('date', monthStart)
+          .lt('date', todayDate)
+
+        if ((earlyCount || 0) >= MAX_LATE_GRACE) halfDayOut = true
       }
 
       const isHalfDay = todayLog.is_half_day_in || halfDayOut
@@ -312,23 +448,37 @@ export default function AttendancePage() {
 
       if (deficit > 0.25) {
         const ok = confirm(`⚠️ ${formatHours(workedHrs)} worked of ${reqHrs}h required.\n\nSign out anyway?`)
-        if (!ok) { setActionLoading(false); return }
+        if (!ok) return
       }
 
-      // FIX: status resolved here — 'pending' → 'present' or 'half_day'
+      // ─────────────────────────────────────────────
+      // STEP 3: Update attendance + location
+      // ─────────────────────────────────────────────
       const { data, error } = await supabase
-        .from('attendance_logs').update({
+        .from('attendance_logs')
+        .update({
           sign_out_time:   serverNow.toISOString(),
           hours_worked:    Math.round(workedHrs*100)/100,
           hours_deficit:   Math.round(deficit*100)/100,
           is_early_leave:  isEarlyLeave,
           is_half_day_out: halfDayOut,
           is_half_day:     isHalfDay,
-          status:          isHalfDay ? 'half_day' : 'present',  // FIX: resolves pending
+          status:          isHalfDay ? 'half_day' : 'present',
+
+          // Sign-out location
+          sign_out_latitude:      location.latitude,
+          sign_out_longitude:     location.longitude,
+          sign_out_accuracy:      location.accuracy,
+          sign_out_location_time: location.capturedAt,
+
           updated_at:      serverNow.toISOString(),
-        }).eq('id', todayLog.id).select().single()
+        })
+        .eq('id', todayLog.id)
+        .select()
+        .single()
 
       if (error) throw error
+
       setTodayLog(data)
       setElapsed(null)
     } catch (err: any) {
