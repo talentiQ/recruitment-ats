@@ -7,6 +7,21 @@ import Link from 'next/link'
 import NotificationBell from '@/components/NotificationBell'
 import { supabase } from '@/lib/supabase'
 
+
+async function getLocationLocality(location: GeoLocation): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `/api/reverse-geocode?lat=${encodeURIComponent(location.latitude)}&lng=${encodeURIComponent(location.longitude)}`,
+      { cache: 'no-store' }
+    )
+    if (!response.ok) return null
+    const data = await response.json()
+    return typeof data?.locality === 'string' && data.locality.trim() ? data.locality.trim() : null
+  } catch {
+    return null
+  }
+}
+
 interface DashboardLayoutProps {
   children: React.ReactNode
 }
@@ -298,6 +313,8 @@ function AttendanceButton({ userId }: { userId: string }) {
         hourIST > 11.5 ||
         (isLate && (lateCount || 0) >= 3)
 
+      const locality = await getLocationLocality(location)
+
       // ─────────────────────────────────────────────
       // STEP 4: Insert attendance + GPS data
       // ─────────────────────────────────────────────
@@ -318,6 +335,7 @@ function AttendanceButton({ userId }: { userId: string }) {
           sign_in_longitude:     location.longitude,
           sign_in_accuracy:      location.accuracy,
           sign_in_location_time: location.capturedAt,
+          sign_in_location_name: locality,
 
           updated_at:            serverNow.toISOString(),
         })
@@ -373,6 +391,10 @@ function AttendanceButton({ userId }: { userId: string }) {
         return
       }
 
+      // Get a human-readable locality for the captured sign-out GPS.
+      // This is display-only; the exact GPS coordinates remain authoritative.
+      const locality = await getLocationLocality(location)
+
       // ─────────────────────────────────────────────
       // STEP 2: Authoritative server time
       // ─────────────────────────────────────────────
@@ -423,6 +445,7 @@ function AttendanceButton({ userId }: { userId: string }) {
             sign_out_longitude:     location.longitude,
             sign_out_accuracy:      location.accuracy,
             sign_out_location_time: location.capturedAt,
+            sign_out_location_name: locality,
 
             updated_at: serverNow.toISOString(),
           })

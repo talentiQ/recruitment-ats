@@ -113,6 +113,37 @@ function getCurrentLocation(): Promise<GeoLocation> {
   })
 }
 
+
+async function getLocationLocality(location: GeoLocation): Promise<string | null> {
+  try {
+    // Called directly from the same browser that obtained the current GPS position.
+    const url = new URL('https://api.bigdatacloud.net/data/reverse-geocode-client')
+    url.searchParams.set('latitude', String(location.latitude))
+    url.searchParams.set('longitude', String(location.longitude))
+    url.searchParams.set('localityLanguage', 'en')
+
+    const response = await fetch(url.toString(), { cache: 'no-store' })
+    if (!response.ok) return null
+
+    const data = await response.json()
+    const parts = [
+      typeof data?.locality === 'string' ? data.locality.trim() : '',
+      typeof data?.city === 'string' ? data.city.trim() : '',
+      typeof data?.principalSubdivision === 'string' ? data.principalSubdivision.trim() : '',
+    ].filter(Boolean)
+
+    const uniqueParts = parts.filter(
+      (value: string, index: number) => parts.indexOf(value) === index
+    )
+
+    return uniqueParts.slice(0, 3).join(', ') || null
+  } catch {
+    // Locality is display-only; GPS coordinates remain the attendance source of truth.
+    return null
+  }
+}
+
+
 // Display-only — never used for attendance recording
 function todayDisplay(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
@@ -344,6 +375,8 @@ export default function AttendancePage() {
       const isLate      = hourIST > GRACE_END_HOUR
       const isHalfDayIn = hourIST > HALF_DAY_IN_HOUR || (isLate && (lateCount || 0) >= MAX_LATE_GRACE)
 
+      const locality = await getLocationLocality(location)
+
       // ─────────────────────────────────────────────
       // STEP 4: Insert attendance + location
       // ─────────────────────────────────────────────
@@ -364,6 +397,7 @@ export default function AttendancePage() {
           sign_in_longitude:     location.longitude,
           sign_in_accuracy:      location.accuracy,
           sign_in_location_time: location.capturedAt,
+          sign_in_location_name: locality,
 
           sign_in_ip:            null,
           updated_at:            serverNow.toISOString(),
@@ -452,6 +486,8 @@ export default function AttendancePage() {
       }
 
       // ─────────────────────────────────────────────
+      const locality = await getLocationLocality(location)
+
       // STEP 3: Update attendance + location
       // ─────────────────────────────────────────────
       const { data, error } = await supabase
@@ -470,6 +506,7 @@ export default function AttendancePage() {
           sign_out_longitude:     location.longitude,
           sign_out_accuracy:      location.accuracy,
           sign_out_location_time: location.capturedAt,
+          sign_out_location_name: locality,
 
           updated_at:      serverNow.toISOString(),
         })
