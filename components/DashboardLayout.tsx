@@ -10,14 +10,29 @@ import { supabase } from '@/lib/supabase'
 
 async function getLocationLocality(location: GeoLocation): Promise<string | null> {
   try {
-    const response = await fetch(
-      `/api/reverse-geocode?lat=${encodeURIComponent(location.latitude)}&lng=${encodeURIComponent(location.longitude)}`,
-      { cache: 'no-store' }
-    )
+    const url = new URL('https://api.bigdatacloud.net/data/reverse-geocode-client')
+    url.searchParams.set('latitude', String(location.latitude))
+    url.searchParams.set('longitude', String(location.longitude))
+    url.searchParams.set('localityLanguage', 'en')
+
+    const response = await fetch(url.toString(), { cache: 'no-store' })
     if (!response.ok) return null
+
     const data = await response.json()
-    return typeof data?.locality === 'string' && data.locality.trim() ? data.locality.trim() : null
-  } catch {
+
+    const parts = [
+      typeof data?.locality === 'string' ? data.locality.trim() : '',
+      typeof data?.city === 'string' ? data.city.trim() : '',
+      typeof data?.principalSubdivision === 'string' ? data.principalSubdivision.trim() : '',
+    ].filter(Boolean)
+
+    const uniqueParts = parts.filter(
+      (value: string, index: number) => parts.indexOf(value) === index
+    )
+
+    return uniqueParts.slice(0, 3).join(', ') || null
+  } catch (error) {
+    console.warn('[Attendance GPS] Locality lookup failed:', error)
     return null
   }
 }
