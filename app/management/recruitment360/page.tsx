@@ -1062,9 +1062,31 @@ export default function Recruitment360Page() {
   }
 
   // Opens the browser print dialog. Choose "Save as PDF" for the PDF report.
+  const getReportFileName = () => {
+    const safeName = recName
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+
+    const safePeriod = `${periodLabel}_${fy}`
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+
+    return `Performance_360_${safeName}_${safePeriod}.pdf`
+  }
+
   const printReport = () => {
+    const originalTitle = document.title
+    document.title = getReportFileName().replace(/\.pdf$/i, '')
+
     window.dispatchEvent(new Event('resize'))
-    setTimeout(() => window.print(), 250)
+    setTimeout(() => {
+      window.print()
+
+      // Restore the page title after the print dialog has been opened.
+      setTimeout(() => {
+        document.title = originalTitle
+      }, 1000)
+    }, 250)
   }
 
   // Manual email: opens the user's normal email composer.
