@@ -8,20 +8,6 @@ import NotificationBell from '@/components/NotificationBell'
 import { supabase } from '@/lib/supabase'
 
 
-async function getLocationLocality(location: GeoLocation): Promise<string | null> {
-  try {
-    const response = await fetch(
-      `/api/reverse-geocode?lat=${encodeURIComponent(location.latitude)}&lng=${encodeURIComponent(location.longitude)}`,
-      { cache: 'no-store' }
-    )
-    if (!response.ok) return null
-    const data = await response.json()
-    return typeof data?.locality === 'string' && data.locality.trim() ? data.locality.trim() : null
-  } catch {
-    return null
-  }
-}
-
 interface DashboardLayoutProps {
   children: React.ReactNode
 }
@@ -43,11 +29,24 @@ interface GeoLocation {
   capturedAt: string
 }
 
-const MAX_LOCATION_ACCURACY_METERS = 200
+// ── Mandatory attendance geolocation ───────────────────────────────────────────
+interface GeoLocation {
+  latitude: number
+  longitude: number
+  accuracy: number
+  capturedAt: string
+}
+
+// We do NOT require office-level GPS precision.
+// Laptop location can legitimately be a few hundred metres off.
+// 2 km is the maximum accepted accuracy; the actual accuracy is saved
+// and shown to Management / Sr. TL with the map.
+const MAX_LOCATION_ACCURACY_METERS = 2000
+const GOOD_LOCATION_ACCURACY_METERS = 100
 
 function getCurrentLocation(): Promise<GeoLocation> {
   return new Promise((resolve, reject) => {
-    console.log('[Attendance GPS] Starting location request')
+    console.log('[Attendance GPS] Starting high-accuracy location watch')
 
     if (typeof window === 'undefined') {
       reject(new Error('Location can only be requested in the browser.'))
@@ -65,54 +64,95 @@ function getCurrentLocation(): Promise<GeoLocation> {
 
     if (!navigator.geolocation) {
       reject(
-        new Error(
-          'Geolocation is not supported by this browser or device.'
-        )
+        new Error('Geolocation is not supported by this browser or device.')
       )
       return
     }
 
-    console.log('[Attendance GPS] navigator.geolocation available')
+    let best: GeoLocation | null = null
+    let finished = false
 
-    navigator.geolocation.getCurrentPosition(
+    const finish = (location: GeoLocation) => {
+      if (finished) return
+      finished = true
+      navigator.geolocation.clearWatch(watchId)
+      clearTimeout(timer)
+      console.log('[Attendance GPS] Best location selected:', location)
+      resolve(location)
+    }
+
+    const fail = (message: string) => {
+      if (finished) return
+      finished = true
+      navigator.geolocation.clearWatch(watchId)
+      clearTimeout(timer)
+      reject(new Error(message))
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
       (position) => {
-        console.log('[Attendance GPS] Location received:', position.coords)
-
-        resolve({
+        const candidate: GeoLocation = {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
           accuracy: position.coords.accuracy,
           capturedAt: new Date(position.timestamp).toISOString(),
-        })
+        }
+
+        console.log(
+          `[Attendance GPS] Reading: ±${Math.round(candidate.accuracy)}m`,
+          candidate
+        )
+
+        // Always keep the best reading received.
+        if (!best || candidate.accuracy < best.accuracy) {
+          best = candidate
+        }
+
+        // Stop early once we have a genuinely good fix.
+        if (candidate.accuracy <= GOOD_LOCATION_ACCURACY_METERS) {
+          finish(candidate)
+        }
       },
       (error) => {
         console.error('[Attendance GPS] Location error:', error)
 
-        let message = 'Unable to get your location.'
-
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            message =
+            fail(
               'Location permission is required to mark attendance. Please allow location access for this website and try again.'
+            )
             break
           case error.POSITION_UNAVAILABLE:
-            message =
-              'Your current location could not be determined. Please enable GPS/location services and try again.'
+            fail(
+              'Your device could not determine its location. Please make sure Windows Location Services are ON, Wi-Fi is enabled, and try again.'
+            )
             break
           case error.TIMEOUT:
-            message =
-              'Location request timed out. Please try again.'
+            // We normally resolve from the best reading after the timer.
+            console.warn('[Attendance GPS] Individual reading timed out.')
             break
+          default:
+            fail('Unable to get your current location. Please try again.')
         }
-
-        reject(new Error(message))
       },
       {
         enableHighAccuracy: true,
-        timeout: 15000,
+        timeout: 10000,
         maximumAge: 0,
       }
     )
+
+    // Give laptops time to improve their Wi-Fi/location fix.
+    const timer = window.setTimeout(() => {
+      if (best) {
+        finish(best)
+        return
+      }
+
+      fail(
+        'Could not get your location. Please make sure Windows Location Services are ON and try again.'
+      )
+    }, 15000)
   })
 }
 
@@ -261,6 +301,15 @@ function AttendanceButton({ userId }: { userId: string }) {
         return
       }
 
+      if (location.accuracy > MAX_LOCATION_ACCURACY_METERS) {
+        alert(
+          `Your device reported a very low-accuracy location (±${Math.round(
+            location.accuracy
+          )}m).\\n\\nPlease enable Windows Location Services and Wi-Fi and try again.`
+        )
+        return
+      }
+
       // Reject very inaccurate readings.
       if (location.accuracy > MAX_LOCATION_ACCURACY_METERS) {
         alert(
@@ -313,7 +362,6 @@ function AttendanceButton({ userId }: { userId: string }) {
         hourIST > 11.5 ||
         (isLate && (lateCount || 0) >= 3)
 
-      const locality = await getLocationLocality(location)
 
       // ─────────────────────────────────────────────
       // STEP 4: Insert attendance + GPS data
@@ -335,7 +383,6 @@ function AttendanceButton({ userId }: { userId: string }) {
           sign_in_longitude:     location.longitude,
           sign_in_accuracy:      location.accuracy,
           sign_in_location_time: location.capturedAt,
-          sign_in_location_name: locality,
 
           updated_at:            serverNow.toISOString(),
         })
@@ -385,6 +432,15 @@ function AttendanceButton({ userId }: { userId: string }) {
 
       if (location.accuracy > MAX_LOCATION_ACCURACY_METERS) {
         alert(
+          `Your device reported a very low-accuracy location (±${Math.round(
+            location.accuracy
+          )}m).\\n\\nPlease enable Windows Location Services and Wi-Fi and try again.`
+        )
+        return
+      }
+
+      if (location.accuracy > MAX_LOCATION_ACCURACY_METERS) {
+        alert(
           `Location accuracy is too low (${Math.round(location.accuracy)}m).\\n\\n` +
           `Please enable GPS/location services and try again.`
         )
@@ -393,7 +449,6 @@ function AttendanceButton({ userId }: { userId: string }) {
 
       // Get a human-readable locality for the captured sign-out GPS.
       // This is display-only; the exact GPS coordinates remain authoritative.
-      const locality = await getLocationLocality(location)
 
       // ─────────────────────────────────────────────
       // STEP 2: Authoritative server time
@@ -445,7 +500,6 @@ function AttendanceButton({ userId }: { userId: string }) {
             sign_out_longitude:     location.longitude,
             sign_out_accuracy:      location.accuracy,
             sign_out_location_time: location.capturedAt,
-            sign_out_location_name: locality,
 
             updated_at: serverNow.toISOString(),
           })

@@ -70,6 +70,9 @@ interface Job {
 
 interface RecruiterUser {
   id: string; full_name: string; role: string
+  email?: string | null
+  email_address?: string | null
+  work_email?: string | null
   is_active: boolean
   monthly_target: number; quarterly_target: number; annual_target: number
   target_start_date?: string | null
@@ -239,6 +242,7 @@ export default function Recruitment360Page() {
   const [jobs,        setJobs]        = useState<Job[]>([])
   const [authLoading, setAuthLoading] = useState(true)
   const [dataLoading, setDataLoading] = useState(false)
+  const [emailPreparing, setEmailPreparing] = useState(false)
   const recsRef = useRef<RecruiterUser[]>([])
 
   // ── Auth ──────────────────────────────────────────────────────────────────
@@ -262,7 +266,7 @@ export default function Recruitment360Page() {
 
     if (MGMT_ROLES.includes(u.role)) {
       const res = await supabase
-        .from('users').select('id,full_name,role,is_active,target_start_date,monthly_target,quarterly_target,annual_target')
+        .from('users').select('id,full_name,role,email,email_address,work_email,is_active,target_start_date,monthly_target,quarterly_target,annual_target')
         .in('role', ['recruiter','team_leader','sr_team_leader'])
         .order('full_name')
       data = res.data || []
@@ -271,12 +275,12 @@ export default function Recruitment360Page() {
       const tlIds = (tls || []).map((t: any) => t.id)
       const { data: recs } = await supabase.from('users').select('id').in('reports_to', [u.id, ...tlIds])
       const allIds = [u.id, ...tlIds, ...(recs || []).map((r: any) => r.id)]
-      const res = await supabase.from('users').select('id,full_name,role,is_active,target_start_date,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
+      const res = await supabase.from('users').select('id,full_name,role,email,email_address,work_email,is_active,target_start_date,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
       data = res.data || []
     } else {
       const { data: recs } = await supabase.from('users').select('id').eq('reports_to', u.id)
       const allIds = [u.id, ...(recs || []).map((r: any) => r.id)]
-      const res = await supabase.from('users').select('id,full_name,role,is_active,target_start_date,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
+      const res = await supabase.from('users').select('id,full_name,role,email,email_address,work_email,is_active,target_start_date,monthly_target,quarterly_target,annual_target').in('id', allIds).order('full_name')
       data = res.data || []
     }
 
@@ -1065,6 +1069,72 @@ export default function Recruitment360Page() {
     setTimeout(() => window.print(), 250)
   }
 
+  // Opens the user's normal email composer with the recruiter email,
+  // subject and a short performance summary pre-filled.
+  // The PDF is intentionally NOT sent automatically; management reviews
+  // the email and attaches the generated PDF before clicking Send.
+  const composePerformanceEmail = () => {
+    if (!selectedRecruiter) {
+      alert('Please select one recruiter before sending a Performance 360° report.')
+      return
+    }
+
+    const email =
+      (selectedRecruiter as any).email ||
+      (selectedRecruiter as any).email_address ||
+      (selectedRecruiter as any).work_email ||
+      ''
+
+    if (!email) {
+      alert('No email address is available for this recruiter in the users table.')
+      return
+    }
+
+    setEmailPreparing(true)
+
+    const subject =
+      `Performance 360° Report – ${recName} – ${periodLabel} ${fy}`
+
+    const target = D.totalTarget > 0 ? fmtL(D.totalTarget) : '—'
+    const revenue = fmtL(D.totalRevenue)
+    const achievement = fmtPct(D.pct)
+
+    const summary = [
+      `Hi ${recName},`,
+      '',
+      `Please find attached your Performance 360° Report for ${periodLabel} ${fy}.`,
+      '',
+      'Performance Summary:',
+      `• Revenue Achieved: ${revenue}`,
+      `• Target Achievement: ${achievement}`,
+      `• Total Target: ${target}`,
+      `• CVs Sourced: ${D.cvs}`,
+      `• Screening: ${D.sl}`,
+      `• Interviewed: ${D.iv}`,
+      `• Offers Extended: ${D.ofr}`,
+      `• Joined: ${D.effectiveJoined}`,
+      `• Renege: ${D.renege}`,
+      '',
+      'Please review the attached report and discuss any observations or improvement areas with your reporting manager.',
+      '',
+      'Regards,',
+      'Talent IQ',
+      'Talenti HR Consulting Pvt Ltd',
+    ].join('\\n')
+
+    const mailto =
+      `mailto:${encodeURIComponent(email)}` +
+      `?subject=${encodeURIComponent(subject)}` +
+      `&body=${encodeURIComponent(summary)}`
+
+    // The browser cannot attach a locally generated PDF through mailto.
+    // Open the composer and keep the report available through Print PDF Report.
+    window.location.href = mailto
+
+    // Give the browser a moment to hand the mailto URI to the mail client.
+    window.setTimeout(() => setEmailPreparing(false), 1200)
+  }
+
   const recName     = rid==='all' ? 'All Recruiters' : (recruiters.find(r=>r.id===rid)?.full_name ?? '')
   const recruiterCountActive = recruiters.filter(r => r.role === 'recruiter' && r.is_active).length
   const recruiterCountInactive = recruiters.filter(r => r.role === 'recruiter' && !r.is_active).length
@@ -1181,6 +1251,28 @@ export default function Recruitment360Page() {
                 <button onClick={printReport} className="no-print" style={{ border:'none', borderRadius:8, padding:'9px 16px', fontSize:12, fontFamily:'inherit', fontWeight:800, color:'#fff', background:'#2563eb', cursor:'pointer', whiteSpace:'nowrap' }}>
                   Print PDF Report
                 </button>
+                {rid !== 'all' && (
+                  <button
+                    onClick={composePerformanceEmail}
+                    disabled={emailPreparing}
+                    className="no-print"
+                    style={{
+                      border:'1px solid #bfdbfe',
+                      borderRadius:8,
+                      padding:'9px 16px',
+                      fontSize:12,
+                      fontFamily:'inherit',
+                      fontWeight:800,
+                      color:'#1d4ed8',
+                      background:'#eff6ff',
+                      cursor:emailPreparing ? 'wait' : 'pointer',
+                      whiteSpace:'nowrap',
+                      opacity:emailPreparing ? 0.7 : 1,
+                    }}
+                  >
+                    {emailPreparing ? 'Opening Email…' : '📧 Send 360° Report'}
+                  </button>
+                )}
               </div>
             </div>
 
