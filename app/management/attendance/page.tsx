@@ -423,8 +423,13 @@ export default function ManagementAttendancePage() {
           status: editForm.status,
           sign_in_time: editForm.sign_in_time ? new Date(editForm.sign_in_time).toISOString() : null,
           sign_out_time: editForm.sign_out_time ? new Date(editForm.sign_out_time).toISOString() : null,
-          edited_by: user.id,
-          edited_at: new Date().toISOString(),
+          // attendance_logs has no edited_by / edited_at columns.
+
+          // Use the existing override audit fields.
+
+          override_by: user.id,
+
+          override_reason: editForm.notes || 'Attendance edited by management',
           notes: editForm.notes || null,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,date' })
