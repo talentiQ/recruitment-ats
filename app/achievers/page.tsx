@@ -32,6 +32,32 @@ interface CandidateRow {
   date_joined: string | null; is_renege: boolean | null; renege_date: string | null
 }
 
+interface CampaignCandidateRow {
+  assigned_to: string
+  date_sourced: string | null
+  date_screening_started: string | null
+  date_joined: string | null
+  current_stage: string | null
+  revenue_earned: number | string | null
+  is_renege: boolean | null
+  renege_date: string | null
+}
+
+interface CampaignRecruiterRow {
+  id: string
+  full_name: string
+  monthly_target: number
+  cvCount: number
+  joiningCount: number
+  eligibleBilling: number
+  billingAchievement: number
+  level12Reward: number
+  level3Rate: number
+  level3Reward: number
+  totalCampaignReward: number
+  rewardLabel: string
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -107,6 +133,147 @@ async function fetchAchievers(sb:ReturnType<typeof createClientComponentClient>,
   }).sort((a,b)=>b.pct-a.pct)
 }
 
+// ── Do More, Earn More campaign ────────────────────────────────────────────────
+
+const CAMPAIGN_START_DATE = '2026-11-23'
+const CAMPAIGN_END_DATE = '2026-12-23'
+const CAMPAIGN_START_TS = '2026-11-23T00:00:00'
+const CAMPAIGN_END_EXCLUSIVE_TS = '2026-12-24T00:00:00'
+
+async function fetchCampaignRewards(
+  sb: ReturnType<typeof createClientComponentClient>
+): Promise<CampaignRecruiterRow[]> {
+  const { data: users, error: usersError } = await sb
+    .from('users')
+    .select('id,full_name,role,monthly_target,is_active,last_working_date')
+    .eq('role', 'recruiter')
+    .or(`is_active.eq.true,last_working_date.gte.${CAMPAIGN_START_DATE}`)
+
+  if (usersError) throw usersError
+  if (!users || users.length === 0) return []
+
+  // Candidate must have been sourced during the campaign.
+  const { data: candidates, error: candidatesError } = await sb
+    .from('candidates')
+    .select('assigned_to,date_sourced,date_screening_started,date_joined,current_stage,revenue_earned,is_renege,renege_date')
+    .gte('date_sourced', CAMPAIGN_START_TS)
+    .lt('date_sourced', CAMPAIGN_END_EXCLUSIVE_TS)
+
+  if (candidatesError) throw candidatesError
+
+  const cvMap: Record<string, number> = {}
+  const joiningMap: Record<string, number> = {}
+  const billingMap: Record<string, number> = {}
+
+  for (const candidate of (candidates ?? []) as CampaignCandidateRow[]) {
+    if (!candidate.assigned_to) continue
+
+    // Count only campaign-sourced CVs that reached/crossed the client-submission
+    // stage during the campaign. A candidate still at "sourced" does not count.
+    const screeningDate = candidate.date_screening_started
+      ? candidate.date_screening_started.slice(0, 10)
+      : ''
+    const submittedDuringCampaign =
+      screeningDate >= CAMPAIGN_START_DATE &&
+      screeningDate <= CAMPAIGN_END_DATE &&
+      candidate.current_stage !== 'sourced'
+
+    if (submittedDuringCampaign) {
+      cvMap[candidate.assigned_to] = (cvMap[candidate.assigned_to] ?? 0) + 1
+    }
+
+    // Joining must belong to the same fresh campaign-sourced candidate and occur
+    // within the campaign dates.
+    const joinedDuringCampaign =
+      candidate.date_joined != null &&
+      candidate.date_joined >= CAMPAIGN_START_DATE &&
+      candidate.date_joined <= CAMPAIGN_END_DATE &&
+      (candidate.current_stage === 'joined' || candidate.current_stage === 'renege')
+
+    if (!joinedDuringCampaign) continue
+
+    // Match the existing Hall of Fame's net-of-reneges treatment.
+    const renegedDuringCampaign =
+      candidate.is_renege === true &&
+      candidate.renege_date != null &&
+      candidate.renege_date >= CAMPAIGN_START_DATE &&
+      candidate.renege_date <= CAMPAIGN_END_DATE
+
+    if (renegedDuringCampaign) continue
+
+    joiningMap[candidate.assigned_to] = (joiningMap[candidate.assigned_to] ?? 0) + 1
+    billingMap[candidate.assigned_to] =
+      (billingMap[candidate.assigned_to] ?? 0) + Number(candidate.revenue_earned ?? 0)
+  }
+
+  return users.map((user: any) => {
+    const cvCount = cvMap[user.id] ?? 0
+    const joiningCount = joiningMap[user.id] ?? 0
+    const eligibleBilling = billingMap[user.id] ?? 0
+    const monthlyTarget = Number(user.monthly_target ?? 0)
+    const billingAchievement = monthlyTarget > 0
+      ? (eligibleBilling / monthlyTarget) * 100
+      : 0
+
+    // Level 1 and Level 2 cannot overlap. Level 2 replaces Level 1.
+    let level12Reward = 0
+    let rewardLabel = 'Not qualified'
+    if (cvCount >= 55 && joiningCount >= 2) {
+      level12Reward = 1500
+      rewardLabel = 'Level 2 – Conversion Champion'
+    } else if (cvCount >= 80) {
+      level12Reward = 1000
+      rewardLabel = 'Level 1 – Sourcing Champion'
+    }
+
+    // Level 3 is independent and stacks with either Level 1 or Level 2.
+    let level3Rate = 0
+    if (billingAchievement >= 100 && billingAchievement < 150) {
+      level3Rate = 0.005
+    } else if (billingAchievement >= 150 && billingAchievement <= 175) {
+      level3Rate = 0.0075
+    } else if (billingAchievement > 175) {
+      level3Rate = 0.01
+    }
+
+    const level3Reward = eligibleBilling * level3Rate
+    const totalCampaignReward = level12Reward + level3Reward
+
+    if (level3Rate > 0) {
+      rewardLabel = rewardLabel === 'Not qualified'
+        ? 'Level 3 – Business Performance'
+        : `${rewardLabel} + Level 3`
+    }
+
+    return {
+      id: user.id,
+      full_name: user.full_name,
+      monthly_target: monthlyTarget,
+      cvCount,
+      joiningCount,
+      eligibleBilling,
+      billingAchievement,
+      level12Reward,
+      level3Rate,
+      level3Reward,
+      totalCampaignReward,
+      rewardLabel,
+    }
+  }).sort((a: CampaignRecruiterRow, b: CampaignRecruiterRow) =>
+    b.totalCampaignReward - a.totalCampaignReward ||
+    b.billingAchievement - a.billingAchievement ||
+    b.cvCount - a.cvCount
+  )
+}
+
+function formatINR(value: number) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(value || 0)
+}
+
 // ── Shared sub-components ─────────────────────────────────────────────────────
 
 function Avatar({name,size=40}:{name:string;size?:number}){
@@ -177,6 +344,136 @@ function LeaderboardRow({person,rank}:{person:AchieverRow;rank:number}){
   </div>
 }
 
+// ── Campaign tab ───────────────────────────────────────────────────────────────
+
+function DoMoreEarnMoreTab({
+  data,
+  loading,
+  error,
+  onRefresh,
+}: {
+  data: CampaignRecruiterRow[]
+  loading: boolean
+  error: string | null
+  onRefresh: () => void
+}) {
+  const totalCVs = data.reduce((sum, row) => sum + row.cvCount, 0)
+  const totalJoinings = data.reduce((sum, row) => sum + row.joiningCount, 0)
+  const totalBilling = data.reduce((sum, row) => sum + row.eligibleBilling, 0)
+  const totalRewards = data.reduce((sum, row) => sum + row.totalCampaignReward, 0)
+
+  const th: React.CSSProperties = {
+    padding: '12px 10px', textAlign: 'right', fontSize: 11, color: '#64748b',
+    textTransform: 'uppercase', letterSpacing: '.5px', background: '#f8fafc',
+    borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap',
+  }
+  const td: React.CSSProperties = {
+    padding: '13px 10px', textAlign: 'right', fontSize: 13, color: '#334155',
+    borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap',
+  }
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:18}}>
+        <div>
+          <h2 style={{fontSize:21,fontWeight:800,color:'#1e293b',margin:0}}>🚀 Do More, Earn More</h2>
+          <p style={{fontSize:13,color:'#64748b',margin:'5px 0 0'}}>Campaign period: 23 November – 23 December 2026</p>
+        </div>
+        <button onClick={onRefresh} style={{padding:'9px 15px',border:'1px solid #cbd5e1',borderRadius:9,background:'#fff',color:'#334155',fontWeight:600,cursor:'pointer'}}>↻ Refresh</button>
+      </div>
+
+      <div style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:12,padding:'13px 16px',marginBottom:20,color:'#9a3412',fontSize:12,lineHeight:1.65}}>
+        <strong>Fresh sourcing rule:</strong> Only candidates with <strong>date_sourced</strong> between 23 Nov and 23 Dec 2026 are eligible. A CV counts only when <strong>date_screening_started</strong> is recorded during the campaign and the candidate has moved beyond the initial <strong>sourced</strong> stage. Joinings count only when the same campaign-sourced candidate joins within the campaign period.
+      </div>
+
+      {loading ? (
+        <div style={{textAlign:'center',padding:'55px 0',color:'#94a3b8'}}>Loading campaign rewards…</div>
+      ) : error ? (
+        <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:12,padding:18,color:'#b91c1c',fontSize:13}}>
+          <strong>Unable to load campaign data.</strong><div style={{marginTop:5}}>{error}</div>
+        </div>
+      ) : (
+        <>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:12,marginBottom:22}}>
+            <StatCard value={data.length} label="Eligible Recruiters" color="#2563eb"/>
+            <StatCard value={totalCVs} label="Qualified Fresh CVs" color="#0f766e"/>
+            <StatCard value={totalJoinings} label="Campaign Joinings" color="#7c3aed"/>
+            <div style={{background:'#fff',border:'1px solid #e5e7eb',borderRadius:12,padding:'16px 20px',textAlign:'center'}}>
+              <div style={{fontSize:25,fontWeight:800,color:'#15803d',lineHeight:1}}>{formatINR(totalRewards)}</div>
+              <div style={{fontSize:12,color:'#6b7280',marginTop:4}}>Total Campaign Rewards</div>
+            </div>
+          </div>
+
+          <div style={{background:'#fff',border:'1px solid #e5e7eb',borderRadius:14,overflowX:'auto',marginBottom:18}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:1050}}>
+              <thead><tr>
+                <th style={{...th,textAlign:'left',paddingLeft:16}}>Recruiter</th>
+                <th style={th}>Fresh CVs</th>
+                <th style={th}>Joinings</th>
+                <th style={th}>Monthly Billing Target</th>
+                <th style={th}>Eligible Billing</th>
+                <th style={th}>Target Achieved</th>
+                <th style={th}>Level 1 / 2</th>
+                <th style={th}>Level 3</th>
+                <th style={th}>Total Reward</th>
+              </tr></thead>
+              <tbody>
+                {data.map((row, index) => (
+                  <tr key={row.id} style={{background:index%2===0?'#fff':'#fafafa'}}>
+                    <td style={{...td,textAlign:'left',paddingLeft:16,fontWeight:700,color:'#1e293b'}}>{row.full_name}</td>
+                    <td style={td}>{row.cvCount}</td>
+                    <td style={td}>{row.joiningCount}</td>
+                    <td style={td}>{formatINR(row.monthly_target)}</td>
+                    <td style={td}>{formatINR(row.eligibleBilling)}</td>
+                    <td style={{...td,fontWeight:700,color:row.billingAchievement>=100?'#15803d':'#64748b'}}>{row.billingAchievement.toFixed(1)}%</td>
+                    <td style={td}>
+                      {row.level12Reward > 0 ? (
+                        <span style={{display:'inline-block',background:row.level12Reward===1500?'#dcfce7':'#dbeafe',color:row.level12Reward===1500?'#166534':'#1d4ed8',padding:'4px 8px',borderRadius:20,fontWeight:700,fontSize:11}}>
+                          {row.level12Reward===1500?'Level 2':'Level 1'} · {formatINR(row.level12Reward)}
+                        </span>
+                      ) : <span style={{color:'#94a3b8'}}>—</span>}
+                    </td>
+                    <td style={td}>
+                      {row.level3Rate > 0 ? (
+                        <span style={{display:'inline-block',background:'#f3e8ff',color:'#7e22ce',padding:'4px 8px',borderRadius:20,fontWeight:700,fontSize:11}}>
+                          {(row.level3Rate*100).toFixed(2).replace(/0+$/,'').replace(/\.$/,'')}% · {formatINR(row.level3Reward)}
+                        </span>
+                      ) : <span style={{color:'#94a3b8'}}>—</span>}
+                    </td>
+                    <td style={{...td,fontWeight:800,color:'#15803d'}}>{formatINR(row.totalCampaignReward)}</td>
+                  </tr>
+                ))}
+                {data.length===0 && <tr><td colSpan={9} style={{padding:30,textAlign:'center',color:'#94a3b8'}}>No recruiter records found for this campaign.</td></tr>}
+              </tbody>
+              <tfoot><tr style={{background:'#f8fafc'}}>
+                <td style={{...td,textAlign:'left',paddingLeft:16,fontWeight:800}}>TOTAL</td>
+                <td style={{...td,fontWeight:800}}>{totalCVs}</td>
+                <td style={{...td,fontWeight:800}}>{totalJoinings}</td>
+                <td style={td}>—</td>
+                <td style={{...td,fontWeight:800}}>{formatINR(totalBilling)}</td>
+                <td style={td}>—</td><td style={td}>—</td><td style={td}>—</td>
+                <td style={{...td,fontWeight:800,color:'#15803d'}}>{formatINR(totalRewards)}</td>
+              </tr></tfoot>
+            </table>
+          </div>
+
+          <div style={{background:'#fff',border:'1px solid #e5e7eb',borderRadius:14,padding:16}}>
+            <div style={{fontSize:14,fontWeight:800,color:'#1e293b',marginBottom:12}}>Reward rules applied</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:12,fontSize:12,color:'#475569',lineHeight:1.7}}>
+              <div><strong style={{color:'#1d4ed8'}}>Level 1 – ₹1,000</strong><br/>80+ qualifying fresh client-submitted CVs.</div>
+              <div><strong style={{color:'#166534'}}>Level 2 – ₹1,500</strong><br/>55+ qualifying fresh client-submitted CVs and at least 2 campaign joinings. Replaces Level 1; the two do not stack.</div>
+              <div><strong style={{color:'#7e22ce'}}>Level 3 – Billing reward</strong><br/>100%–149.99%: 0.5%; 150%–175%: 0.75%; above 175%: 1% of eligible campaign billing. Can be combined with Level 1 or Level 2.</div>
+            </div>
+            <p style={{fontSize:11,color:'#94a3b8',margin:'12px 0 0',lineHeight:1.6}}>
+              Level 3 achievement uses eligible campaign billing ÷ the recruiter's existing monthly_target. The existing monthly 1% incentive after 150% remains separate and is not included in this campaign total. Billing is net of reneges recorded within the campaign dates.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function AchieversPage(){
@@ -186,9 +483,27 @@ export default function AchieversPage(){
   const[year,        setYear]       =useState(now.getFullYear())
   const[data,        setData]       =useState<AchieverRow[]>([])
   const[loading,     setLoading]    =useState(true)
+  const[activeTab,   setActiveTab]  =useState<'hall'|'campaign'>('hall')
+  const[campaignData,setCampaignData]=useState<CampaignRecruiterRow[]>([])
+  const[campaignLoading,setCampaignLoading]=useState(false)
+  const[campaignError,setCampaignError]=useState<string|null>(null)
 
   const load=useCallback(async()=>{setLoading(true);const rows=await fetchAchievers(sb,period,month,year);setData(rows);setLoading(false)},[period,month,year])
   useEffect(()=>{load()},[load])
+
+  const loadCampaign=useCallback(async()=>{
+    setCampaignLoading(true)
+    setCampaignError(null)
+    try {
+      const rows=await fetchCampaignRewards(sb)
+      setCampaignData(rows)
+    } catch (err:any) {
+      setCampaignError(err?.message ?? 'Unknown data loading error')
+    } finally {
+      setCampaignLoading(false)
+    }
+  },[])
+  useEffect(()=>{if(activeTab==='campaign')loadCampaign()},[activeTab,loadCampaign])
 
   const periodLabel=getPeriodLabel(period,month,year)
   const top3     =data.filter(d=>d.pct>=100).slice(0,3)
@@ -229,8 +544,23 @@ export default function AchieversPage(){
               </div>
             </div>
           </div>
+          <div style={{maxWidth:1100,margin:'0 auto',display:'flex',gap:8,borderTop:'1px solid #f1f5f9'}}>
+            {([
+              {id:'hall',label:'🏆 Hall of Fame'},
+              {id:'campaign',label:'🚀 Do More, Earn More'},
+            ] as const).map(tab=>(
+              <button key={tab.id} onClick={()=>setActiveTab(tab.id)} style={{padding:'12px 16px',border:'none',background:'transparent',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit',color:activeTab===tab.id?'#4f46e5':'#94a3b8',borderBottom:activeTab===tab.id?'3px solid #4f46e5':'3px solid transparent',marginBottom:-1}}>
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
+        {activeTab==='campaign' ? (
+          <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 32px 0'}}>
+            <DoMoreEarnMoreTab data={campaignData} loading={campaignLoading} error={campaignError} onRefresh={loadCampaign}/>
+          </div>
+        ) : (
         <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 32px 0'}}>
           <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:16,marginBottom:28}}>
             <button onClick={prevPeriod} style={{width:34,height:34,borderRadius:'50%',border:'1px solid #e5e7eb',background:'#fff',cursor:'pointer',fontSize:18,color:'#374151',display:'flex',alignItems:'center',justifyContent:'center'}}>&#8249;</button>
@@ -278,6 +608,7 @@ export default function AchieversPage(){
             </>
           )}
         </div>
+        )}
       </div>
     </DashboardLayout>
   )
