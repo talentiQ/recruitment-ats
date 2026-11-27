@@ -155,7 +155,7 @@ async function fetchCampaignRewards(
   // Candidate must have been sourced during the campaign.
   const { data: candidates, error: candidatesError } = await sb
     .from('candidates')
-    .select('assigned_to,date_sourced,date_screening_started,date_joined,current_stage,revenue_earned,is_renege,renege_date')
+    .select('assigned_to,date_sourced,date_joined,current_stage,revenue_earned,is_renege,renege_date')
     .gte('date_sourced', CAMPAIGN_START_TS)
     .lt('date_sourced', CAMPAIGN_END_EXCLUSIVE_TS)
 
@@ -168,17 +168,29 @@ async function fetchCampaignRewards(
   for (const candidate of (candidates ?? []) as CampaignCandidateRow[]) {
     if (!candidate.assigned_to) continue
 
-    // Count only campaign-sourced CVs that reached/crossed the client-submission
-    // stage during the campaign. A candidate still at "sourced" does not count.
-    const screeningDate = candidate.date_screening_started
-      ? candidate.date_screening_started.slice(0, 10)
-      : ''
-    const submittedDuringCampaign =
-      screeningDate >= CAMPAIGN_START_DATE &&
-      screeningDate <= CAMPAIGN_END_DATE &&
-      candidate.current_stage !== 'sourced'
+    // Count only candidates sourced during the campaign who are currently
+    // at "Sent to Client" or any later pipeline stage. In this ATS, the stored
+    // stage values begin with "screening" after the UI's "Sent to Client" step.
+    // Do not require date_screening_started to be populated: the stage itself
+    // is the eligibility signal. A candidate still at "sourced" never counts.
+    const clientSubmittedOrBeyondStages = new Set([
+      'sent_to_client',
+      'screening',
+      'screening_rejected',
+      'interview_scheduled',
+      'interview_completed',
+      'interview_rejected',
+      'documentation',
+      'offer_extended',
+      'offer_accepted',
+      'joined',
+      'renege',
+    ])
+    const submittedOrBeyond =
+      candidate.current_stage != null &&
+      clientSubmittedOrBeyondStages.has(candidate.current_stage)
 
-    if (submittedDuringCampaign) {
+    if (submittedOrBeyond) {
       cvMap[candidate.assigned_to] = (cvMap[candidate.assigned_to] ?? 0) + 1
     }
 
@@ -383,7 +395,7 @@ function DoMoreEarnMoreTab({
       </div>
 
       <div style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:12,padding:'13px 16px',marginBottom:20,color:'#9a3412',fontSize:12,lineHeight:1.65}}>
-        <strong>Fresh sourcing rule:</strong> Only candidates with <strong>date_sourced</strong> between 23 Nov and 23 Dec 2026 are eligible. A CV counts only when <strong>date_screening_started</strong> is recorded during the campaign and the candidate has moved beyond the initial <strong>sourced</strong> stage. Joinings count only when the same campaign-sourced candidate joins within the campaign period.
+        <strong>Fresh sourcing rule:</strong> Only candidates with <strong>date_sourced</strong> between 23 Nov and 23 Dec 2026 are eligible. A CV counts when its current ATS stage is <strong>Sent to Client</strong> or any later stage; candidates still at <strong>sourced</strong> are excluded. The stage itself determines eligibility, so <strong>date_screening_started</strong> does not have to be populated. Joinings count only when the same campaign-sourced candidate joins within the campaign period.
       </div>
 
       {loading ? (
